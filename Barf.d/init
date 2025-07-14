@@ -1,0 +1,107 @@
+#!/bash
+
+function init # --hidden|--update
+{
+    # shellcheck disable=2155
+    local origin="$(command -v bar)"
+    local prefix="${origin%/bin/*}"
+
+    [[ -f "$prefix/bin/bar" && -d "$prefix/share/bar/Barf.d" && -f "$prefix/share/bar/Barf" ]] ||
+        die "bar not properly installed, run './bar init_install <prefix>' from its git repository first"
+
+    local update=
+    local hidden=
+    if [[ "${1:-}" == --update ]]; then
+        update=true
+        shift
+    elif [[ "${1:-}" == --hidden ]]; then
+        hidden=true
+        shift
+    fi
+
+    if [[ -z "$update" && ( -f bar || -f .bar )]]; then
+        die "bar already initialized"
+    fi
+
+    if [[ -n "$update" ]]; then
+      if [[ -f bar ]]; then
+          cp -Lu "$origin" "bar"
+          cp -Lru "$prefix/share/bar/Barf.d/"* "Barf.d"
+      elif [[ -f .bar ]]; then
+          cp -Lu "$origin" ".bar"
+          cp -Lru "$prefix/share/bar/Barf.d/"* ".Barf.d"
+      else
+          die "bar not initialized"
+      fi
+      return 0
+    fi
+
+    if [[ -z "$hidden" ]]; then
+          cp -L "$origin" "bar"
+          cp -L "$prefix/share/bar/Barf" "Barf"
+          cp -Lr "$prefix/share/bar/Barf.d" "Barf.d"
+    else
+          cp -L "$origin" ".bar"
+          cp -L "$prefix/share/bar/Barf" ".Barf"
+          cp -Lr "$prefix/share/bar/Barf.d" ".Barf.d"
+    fi
+    return 0
+}
+
+# since the Barf is the users configuration we cant just update it
+# this 'a bit mouthful' rule will do a merge with the shipped Barf.default
+# but the user is required to fix conflicts.
+function init_update_merge_barf
+{
+    # shellcheck disable=2155
+    local origin="$(command -v bar)"
+    local prefix="${origin%/bin/*}"
+
+    if [[  -f "$prefix/share/bar/Barf" ]]; then
+        info "merging Barf file"
+    else
+        die "bar not properly installed, run './bar init_install <prefix>' from its git repository first"
+    fi
+
+    if [[ -f Barf ]]; then
+        git merge-file --diff-algorithm=histogram ./Barf /dev/null "$prefix/share/bar/Barf" ||
+            note "Please check the merged Barf file conflict markers and fix them"
+    elif [[ -f .Barf ]]; then
+        git merge-file --diff-algorithm=histogram ./.Barf /dev/null "$prefix/share/bar/Barf" ||
+            note "Please check the merged Barf file conflict markers and fix them"
+    else
+        die "bar not initialized"
+    fi
+}
+
+# install links in <prefix>
+function init_install # <prefix>
+{
+    # shellcheck disable=2155
+    local origin="$(realpath "$BASH_ARGV0")"
+    # link the main script
+    if  [[ -z "${1:-}" ]]; then
+        die "no <prefix> given"
+    elif [[ "$origin" != *"/bar" ]]; then
+        die "not called as original bar"
+    else
+        if [[ -d "$1" && ! -f "$1/bin/bar" ]]; then
+            mkdir -p "$1/bin"
+            ln -s "$origin" "$1/bin/bar"
+            info "linked $origin to $1/bin/bar"
+        else
+            die "cant link $origin to $1/bin/bar"
+        fi
+    fi
+    # link Barf.d
+    if [[ ! -d "$1/share/bar" ]]; then
+        mkdir -p "$1/share/bar"
+        ln -s "${origin%/*}/Barf.d" "$1/share/bar/Barf.d"
+        info "linked ${origin%/*}/Barf.d to $1/share/bar/Barf.d"
+        ln -s "${origin%/*}/Barf.default" "$1/share/bar/Barf"
+        info "linked ${origin%/*}/Barf.default to $1/share/bar/Barf"
+    else
+        die "cant link to $1/share/bar/"
+    fi
+}
+

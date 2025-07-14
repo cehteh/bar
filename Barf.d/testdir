@@ -1,0 +1,45 @@
+#!/bash
+
+require lock
+require git_lib
+
+declare -gx TESTDIR_PREFIX="${TESTDIR_PREFIX:-.test}"
+declare -gx TESTDIR_KEEP="${TESTDIR_KEEP:-5}"
+declare -gx TESTDIR
+declare -gx TESTDIR_PREV
+
+# create and change into testdir
+rule testdir_enter: is_git_toplevel -
+
+function testdir_enter # treeish - Sets up a test directory change dir into it.
+{
+    lock_wait .bar.lock
+    local treeish="${1:-}"
+
+    [[ -z "$treeish" ]] && treeish="$(git write-tree)"
+
+    # shellcheck disable=2155
+    local TESTDIR="$(find "$(git_toplevel)" -type d -name "$TESTDIR_PREFIX*-$treeish" | tail -1)"
+    if [[ -z "$TESTDIR" ]]; then
+        TESTDIR="$(git_toplevel)/${TESTDIR_PREFIX}-$BAR_TIMESTAMP-$treeish"
+        info "creating: $TESTDIR"
+        mkdir -p "$TESTDIR"
+        git --work-tree "$TESTDIR" checkout "$treeish" -- .
+        ln -s "$(git_dir)" "$TESTDIR/.git" || { error "cant link .git to $TESTDIR/.git"; return 1; }
+
+        # find the dir of the previous test if any
+        TESTDIR_PREV="$(find . -path "$(git_toplevel)/${TESTDIR_PREFIX}*" -type d | sort -rn | head -n 1)"
+    else
+        info "using existing: $TESTDIR"
+    fi
+    lock_next .bar.lock "$TESTDIR/.bar.lock"
+    rule CLEANUP: -- "cd '$(git_toplevel)'; lock_remove '$TESTDIR/.bar.lock'"
+    rule CLEANUP: -- testdir_gc
+    cd "$TESTDIR" || { error "cant change into $TESTDIR"; return 1; }
+}
+
+function testdir_gc # - cleanup old test dirs
+{
+    find "$(git_toplevel)" -name "${TESTDIR_PREFIX}*" -type d -print0 | sort -z -n | head -z -n -$((TESTDIR_KEEP)) | xargs -0 -n1 -r rm -rf
+}
+

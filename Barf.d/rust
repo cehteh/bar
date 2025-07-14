@@ -1,0 +1,210 @@
+#!/bash
+
+function rust_toolchain_available ## <+toolchain> - Check if a toolchain is available
+{
+    if cargo "$1" --version &>/dev/null; then
+        debug "toolchain $1 is installed"
+        return 0
+    else
+        note "toolchain $1 is not installed"
+        return 1
+    fi
+}
+
+function rust_has_unsafe_code ## - Checks if the source use 'unsafe'
+{
+    # this does only a coarse check, but does not depend on external tools
+    if cargo rustc -- --emit=metadata -Funsafe-code &>/dev/null; then
+        debug "no unsafe used"
+        return 1
+    else
+        debug "unsafe used"
+        return 0
+    fi
+}
+memofn rust_has_unsafe_code
+
+
+
+# function cargo_cached_artifacts
+# {
+#     # In a rust/cargo project, when a $LAST_TEST_DIR is present then hardlink the /target
+#     # build artifacts to the current test dir this can speed up builds.
+#     # Also sets CARGO_NET_OFFLINE to true
+#     # if [[ "${LAST_TEST_DIR:-}" ]]; then
+#     #     debug "populating from $LAST_TEST_DIR/target"
+#     #     [[ -d "$LAST_TEST_DIR/target" ]] && cp -rluf "$LAST_TEST_DIR/target" "./"
+#     #     export CARGO_NET_OFFLINE="true"
+#     # fi
+#     #
+#     :
+# }
+
+# function cargo_miri
+# #!/bin/bash
+# # shellcheck disable=SC2046
+# - checks with 'cargo +nighty miri test', backgrounds, runs only when unsafe code is used and nightly miri is available
+# {
+# git_branch_matches "master" "main" "release.*" || return 0
+# is_cargo_project || return 0
+# 
+# cargo_toolchain_available +nightly || return 0
+# cargo_tool_installed +nightly miri || return 0
+# cargo_has_unsafe_code || return 0
+# 
+# git_hook_matches "pre-commit" "pre-merge-commit" "commit-msg" || return 0
+# git_hook_matches "pre-commit" "pre-merge-commit" && background_schedule && return 0
+# git_hook_matches "commit-msg" && background_wait && return $(background_result)
+# 
+# run_action cargo +nightly miri test
+
+
+# function cargo_msrv
+# #!/bin/bash
+# # shellcheck disable=SC2046
+# - check with 'cargo msrv' that the rust-version in Cargo.toml is correct
+# - runs in background
+# - may take long time as it needs to install the toolchains to be checked
+# {
+# git_branch_matches "master" "main" "release.*" || return 0
+# is_cargo_project || return 0
+# cargo_tool_installed msrv || return 0
+# 
+# git_hook_matches "pre-commit" "pre-merge-commit" "commit-msg" || return 0
+# git_hook_matches "pre-commit" "pre-merge-commit" && background_schedule && return 0
+# git_hook_matches "commit-msg" && background_wait && return $(background_result)
+# 
+# # msrv check needs a extra long timeout
+# run_action --timeout 300 cargo msrv --bisect --ignore-lockfile verify
+
+
+# function cargo_mutants
+# #!/bin/bash
+# # shellcheck disable=SC2046
+# - runs 'cargo mutants', backgrounds
+# {
+# 
+# git_branch_matches "master" "main" "release.*" || return 0
+# is_cargo_project || return 0
+# cargo_tool_installed mutants || return 0
+# 
+# git_hook_matches "pre-commit" "pre-merge-commit" "commit-msg" || return 0
+# git_hook_matches "pre-commit" "pre-merge-commit" && background_schedule && return 0
+# git_hook_matches "commit-msg" && background_wait && return $(background_result)
+# 
+# run_action cargo mutants -j 4 --all-features --colors never
+
+
+# function cargo_outdated
+# #!/bin/bash
+# # shellcheck disable=SC2046
+# - check with 'cargo outdated' that all dependencies are up to date
+# - runs in background
+# {
+# git_branch_matches "master" "main" "release.*" || return 0
+# is_cargo_project || return 0
+# cargo_tool_installed outdated || return 0
+# 
+# git_hook_matches "pre-commit" "pre-merge-commit" "commit-msg" || return 0
+# git_hook_matches "pre-commit" "pre-merge-commit" && background_schedule && return 0
+# git_hook_matches "commit-msg" && background_wait && return $(background_result)
+# 
+# # TODO: customize --features
+# # NOTE: intentionally not --offline --locked --frozen here
+# run_action cargo outdated --color never --exit-code 1
+
+
+# function cargo_test_benches
+# #!/bin/bash
+# # shellcheck disable=SC2046
+# - checks with 'cargo test --benches', backgrounds
+# {
+# 
+# git_branch_matches "master" "main" "devel" || return 0
+# is_cargo_project || return 0
+# 
+# git_hook_matches "pre-commit" "pre-merge-commit" "commit-msg" || return 0
+# git_hook_matches "pre-commit" "pre-merge-commit" && background_schedule && return 0
+# git_hook_matches "commit-msg" && background_wait && return $(background_result)
+# 
+# run_action cargo test --benches
+
+
+# function cargo_test_bins
+# #!/bin/bash
+# # shellcheck disable=SC2046
+# - checks with 'cargo test --bins', backgrounds
+# {
+# 
+# git_branch_matches "master" "main" "devel" || return 0
+# is_cargo_project || return 0
+# 
+# git_hook_matches "pre-commit" "pre-merge-commit" "commit-msg" || return 0
+# git_hook_matches "pre-commit" "pre-merge-commit" && background_schedule && return 0
+# git_hook_matches "commit-msg" && background_wait && return $(background_result)
+# 
+# run_action cargo test --bins
+
+
+# function cargo_test_doc
+# #!/bin/bash
+# # shellcheck disable=SC2046
+# - checks with 'cargo test --doc', backgrounds
+# {
+# 
+# git_branch_matches "master" "main" "devel" || return 0
+# is_cargo_project || return 0
+# 
+# git_hook_matches "pre-commit" "pre-merge-commit" "commit-msg" || return 0
+# git_hook_matches "pre-commit" "pre-merge-commit" && background_schedule && return 0
+# git_hook_matches "commit-msg" && background_wait && return $(background_result)
+# 
+# run_action cargo test --doc
+
+
+# function cargo_test_examples
+# #!/bin/bash
+# # shellcheck disable=SC2046
+# - checks with 'cargo test --examples', backgrounds
+# {
+# 
+# git_branch_matches "master" "main" "devel" || return 0
+# is_cargo_project || return 0
+# 
+# git_hook_matches "pre-commit" "pre-merge-commit" "commit-msg" || return 0
+# git_hook_matches "pre-commit" "pre-merge-commit" && background_schedule && return 0
+# git_hook_matches "commit-msg" && background_wait && return $(background_result)
+# 
+# run_action cargo test --examples
+
+
+# function cargo_test_lib
+# #!/bin/bash
+# # shellcheck disable=SC2046
+# - checks with 'cargo test --lib', backgrounds
+# {
+# 
+# git_branch_matches "master" "main" "devel" || return 0
+# is_cargo_project || return 0
+# 
+# git_hook_matches "pre-commit" "pre-merge-commit" "commit-msg" || return 0
+# git_hook_matches "pre-commit" "pre-merge-commit" && background_schedule && return 0
+# git_hook_matches "commit-msg" && background_wait && return $(background_result)
+# 
+# run_action cargo test --lib
+
+
+# function cargo_test_tests
+# #!/bin/bash
+# # shellcheck disable=SC2046
+# - checks with 'cargo test --tests', backgrounds
+# {
+# 
+# git_branch_matches "master" "main" "devel" || return 0
+# is_cargo_project || return 0
+# 
+# git_hook_matches "pre-commit" "pre-merge-commit" "commit-msg" || return 0
+# git_hook_matches "pre-commit" "pre-merge-commit" && background_schedule && return 0
+# git_hook_matches "commit-msg" && background_wait && return $(background_result)
+# 
+# run_action cargo test --tests

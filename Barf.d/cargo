@@ -1,0 +1,59 @@
+#!/bash
+
+function is_cargo_tool_installed ## [+toolchain] <tool> [args..] - Checks if 'cargo <tool>' is installed
+{
+    declare -a toolpart
+    # may be prefixed with a '+toolchain'
+    if [[ "${1:0:1}" = "+" ]]; then
+        toolpart=("$1" "$2")
+        shift 2
+    else
+        toolpart=("$1")
+        shift
+    fi
+    declare -a args
+    if [[ "$#" -eq 0 ]]; then
+        # when no args are given then default to '--version'
+        args=("--version")
+    else
+        args=("$@")
+    fi
+    if cargo "${toolpart[@]}" "${args[@]}" &>/dev/null; then
+        debug "cargo ${toolpart[*]} is installed"
+        return 0
+    else
+        note "cargo ${toolpart[*]} is not installed"
+        return 1
+    fi
+}
+
+memofn is_cargo_tool_installed
+
+rule cargo_audit: is_rust_project 'cargo_tool_installed audit' -- 'cargo audit --color never -D warnings --stale --quiet'
+rule cargo_audit_opt: is_rust_project? 'is_cargo_tool_installed? audit' cargo_audit
+
+rule cargo_build: -- cargo build
+rule cargo_build_tests: -- cargo build --tests
+rule cargo_check: -- cargo check
+
+function cargo_clippy_errors ## - Tests with 'cargo clippy' for errors only
+{
+    cargo clippy 2>&1 | tee /dev/stderr | awk '/error.*: /{exit 1}'
+}
+
+function cargo_clippy_strict ## - Test with 'cargo clippy' for warnings and errors
+{
+    cargo clippy 2>&1 | tee /dev/stderr | awk '/(warning|error).*: /{exit 1}'
+}
+
+function cargo_doc ## - builds docs, backgrounds, optional.
+{
+    export RUSTDOCFLAGS="-D rustdoc::broken_intra_doc_links"
+    run_action -b cargo doc
+}
+
+rule cargo_doc: 'cargo_tool_installed doc --help' -
+
+rule cargo_fmt_check: -- cargo fmt --all -- --check
+
+

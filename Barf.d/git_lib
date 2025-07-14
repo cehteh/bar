@@ -1,0 +1,59 @@
+#!/bash
+
+# shellcheck disable=2016
+
+function git_toplevel
+{
+    memo git rev-parse --show-toplevel
+}
+
+function git_bar
+{
+    # shellcheck disable=SC2155
+    local tl="$(git_toplevel)"
+    if [[ -f "$tl/bar" ]]; then
+        echo "$tl/bar"
+    elif [[ -f "$tl/.bar" ]]; then
+        echo "$tl/.bar"
+    else
+        die "no bar file found in $tl"
+    fi
+}
+memofn git_bar
+
+    #git rev-parse --is-inside-work-tree
+
+function git_dir
+{
+    memo git rev-parse --absolute-git-dir
+}
+
+rule is_git_repository: -- 'git_toplevel &>/dev/null'
+rule is_git_toplevel: -- '[[ "$(git_toplevel)" = "$PWD" ]]'
+
+function git_ls_files # [git-ls-files-opts].. - sorted list of all non ignored files
+{
+    local zero_terminated=
+    for z in "$@"; do
+        [[ "$z" = "-z" ]] && { zero_terminated=true; break; }
+    done
+    git ls-files -c --exclude-standard "$@" | sort -u ${zero_terminated:+-z}
+}
+
+memofn git_ls_files
+
+function git_branch_name ## - Returns the branch name that is checked out, dies when not in a git branch
+{
+    memo git branch --show-current
+}
+
+function git_tree_hash ## [git-ls-files-opts].. - Returns a hash over the current directory
+{
+    local hash
+    # needs || true here to suppress errors on directories
+    hash="$(git_ls_files -z "$@" | xargs -0 sha1sum 2>/dev/null || true | sha1sum)"
+    echo "${hash:0:40}"
+}
+
+memofn git_tree_hash
+

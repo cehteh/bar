@@ -1,0 +1,32 @@
+#!/bash
+# shellcheck disable=2016
+
+function git_is_clean ## - Checks if there are modified files, fails if there are any.
+{
+    if git diff --exit-code; then
+        debug "nothing modified"
+        return 0
+    else
+        info "files got modified"
+        return 1
+    fi
+}
+
+rule git_is_clean: is_git_repository -
+
+function git_branch_matches ## [branchpattern..] - Checks that the current git branch matches any of the patterns
+{
+    # shellcheck disable=SC2155
+    local branch=$(git_branch_name)
+    for pat in "$@"; do
+        [[ "$branch" =~ $pat ]] && {
+            debug "$branch matches $pat"
+            return 0
+        }
+    done
+    trace "$branch does not match $*"
+    return 1
+}
+
+rule git_branch_matches: is_git_repository -
+

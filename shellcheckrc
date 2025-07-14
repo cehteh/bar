@@ -1,0 +1,7 @@
+# Don't add 'disable' here. shellcheckrc should be optional for repos where bar gets initialized
+avoid-nullary-conditions=true
+check-extra-masked-returns=true
+check-set-e-suppressed=true
+deprecate-which=true
+quote-safe-variables=true
+require-double-brackets=true

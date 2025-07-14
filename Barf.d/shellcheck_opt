@@ -1,0 +1,5 @@
+#!/bash
+
+rule shellcheck: 'is_command_installed? shellcheck' shellcheck_lint
+
+rule lint: shellcheck

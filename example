@@ -1,0 +1,34 @@
+#!/bash
+
+# You can run this example with './bar example'
+
+# Add a clause to 'MAIN'
+rule -- echo "Example begin"
+
+# Different ways to define rule bodies
+rule example_ok: -- echo inline
+rule example_ok: -- '
+    echo inline quoted
+'
+
+rule example_ok: -- <<<"echo herestring"
+rule example_ok: -- <<EOF
+    echo heredoc
+EOF
+
+# Make a rule that fails
+rule example_fail: -- false
+
+# functions and other commands can be used as rules
+function example
+{
+    echo "I am example called with $*"
+}
+
+# add a tests rule with 3 clauses
+rule tests: example_ok? 'example "argument"' -- echo "example_ok success"
+rule tests: !example_ok -- echo "This is never called, but MAIN still passes"
+rule tests: example_fail? -- echo "This is also never called"
+
+# add tests to MAIN
+rule tests

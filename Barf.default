@@ -1,0 +1,26 @@
+#!/bash
+#shellcheck disable=SC2016
+
+rule main: lint test doc audit bench build
+# tag test_expensive
+
+# called as *bar run the 'main' rule in the current dir
+rule 'called_as? *bar' main
+# called by another name (githook), create temporary testdir and run the main rule there
+rule '!called_as *bar' testdir_enter main
+
+# for debugging
+rule --debug: -- '
+     BAR_VERBOSITY_LEVEL=4
+     rule_eval "${RULE_ARGS[@]:-MAIN}"
+'
+
+rule --trace: -- '
+     BAR_VERBOSITY_LEVEL=5
+     rule_eval "${RULE_ARGS[@]:-MAIN}"
+'
+
+rule --verbose: -- '
+     BAR_VERBOSITY_LEVEL+=1
+     rule_eval "${RULE_ARGS[@]:-MAIN}"
+'

@@ -1,0 +1,83 @@
+#!/bash
+## managing lockfiles
+##
+
+# Lockfiles:
+# Manage non recursive ownership of resources.
+# We can create or wait on a lockfile with lock_wait and remove it with lock_remove.
+# lock_wait takes a name and an optional command pattern to check if the lock is still valid as parameter.
+# lock_next does hand over hand locking.
+# lock_remove takes a name as parameter and removes the lockfile if it is owned by the current process.
+
+function lock_wait #api {lockfile} - lock a lockfile, waits until we have the lock
+{
+    # Create a temporary lockfile specific to this process
+    local tmp_lockfile="${1}.$$"
+
+    # Put our PID in the temporary file
+    echo $$ > "$tmp_lockfile"
+
+    # backoff with a binomial sequence
+    local backoff=1
+
+    # Try to atomically acquire the lock
+    while ! ln -s "$tmp_lockfile" "$1" 2>/dev/null; do
+        # Lock exists, check if it's stale
+        if [[ -L "$1" ]]; then
+            # shellcheck disable=SC2155 # want to ignore errors here
+            local lockfile_target=$(readlink "$1")
+            local lockpid="${lockfile_target##*.}"
+
+            # Check if the process still exists
+            if ! kill -0 "$lockpid" 2>/dev/null; then
+                # Process is gone, remove the stale lock
+                rm -f "$1"
+                trace "removed stale lock from process $lockpid"
+                continue
+            else
+                # Wait for the process to exit
+                trace "wait: $lockpid to complete"
+                wait "$lockpid" 2>/dev/null || sleep "${backoff:: -1}.${backoff: -1}"
+                [[ $backoff -lt 50 ]] && ((backoff+=1))
+            fi
+
+            # Remove the stale lock
+            rm -f "$1"
+        fi
+    done
+
+    trace "locked: $1 as $$"
+}
+
+function lock_next # old new - hand over hand locking
+{
+    lock_wait "$2"
+    lock_remove "$1"
+}
+
+function lock_remove #api {name} - remove a lockfile, unlock
+{
+    if [[ -L "$1" ]]; then
+        # shellcheck disable=SC2155 # want to ignore errors here
+        local lockfile_target=$(readlink "$1")
+        local lockpid="${lockfile_target##*.}"
+
+        if [[ "$lockpid" = "$$" ]]; then
+            trace "unlock $1"
+            # Remove both the lock and the temporary file
+            rm -f "$1"
+            rm -f "$lockfile_target"
+            return 0
+        else
+            error "$1 is not ours (we are $$, owned by $lockpid)"
+            return 1
+        fi
+    elif [[ -f "$1" ]]; then
+        error "$1 is not a symbolic link lockfile"
+        return 1
+    else
+        error "$1 does not exist"
+        return 1
+    fi
+}
+
