@@ -276,6 +276,11 @@ function rule_eval ## <name> [args..]
                 check=negated
                 depname="${depname:1}"
             fi
+            if [[ "$depname" = *"~" ]]; then
+                [[ -z "$check" ]] || die "~ can not be combined with ! or ?"
+                check=unconditional
+                depname="${depname%?}"
+            fi
             [[ -n "$check" ]] && BAR_CHECK_LEVEL=$((BAR_CHECK_LEVEL+1))
 
             # shellcheck disable=2155
@@ -291,6 +296,9 @@ function rule_eval ## <name> [args..]
 
             if [[ "$dep_rc" == pending ]]; then
                 die "recursive rule $name: $depname"
+            elif [[ "$check" = unconditional ]]; then
+                [[ -n "$check" ]] && BAR_CHECK_LEVEL=$((BAR_CHECK_LEVEL-1))
+                continue
             elif [[ "$dep_rc" == 0 && "$check" = negated ]]; then
                 debug "skipped clause: $depname due to dependency check failure"
                 skip=true

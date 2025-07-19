@@ -66,9 +66,9 @@ RULE SEMANTICS
 
 RULE DEFINITION SYNTAX
 
-  rule [<name>:] [[!]deps[?] args..]..
-  rule [<name>:] [[!]deps[?] args..].. -
-  rule [<name>:] [[!]deps[?] args..].. -- [body..]
+  rule [<name>:] [[!]deps[?|~] args..]..
+  rule [<name>:] [[!]deps[?|~] args..].. -
+  rule [<name>:] [[!]deps[?|~] args..].. -- [body..]
 
   * [<name>:]
 
@@ -92,7 +92,7 @@ RULE DEFINITION SYNTAX
     A '_opt' suffix may be used when the rule may be skipped because of failed check
     dependencies without erroneous effects, such as skipping linters when not installed.
 
-  * [[!]deps[?] args..]..
+  * [[!]deps[?|~] args..]..
 
     Dependencies, are a list of other rules that this rule depends on. These will be executed
     in order. If any of the dependencies fails then this rule is considered failed as well, no
@@ -100,12 +100,14 @@ RULE DEFINITION SYNTAX
     one.
 
     A dependency can be either prefixed with an exclamation mark or suffixed with a question
-    mark. Such dependencies then act as checks. The exclamation mark prefix expects the
-    dependency to fail and will continue then, if the dependency succeeds then the remaining
-    dependencies and the rule body are skipped. With a question mark as suffix the dependency
-    is expected to succeed, when it fails then the rest of the dependencies and the rule body
-    is skipped. The difference here is that check-dependencies decide if a clause should be
-    skipped while a failure on a normal dependency will fail a rule instantly.
+    mark or tilde. The exclamation mark prefix expects the dependency to fail and will
+    continue then, if the dependency succeeds then the remaining dependencies and the rule
+    body are skipped. With a question mark as suffix the dependency is expected to succeed,
+    when it fails then the rest of the dependencies and the rule body is skipped. With a tilde
+    as suffix outcome of the dependencny is ignored, the dependency is considered to be
+    successful and the rest of the dependencies and the rule body is executed.  The difference
+    here is that such dependencies decide if a clause should be skipped or succeed while a
+    failure on a normal dependency will fail a rule instantly.
 
     Dependencies can have arguments when provided then the dependency and its arguments must
     be quoted. These arguments are passed in the 'RULE_ARGS' array to the body of the rule.
