@@ -55,15 +55,16 @@ function bar_main ## [Rulefile] [Rule [Arguments]] - loads a Barf file and execu
             break
         fi
     done
+
     local rc=0
     [[ -n "${1:-}" ]] && rule_autoload "$1"
     BAR_RULES_SEALED=true
     if rule_exists "${1:-MAIN}"; then
         rule_eval "${@:-MAIN}" || rc=$?
-        if [[ "$rc" = 0 ]]; then
-            success 1 "${@:-MAIN}"
+        if (( "$rc" == 0 )); then
+            success "${@:-MAIN}"
         else
-            failure 1 "${@:-MAIN}"
+            failure "${@:-MAIN}"
         fi
         rule_exists CLEANUP && rule_eval CLEANUP
         return $rc
@@ -192,6 +193,120 @@ function rule_rename ## <oldname> <newname> - renames a rule
     fi
 }
 
+function rule_eval ## <name> [args..]
+{
+    # shellcheck disable=2155
+    local rule_id="$(hash_args "$PWD $*")"
+    local name="$1"
+    shift
+
+    # shellcheck disable=2034
+    local RULE_ARGS=("$@")
+    rule_autoload "$name"
+
+#    local rc
+
+    if [[ ! "$name" = "always_"* && -v BAR_RULES_RESULT[$rule_id] ]]; then
+        # rc="${BAR_RULES_RESULT[$rule_id]}"
+        # if (( "$rc" == 0 )); then
+        #     success "$name"
+        # else
+        #     failure "$name"
+        # fi
+        return "${BAR_RULES_RESULT[$rule_id]}"
+    fi
+
+    BAR_RULES_RESULT[$rule_id]="pending"
+
+    local clause
+    for clause in ${BAR_RULES[$name]}; do
+        local skip=
+        local dep
+        local deps=()
+        [[ "${#BAR_CLAUSE_DEPS[$clause]}" -gt 0 ]] && readarray -d $'\n' -t deps <<<"${BAR_CLAUSE_DEPS[$clause]}"
+
+        local dep
+        for dep in "${deps[@]}"; do
+            local depname="${dep%% *}"
+            declare -a depargs
+            read -r -a depargs <<<"${dep:${#depname}+1}"
+            local check=
+
+            if [[ "$depname" = *"?" ]]; then
+                check=true
+                depname="${depname%?}"
+            fi
+            if [[ "$depname" = "!"* ]]; then
+                check=negated
+                depname="${depname:1}"
+            fi
+            if [[ "$depname" = *"~" ]]; then
+                [[ -z "$check" ]] || die "~ can not be combined with ! or ?"
+                check=unconditional
+                depname="${depname%?}"
+            fi
+            [[ -n "$check" ]] && BAR_CHECK_LEVEL=$((BAR_CHECK_LEVEL+1))
+
+            # shellcheck disable=2155
+            local dep_id="$(hash_args "$PWD $depname ${depargs[*]}")"
+            local dep_rc="${BAR_RULES_RESULT[$dep_id]:-}"
+            if [[ "$dep_id" = "always_"* || -z "$dep_rc" ]]; then
+                dep_rc=0
+                # shellcheck disable=2086
+                rule_eval "$depname" "${depargs[@]}" || dep_rc=$?
+            fi
+
+            if [[ "$dep_rc" == pending ]]; then
+                die "recursive rule $name: $depname"
+            elif [[ "$check" = unconditional ]]; then
+                uncond_call "$dep_rc" "$name: $depname~ ${depargs[*]}"
+                [[ -n "$check" ]] && BAR_CHECK_LEVEL=$((BAR_CHECK_LEVEL-1))
+                continue
+            elif [[ "$dep_rc" == 0 && "$check" = negated ]]; then
+                skip=true
+                failure "$name: !$depname ${depargs[*]}"
+                [[ -n "$check" ]] && BAR_CHECK_LEVEL=$((BAR_CHECK_LEVEL-1))
+                break
+            elif [[ "$dep_rc" != 0 ]]; then
+                if [[ "$check" = true ]]; then
+                    failure "$name: $depname? ${depargs[*]}"
+                    skip=true
+                    [[ -n "$check" ]] && BAR_CHECK_LEVEL=$((BAR_CHECK_LEVEL-1))
+                    break
+                elif [[ "$check" = negated ]]; then
+                    success "$name: !$depname ${depargs[*]}"
+                    [[ -n "$check" ]] && BAR_CHECK_LEVEL=$((BAR_CHECK_LEVEL-1))
+                    continue
+                fi
+                # conclusive fail because of dep failure
+                failure "$name: $depname ${depargs[*]}"
+                [[ -n "$check" ]] && BAR_CHECK_LEVEL=$((BAR_CHECK_LEVEL-1))
+                BAR_RULES_RESULT[$rule_id]="$dep_rc"
+                return "$dep_rc"
+            else
+                if [[ "$check" = true ]]; then
+                    success "$name: $depname? ${depargs[*]}"
+                elif [[ "$check" = negated ]]; then
+                    success "$name: !$depname ${depargs[*]}"
+                else
+                    success "$name: $depname ${depargs[*]}"
+                fi
+                [[ -n "$check" ]] && BAR_CHECK_LEVEL=$((BAR_CHECK_LEVEL-1))
+            fi
+        done
+
+        if [[ "$skip" != true ]]; then
+            local rc=0
+            eval "${BAR_CLAUSES[$clause]}" || rc=$?
+            if [[ "$rc" != 0 ]]; then
+                BAR_RULES_RESULT[$rule_id]=$rc
+                return "$rc"
+            fi
+        fi
+    done
+
+    BAR_RULES_RESULT[$rule_id]=0
+}
 
 function rule_exists ## <name> - checks if a rule is defined
 {
@@ -234,108 +349,6 @@ function rule_autoload ## <name>
         fi
         rule_exists "$1" || die "no rule, command or function '$1' defined"
     fi
-}
-
-function rule_eval ## <name> [args..]
-{
-    # shellcheck disable=2155
-    local rule_id="$(hash_args "$PWD $*")"
-    local name="$1"
-    shift
-
-    # shellcheck disable=2034
-    local RULE_ARGS=("$@")
-    rule_autoload "$name"
-
-    if [[ ! "$name" = "always_"* && -v BAR_RULES_RESULT[$rule_id] ]]; then
-        trace "cached result: $name = ${BAR_RULES_RESULT[$rule_id]}"
-        return "${BAR_RULES_RESULT[$rule_id]}"
-    fi
-
-    BAR_RULES_RESULT[$rule_id]="pending"
-
-    local clause
-    for clause in ${BAR_RULES[$name]}; do
-        local skip=
-        local dep
-        local deps=()
-        [[ "${#BAR_CLAUSE_DEPS[$clause]}" -gt 0 ]] && readarray -d $'\n' -t deps <<<"${BAR_CLAUSE_DEPS[$clause]}"
-
-        local dep
-        for dep in "${deps[@]}"; do
-            local depname="${dep%% *}"
-            declare -a depargs
-            read -r -a depargs <<<"${dep:${#depname}+1}"
-            local check=
-
-            if [[ "$depname" = *"?" ]]; then
-                check=true
-                depname="${depname%?}"
-            fi
-            if [[ "$depname" = "!"* ]]; then
-                check=negated
-                depname="${depname:1}"
-            fi
-            if [[ "$depname" = *"~" ]]; then
-                [[ -z "$check" ]] || die "~ can not be combined with ! or ?"
-                check=unconditional
-                depname="${depname%?}"
-            fi
-            [[ -n "$check" ]] && BAR_CHECK_LEVEL=$((BAR_CHECK_LEVEL+1))
-
-            # shellcheck disable=2155
-            local dep_id="$(hash_args "$PWD $depname ${depargs[*]}")"
-            local dep_rc="${BAR_RULES_RESULT[$dep_id]:-}"
-            # trace "dep_id: '$dep_id'"
-            # trace "cached dep_rc: '$dep_rc'"
-            if [[ "$dep_id" = "always_"* || -z "$dep_rc" ]]; then
-                dep_rc=0
-                # shellcheck disable=2086
-                rule_eval "$depname" "${depargs[@]}" || dep_rc=$?
-            fi
-
-            if [[ "$dep_rc" == pending ]]; then
-                die "recursive rule $name: $depname"
-            elif [[ "$check" = unconditional ]]; then
-                [[ -n "$check" ]] && BAR_CHECK_LEVEL=$((BAR_CHECK_LEVEL-1))
-                continue
-            elif [[ "$dep_rc" == 0 && "$check" = negated ]]; then
-                debug "skipped clause: $depname due to dependency check failure"
-                skip=true
-                [[ -n "$check" ]] && BAR_CHECK_LEVEL=$((BAR_CHECK_LEVEL-1))
-                break
-            elif [[ "$dep_rc" != 0 ]]; then
-                if [[ "$check" = true ]]; then
-                    debug "skipped clause: $depname due to dependency check failure"
-                    skip=true
-                    [[ -n "$check" ]] && BAR_CHECK_LEVEL=$((BAR_CHECK_LEVEL-1))
-                    break
-                elif [[ "$check" = negated ]]; then
-                    [[ -n "$check" ]] && BAR_CHECK_LEVEL=$((BAR_CHECK_LEVEL-1))
-                    continue
-                fi
-                # conclusive fail because of dep failure
-                failure 1 "$name: $depname ${depargs[*]}"
-                [[ -n "$check" ]] && BAR_CHECK_LEVEL=$((BAR_CHECK_LEVEL-1))
-                BAR_RULES_RESULT[$rule_id]="$dep_rc"
-                return "$dep_rc"
-            else
-                success 1 "$name: $depname ${depargs[*]}"
-                [[ -n "$check" ]] && BAR_CHECK_LEVEL=$((BAR_CHECK_LEVEL-1))
-            fi
-        done
-
-        if [[ "$skip" != true ]]; then
-            local rc=0
-            eval "${BAR_CLAUSES[$clause]}" || rc=$?
-            if [[ "$rc" != 0 ]]; then
-                BAR_RULES_RESULT[$rule_id]=$rc
-                return "$rc"
-            fi
-        fi
-    done
-
-    BAR_RULES_RESULT[$rule_id]=0
 }
 
 function hash_args # - returns the sha1hash of all supplied args
@@ -421,28 +434,38 @@ function die ## [message..] - prints 'message' to stderr and exits with failure
 
 function success ## [message..] -
 {
-    local level="$1"
-    shift
     if (( BAR_CHECK_LEVEL > 0 )); then
-        (( "${BAR_VERBOSITY_LEVEL:-5}" > level+1 )) && echo -e "\033[1;32mCHECK:\033[0m $*" >&2
+        (( "${BAR_VERBOSITY_LEVEL:-5}" > 2 )) && echo -e "\033[1;32mCHECK:\033[0m $*" >&2
     else
-        (( "${BAR_VERBOSITY_LEVEL:-5}" > level )) && echo -e "\033[1;32m   OK:\033[0m $*" >&2
+        (( "${BAR_VERBOSITY_LEVEL:-5}" > 1 )) && echo -e "\033[1;32m   OK:\033[0m $*" >&2
     fi
 }
 
 function failure ## [message..] -
 {
-    local level="$1"
-    shift
     if (( BAR_CHECK_LEVEL > 0 )); then
-        (( "${BAR_VERBOSITY_LEVEL:-5}" > level+1 )) && echo -e "\033[1;90mCHECK:\033[0m $*" >&2
+        (( "${BAR_VERBOSITY_LEVEL:-5}" > 2 )) && echo -e "\033[1;90mCHECK: \033[9m$*\033[0m" >&2
     else
-        (( "${BAR_VERBOSITY_LEVEL:-5}" > level )) && echo -e "\033[1;31m FAIL:\033[0m $*" >&2
+        (( "${BAR_VERBOSITY_LEVEL:-5}" > 1 )) && echo -e "\033[1;31m FAIL:\033[0m $*" >&2
+    fi
+}
+
+function uncond_call ## <rc> [message..] -
+{
+    declare -i rc="$1"
+    shift
+    if (( "${BAR_VERBOSITY_LEVEL:-5}" > 2 )); then
+        if (( rc == 0 )); then
+            echo -e "\033[1;32m EVAL:\033[0m $*" >&2
+        else
+            echo -e "\033[1;90m EVAL:\033[0m $*" >&2
+        fi
     fi
 }
 
 function error ## [message..] - may print a error message to stderr and return failure
 {
+    # TODO: (( ))
     if [[ "${BAR_VERBOSITY_LEVEL:-5}" -gt 0 ]]; then
         echo -e "\033[1;31mERROR:\033[0m $(source_info 1) $*" >&2
     fi
@@ -464,21 +487,21 @@ function note ## [message..] - may print an important notice to stderr
 
 function info ## [message..] - may print an informal message to stderr
 {
-    if [[ "${BAR_VERBOSITY_LEVEL:-5}" -gt 2 ]]; then
+    if [[ "${BAR_VERBOSITY_LEVEL:-5}" -gt 3 ]]; then
         echo -e "\033[1;34m INFO:\033[0m $*" >&2
     fi
 }
 
 function debug ## [message..] - may print a debug message to stderr
 {
-    if [[ "${BAR_VERBOSITY_LEVEL:-5}" -gt 3 ]]; then
+    if [[ "${BAR_VERBOSITY_LEVEL:-5}" -gt 4 ]]; then
         echo -e "\033[1;36mDEBUG:\033[0m $(source_info 1) $*" >&2
     fi
 }
 
 function trace ## [message] - may prints a trace message to stderr
 {
-    if [[ "${BAR_VERBOSITY_LEVEL:-5}" -gt 4 ]]; then
+    if [[ "${BAR_VERBOSITY_LEVEL:-5}" -gt 5 ]]; then
         echo -e "\033[1;96mTRACE:\033[0m $(source_info 1) $*" >&2
     fi
 }

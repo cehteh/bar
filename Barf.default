@@ -1,6 +1,12 @@
 #!/bash
 #shellcheck disable=SC2016
 
+#
+# This is the default Barf rule file shipped with bar.
+# It enables almost all bells and whistles here and implements some opinionated defaults.
+# Please customize it for your project.
+#
+
 rule main: lint test doc audit bench build
 # tag test_expensive
 
@@ -11,12 +17,12 @@ rule '!called_as *bar' testdir_enter main
 
 # for debugging
 rule --debug: -- '
-     BAR_VERBOSITY_LEVEL=4
+     BAR_VERBOSITY_LEVEL=5
      rule_eval "${RULE_ARGS[@]:-MAIN}"
 '
 
 rule --trace: -- '
-     BAR_VERBOSITY_LEVEL=5
+     BAR_VERBOSITY_LEVEL=6
      rule_eval "${RULE_ARGS[@]:-MAIN}"
 '
 

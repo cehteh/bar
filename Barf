@@ -26,12 +26,12 @@ rule '!called_as *bar' testdir_enter main
 
 # for debugging
 rule --debug: -- '
-     BAR_VERBOSITY_LEVEL=4
+     BAR_VERBOSITY_LEVEL=5
      rule_eval "${RULE_ARGS[@]:-MAIN}"
 '
 
 rule --trace: -- '
-     BAR_VERBOSITY_LEVEL=5
+     BAR_VERBOSITY_LEVEL=6
      rule_eval "${RULE_ARGS[@]:-MAIN}"
 '
 

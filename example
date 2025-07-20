@@ -26,10 +26,10 @@ function example
 }
 
 # add a tests rule with 3 clauses
-rule tests: example_ok? 'example "argument"' -- echo "example_ok success"
+rule tests: example_ok? !example_fail 'example "argument"' -- echo "example_ok success"
 rule tests: !example_ok -- echo "This is never called, but test still passes"
-rule tests: example_fail? -- echo "This is also never called"
 rule tests: example_fail~ -- echo "This unconditionally called even if example_fail fails"
+rule tests: example_fail? -- echo "This is also never called"
 
 # add tests to MAIN
 rule tests
