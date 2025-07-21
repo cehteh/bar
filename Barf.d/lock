@@ -18,7 +18,7 @@ function lock_wait #api {lockfile} - lock a lockfile, waits until we have the lo
     echo $$ > "$tmp_lockfile"
 
     # backoff with a binomial sequence
-    local backoff=1
+    declare -i backoff=1
 
     # Try to atomically acquire the lock
     while ! ln -s "$tmp_lockfile" "$1" 2>/dev/null; do
@@ -38,14 +38,10 @@ function lock_wait #api {lockfile} - lock a lockfile, waits until we have the lo
                 # Wait for the process to exit
                 trace "wait: $lockpid to complete"
                 wait "$lockpid" 2>/dev/null || sleep "${backoff:: -1}.${backoff: -1}"
-                [[ $backoff -lt 50 ]] && ((backoff+=1))
+                (( backoff < 50 )) && (( backoff+=1 ))
             fi
-
-            # Remove the stale lock
-            rm -f "$1"
         fi
     done
-
     trace "locked: $1 as $$"
 }
 
