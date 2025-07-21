@@ -1,4 +1,5 @@
 #!/bash
+# shellcheck disable=2016
 
 function is_cargo_tool_installed ## [+toolchain] <tool> [args..] - Checks if 'cargo <tool>' is installed
 {
@@ -29,12 +30,13 @@ function is_cargo_tool_installed ## [+toolchain] <tool> [args..] - Checks if 'ca
 
 memofn is_cargo_tool_installed
 
-rule cargo_audit: is_rust_project 'cargo_tool_installed audit' -- 'cargo audit --color never -D warnings --stale --quiet'
+rule cargo_audit: is_rust_project 'cargo_tool_installed audit' -- cargo audit --color never -D warnings --stale --quiet
 rule cargo_audit_opt: is_rust_project? 'is_cargo_tool_installed? audit' cargo_audit
 
-rule cargo_build: -- cargo build
-rule cargo_build_tests: -- cargo build --tests
-rule cargo_check: -- cargo check
+#rule cargo_build: -- cargo build "${RULE_ARGS[@]}"
+rule cargo_build: -- 'call_subcommand cargo build "${RULE_ARGS[@]}"'
+rule cargo_test: -- 'call_subcommand cargo test "${RULE_ARGS[@]}"'
+rule cargo_check: -- call_subcommand cargo check
 
 function cargo_clippy_errors ## - Tests with 'cargo clippy' for errors only
 {
@@ -49,11 +51,12 @@ function cargo_clippy_strict ## - Test with 'cargo clippy' for warnings and erro
 function cargo_doc ## - builds docs, backgrounds, optional.
 {
     export RUSTDOCFLAGS="-D rustdoc::broken_intra_doc_links"
-    run_action -b cargo doc
+    call_subcommand cargo doc "$@"
 }
 
 rule cargo_doc: 'cargo_tool_installed doc --help' -
 
-rule cargo_fmt_check: -- cargo fmt --all -- --check
+# only allows cargo options (+toolchain etc) as argument
+rule cargo_fmt_check: -- 'call_subcommand cargo fmt "${RULE_ARGS[@]}" -- --all -- --check'
 
 
