@@ -42,11 +42,11 @@ INVOCATION
 RULE SEMANTICS
 
   Rules are a named, ordered collection of clauses. They are considered pure with inputs being
-  the current directory and the rule arguments. Note that the content of files is by default
-  *not* considered. By being pure rules are evaluated lazily and only once, the result of a
-  rule is cached. A exception are rules starting with 'always_', such rules results are not
-  taken from the cache and the rule is always evaluated. Rules can be called with a list of
-  arguments.
+  the current directory and the rule arguments. Note that the content of files is *not*
+  considered and the body should not depend on external variables. By being pure rules are
+  evaluated lazily and only once, the result of a rule is cached. A exception are rules
+  starting with 'always_', such rules results are not taken from the cache and the rule is
+  always evaluated. Rules can be called with a list of arguments.
 
   Rules can be autoloaded on demand from modules in 'Barf.d/' (see below AUTOMATIC MODULE
   LOADING). For rules where this fails a fallback exits that creates an implicit rule for any
