@@ -12,12 +12,12 @@ ABOUT
   This is similar to other tools such as 'make' or 'just' but adds some opinionated
   differences. There is support for using bar as driver for githooks for automating workflows.
 
-  Rules in bar can have multiple clauses. A rule fails when any of its clauses fails. This is
-  short circuited on the first fail and the result of a rule is cached. Clauses can be
-  conditionally skipped.
+  Rules in bar can have multiple clauses. When any clause of a rule fails then the rule is
+  considerd failed as well and not further evaluated. The results of rules are cached. Clauses
+  can be conditionally skipped.
 
-  When you read this because you seen 'bar' used in a repository then you may look at
-  INITIAL INSTALLATION below.
+  When you read this because you seen 'bar' or '.bar' used in a repository then you may look
+  at INITIAL INSTALLATION below.
 
 
 INVOCATION
@@ -29,36 +29,42 @@ INVOCATION
   the main rulefile, which is "Barf", "barf", ".Barf", ".barf" when the first argument is not
   a file.
 
-  Then the given (or MAIN) rule with the supplied arguments becomes evaluated. Finally if
+  Then the given rule (or MAIN) with the supplied arguments becomes evaluated. Finally if
   exists a 'CLEANUP' rule is evaluated.
 
   The exit code of the invocation is the exit code of the main rule.
 
-  Just calling 'bar' without any arguments well evaluate the 'MAIN' rule which should be what
-  people expect by default. Other useful rules like 'help' for thid documentation are defined
-  as modules.
+  Just calling 'bar' without any arguments will evaluate the 'MAIN' rule which should be what
+  people expect by default. Other useful rules like 'help' for this documentation are defined
+  by modules.
 
 
 RULE SEMANTICS
 
   Rules are a named, ordered collection of clauses. They are considered pure with inputs being
-  the current directory and the rule arguments. Note that the content of files is *not*
+  the current directory name and the rules arguments. Note that the content of files is *not*
   considered and the body should not depend on external variables. By being pure rules are
-  evaluated lazily and only once, the result of a rule is cached. A exception are rules
-  starting with 'always_', such rules results are not taken from the cache and the rule is
-  always evaluated. Rules can be called with a list of arguments.
+  evaluated lazily and only once, the result of a rule is cached. This means that rules, esp
+  the actions within the body must have deterministic sematics. For performance reasons this
+  is not enforced but one may observe surprising behavior when this requirement is violated.
 
-  Rules can be autoloaded on demand from modules in 'Barf.d/' (see below AUTOMATIC MODULE
+  An exception are rule names that start with 'always_', such rules results are not taken from
+  the cache and the rule is always evaluated.
+
+  Rules will be autoloaded on demand from modules in 'Barf.d/' (see below AUTOMATIC MODULE
   LOADING). For rules where this fails a fallback exits that creates an implicit rule for any
   command and shell function defined with a body calling the respective command.
 
-  Each clause in a rule has its own set of dependency rules which are evaluated in order. When
-  a (normal) dependency fails then rule calling it is considered to be failed as well and no
-  further attempts to evaluate following dependencies and clauses are made.
+  Each clause in a rule has its own set of dependencies. Dependencies are otehr rules which
+  are evaluated in order. When a (normal) dependency fails then rule evaluating it is
+  considered to be failed as well and no further attempts to evaluate following dependencies
+  and clauses are made.
 
   Dependencies can be marked as 'checking' dependency which either expects the dependency to
   succeed (suffixed with a '?') or fail (prefixed with a '!'). When such a checking dependency
   fails then the rest of the current clause is skipped. This allows conditional evaluation.
+  Further some dependencies may be tagged as unconditional, these are just evaluated but the
+  dependent rules evaluation proceeds even if such a unconditional rule fails.
 
   Finally every clause can have an optional body. This are shell commands executed when all
   dependencies succeeded.
@@ -73,43 +79,29 @@ RULE DEFINITION SYNTAX
   * [<name>:]
 
     A rule can have a optional name (suffixed with a colon).  When the name is not given it
-    defaults to 'MAIN'.  Rules that have only a name but no dependencies and no body default
-    to call a bash command or function with the arguments passed to the rule. Rule names may
-    include underscores, then the word before the first underscore is used to determine a
-    module name used for auto-loading rules. They can have special prefixes which are removed
-    when auto-loading:
-
-    - 'is_' and 'has_' are reserved for check rules they don't have any special semantic
-      except for being stripped at auto loading.
-    - The result of rules which start with 'always_' will no be cached and if used as
-      dependency it will always be evaluated.  This is useful for stateful rules like
-      counters. Can be combined in front of 'is_' or 'has_'. Is also stripped for auto
-      loading.
-
-    Any shell command and function can be used as rule too. In that case a rule for it will be
-    generated on the fly.
-
-    A '_opt' suffix may be used when the rule may be skipped because of failed check
-    dependencies without erroneous effects, such as skipping linters when not installed.
+    defaults to 'MAIN'.
+    Rules that have only a name but no dependencies and no body create a body that
+    body that calls a bash command or function with the same name as the rule passing
+    rule arguments to it.
 
   * [[!]deps[?|~] args..]..
 
     Dependencies, are a list of other rules that this rule depends on. These will be executed
     in order. If any of the dependencies fails then this rule is considered failed as well, no
     further dependencies, bodies or clauses are executed unless this dependency is a checking
-    one.
+    or unconditional one.
 
     A dependency can be either prefixed with an exclamation mark or suffixed with a question
     mark or tilde. The exclamation mark prefix expects the dependency to fail and will
     continue then, if the dependency succeeds then the remaining dependencies and the rule
     body are skipped. With a question mark as suffix the dependency is expected to succeed,
     when it fails then the rest of the dependencies and the rule body is skipped. With a tilde
-    as suffix outcome of the dependencny is ignored, the dependency is considered to be
-    successful and the rest of the dependencies and the rule body is executed.  The difference
-    here is that such dependencies decide if a clause should be skipped or succeed while a
-    failure on a normal dependency will fail a rule instantly.
+    as suffix outcome of the dependencny is ignored and the rest of the dependencies and the
+    rule body is executed.  The difference here is that these checking dependencies decide if
+    a clause should be skipped or succeed while a failure on a normal dependency will fail a
+    rule instantly.
 
-    Dependencies can have arguments when provided then the dependency and its arguments must
+    Dependencies can have arguments. When provided then the dependency and its arguments must
     be quoted. These arguments are passed in the 'RULE_ARGS' array to the body of the rule.
 
   * -
@@ -174,14 +166,6 @@ RULE DEFINITION SYNTAX
     As an exception adding clauses to 'CLEANUP' is allowed.
 
 
-STANDARD RULES
-
-  Bar ships with a module that defines a set of standard rules where other modules can add
-  clauses to. Check 'Barf.d/std_rules' for details.
-
-  Aside from 'MAIN' and 'CLEANUP' there are no other predefined rules.
-
-
 MODULES
 
   Modules are shell snippets located in 'Barf.d/', 'barf.d/', '.Barf.d/' or '.barf.d/'.
@@ -206,6 +190,18 @@ MODULES
 
 AUTOMATIC MODULE LOADING
 
+ Rule names may include underscores, then the word before the first
+    underscore is used to determine a module name used for auto-loading rules. They can have
+    special prefixes which are removed when auto-loading:
+
+    - 'is_' and 'has_' are reserved for check rules they don't have any special semantic
+      except for being stripped at auto loading.
+    - The result of rules which start with 'always_' will no be cached and if used as
+      dependency it will always be evaluated.  This is useful for stateful rules like
+      counters. Can be combined in front of 'is_' or 'has_'. Is also stripped for auto
+      loading.
+
+
   When a rule is not found then a module name is derived from the rule name by removing the
   'always_', 'is_', 'has_' prefixes and cutting off anything with and behind the first
   underscore. Eg. 'always_if_module_check' results in 'module'. This is then searched as
@@ -216,6 +212,14 @@ AUTOMATIC MODULE LOADING
 
   Modules that contain underscores are unconditionally loaded at startup. These can add
   clauses to existing rules because no rule evaluation took place yet.
+
+
+STANDARD RULES
+
+  Bar ships with a module that defines a set of standard rules where other modules can add
+  clauses to. Check 'Barf.d/std_rules' for details.
+
+  Aside from 'MAIN' and 'CLEANUP' there are no other predefined rules.
 
 
 INITIAL INSTALLATION
