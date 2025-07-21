@@ -406,7 +406,7 @@ function memo ## [-c|-d] [cmd args..].. - memoize the result/stdout/stderr of co
         MEMO_RC["$key"]=$rc
         IFS= read -r -d '' MEMO_STDOUT["$key"] < "/tmp/$key.stdout"
         IFS= read -r -d '' MEMO_STDERR["$key"] < "/tmp/$key.stderr"
-        rm "/tmp/$key.stdout" "/tmp/$key.stderr"
+        rm "/tmp/$key.stdout" "/tmp/$key.stderr" 2>/dev/null
         return "$rc"
     fi
 }
