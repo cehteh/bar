@@ -405,7 +405,7 @@ function memo ## [-c|-d] [cmd args..].. - memoize the result/stdout/stderr of co
     declare -gA MEMO_STDOUT MEMO_STDERR
 
     # shellcheck disable=SC2155
-    local key="$(hash_args "$PWD $*")"
+    local key="$(hash_args "$$ $PWD $*")"
 
     if [[ $delete = true && -v MEMO_RC["$key"] ]]; then
         unset "MEMO_RC[$key]" "MEMO_STDOUT[$key]" "MEMO_STDERR[$key]"
@@ -416,17 +416,13 @@ function memo ## [-c|-d] [cmd args..].. - memoize the result/stdout/stderr of co
         echo -n "${MEMO_STDERR[$key]}" 1>&2
         return ${MEMO_RC["$key"]}
     elif [[ $# -ge 1 ]]; then
-        local errexit=false
-        [[ $- == *e* ]] && errexit=true
-        set +e
         touch "/tmp/$key.stdout" "/tmp/$key.stderr"
-        eval "$*" > >(tee "/tmp/$key.stdout") 2> >(tee "/tmp/$key.stderr" 1>&2)
-        local rc=$?
-        [[ $errexit = true ]] && set -e
+        local rc=0
+        eval "$*" > >(tee "/tmp/$key.stdout") 2> >(tee "/tmp/$key.stderr" 1>&2) || rc=$?
         MEMO_RC["$key"]=$rc
         IFS= read -r -d '' MEMO_STDOUT["$key"] < "/tmp/$key.stdout"
         IFS= read -r -d '' MEMO_STDERR["$key"] < "/tmp/$key.stderr"
-        rm "/tmp/$key.stdout" "/tmp/$key.stderr" 2>/dev/null
+        rm "/tmp/$key.stdout" "/tmp/$key.stderr"
         return "$rc"
     fi
 }
