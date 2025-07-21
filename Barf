@@ -1,18 +1,17 @@
 #!/bash
 #shellcheck disable=SC2016
 
-# This is the barfile for testing 'bar' itself. A more generalized and customizeable barfile
+# This is the barfile for maintaining 'bar' itself. A more generalized and customizeable barfile
 # that become installed with 'bar init_local' is the Barf.default file in this directory.
 
 # We only lint here
-rule main: lint
+rule main: lint doc
 
 # manually testing the staged changes
 rule test_staged: testdir_enter main
 
 # maintenance rules
-rule build_doc: -- './bar help >README 2>/dev/null'
-rule build_doc: -- 'git add README'
+rule build_docs: -- './bar help >README'
 
 # TODO: check that doc is up to date when committing
 #rule test_doc: -- 'git diff --exit-code README'
