@@ -34,6 +34,16 @@ INVOCATION
   by modules.
 
 
+GIT HOOK ACTIVATION
+
+  Bar will be inert in a project that has bar initialized. One can call it manually by
+  './bar'.  A maintainer of the project may define 'activate' rules that activate
+  githooks. These are then activated by './bar activate'. This will create symlinks in the
+  '.git/hooks/' directory to the 'bar' script. These hooks will then be executed when the
+  respective git hook is triggered. The rules for these hooks are defined in the 'Barf' file
+  in the project directory.
+
+
 RULE SEMANTICS
 
   Rules are a named, ordered collection of clauses. They are considered pure with inputs being
