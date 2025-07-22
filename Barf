@@ -8,7 +8,7 @@
 rule main: lint doc
 
 # manually testing the staged changes
-rule test_staged: testdir_enter main
+rule test_staged: testdir_enter lint
 
 # maintenance rules
 rule build_docs: -- './bar help >README'
