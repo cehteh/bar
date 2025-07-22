@@ -145,6 +145,13 @@ function rule () ## [<name>:] [[!]dep[?] [arg]..].. [-- body..] - defines a rule
     BAR_RULES["$name"]+=" $(( ${#BAR_CLAUSES[@]} - 1))"
 }
 
+function newrule ## <name:> ... - creates a new rule with the given name, deletes the existing one
+
+{
+    rule_delete "${1%:}"
+    rule "$@"
+}
+
 function rule_delete
 {
     trace "$*"
