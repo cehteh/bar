@@ -15,8 +15,9 @@ function is_cargo_project ## - Checks if 'Cargo.toml' exists
 
 rule is_rust_project: is_cargo_project is_cargo_installed
 
+rule rust_lint: cargo_check cargo_clippy_strict cargo_fmt_check
 
-rule lint: is_rust_project? cargo_check cargo_clippy_strict cargo_fmt_check
+rule lint_sources: is_rust_project? 'rule_exists? rust_lint' rust_lint
 
 rule build_tests: is_rust_project? 'cargo_build --tests'
 rule build_benches: is_rust_project? 'cargo_build --benches'

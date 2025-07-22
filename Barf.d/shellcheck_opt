@@ -1,5 +1,6 @@
 #!/bash
 
+# this rule can be deleted/renamed to disable shellcheck linting
 rule shellcheck: 'is_command_installed? shellcheck' shellcheck_lint
 
-rule lint: shellcheck
+rule lint: 'rule_exists? shellcheck' shellcheck
