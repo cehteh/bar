@@ -23,6 +23,10 @@ rule 'called_as? *bar' main
 rule '!called_as *bar' testdir_enter main
 #rule 'called_as? *.git/hooks/*'
 
+rule activate: 'githook_enable~ pre-commit'
+
+rule watch: -- 'rule_eval entr_watch "${RULE_ARGS[@]}"'
+
 # for debugging
 rule --debug: -- '
      BAR_VERBOSITY_LEVEL=5
