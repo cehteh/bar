@@ -13,6 +13,7 @@ rule testdir_enter: is_git_toplevel -
 
 function testdir_enter # treeish - Sets up a test directory change dir into it.
 {
+    trace "$*"
     lock_wait .bar.lock
     local treeish="${1:-}"
 
@@ -24,8 +25,8 @@ function testdir_enter # treeish - Sets up a test directory change dir into it.
         TESTDIR="$(git_toplevel)/${TESTDIR_PREFIX}-$BAR_TIMESTAMP-$treeish"
         info "creating: $TESTDIR"
         mkdir -p "$TESTDIR"
-        git --work-tree "$TESTDIR" checkout "$treeish" -- .
         ln -s "$(git_dir)" "$TESTDIR/.git" || { error "cant link .git to $TESTDIR/.git"; return 1; }
+        git --work-tree "$TESTDIR" checkout "$treeish" -- . || { error "cant checkout $treeish into $TESTDIR"; return 1; }
 
         # find the dir of the previous test if any
         TESTDIR_PREV="$(find . -path "$(git_toplevel)/${TESTDIR_PREFIX}*" -type d | sort -rn | head -n 1)"
@@ -38,13 +39,20 @@ function testdir_enter # treeish - Sets up a test directory change dir into it.
     cd "$TESTDIR" || { error "cant change into $TESTDIR"; return 1; }
 }
 
-function testdir_gc # - cleanup old test dirs
+function testdir_gc # - cleanup old testdirs
 {
+    # FIXME: only delete testdirs that can be locked
     find "$(git_toplevel)" -name "${TESTDIR_PREFIX}*" -type d -print0 | sort -z -n | head -z -n -$((TESTDIR_KEEP)) | xargs -0 -n1 -r rm -rf
 }
 
-function testdir_clean # - cleanup old test dirs
+function testdir_clean # - cleanup all testdirs
 {
+    # FIXME: only delete testdirs that can be locked
     find "$(git_toplevel)" -name "${TESTDIR_PREFIX}*" -type d -print0 | xargs -0 -n1 -r rm -rf
+}
+
+function testdir_list # - list all testdirs
+{
+    find "$(git_toplevel)" -name "${TESTDIR_PREFIX}*" -type d
 }
 
