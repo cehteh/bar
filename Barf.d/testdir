@@ -30,6 +30,7 @@ function testdir_enter # treeish - Sets up a test directory change dir into it.
         # find the dir of the previous test if any
         TESTDIR_PREV="$(find . -path "$(git_toplevel)/${TESTDIR_PREFIX}*" -type d | sort -rn | head -n 1)"
     else
+        git --work-tree "$TESTDIR" checkout "$treeish" -- .
         info "using existing: $TESTDIR"
     fi
     lock_next .bar.lock "$TESTDIR/.bar.lock"

@@ -165,7 +165,7 @@ function rule_delete
         return 1
     fi
 
-    if [[ -n "$BAR_RULES_SEALED" ]]; then
+    if [[ -n "${BAR_RULES_SEALED:-}" ]]; then
         error "Can not delete rule '$name' after rules are sealed"
         return 1
     fi
@@ -189,7 +189,7 @@ function rule_rename ## <oldname> <newname> - renames a rule
         return 1
     fi
 
-    if [[ -n "$BAR_RULES_SEALED" ]]; then
+    if [[ -n "${BAR_RULES_SEALED:-}" ]]; then
         error "Can not rename rule '$oldname' after rules are sealed"
         return 1
     fi
@@ -204,6 +204,7 @@ function rule_rename ## <oldname> <newname> - renames a rule
 
 function rule_eval ## <name> [args..]
 {
+    trace "$*"
     # shellcheck disable=2155
     local rule_id="$(hash_args "$PWD $*")"
     local name="$1"

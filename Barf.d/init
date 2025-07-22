@@ -24,26 +24,26 @@ function init # --hidden|--update
     fi
 
     if [[ -n "$update" ]]; then
-      if [[ -f bar ]]; then
-          cp -Lu "$origin" "bar"
-          cp -Lru "$prefix/share/bar/Barf.d/"* "Barf.d"
-      elif [[ -f .bar ]]; then
-          cp -Lu "$origin" ".bar"
-          cp -Lru "$prefix/share/bar/Barf.d/"* ".Barf.d"
-      else
-          die "bar not initialized"
-      fi
-      return 0
+        if [[ -f bar ]]; then
+            cp -Lu "$origin" "bar"
+            cp -Lru "$prefix/share/bar/Barf.d/"* "Barf.d"
+        elif [[ -f .bar ]]; then
+            cp -Lu "$origin" ".bar"
+            cp -Lru "$prefix/share/bar/Barf.d/"* ".Barf.d"
+        else
+            die "bar not initialized"
+        fi
+        return 0
     fi
 
     if [[ -z "$hidden" ]]; then
-          cp -L "$origin" "bar"
-          cp -L "$prefix/share/bar/Barf" "Barf"
-          cp -Lr "$prefix/share/bar/Barf.d" "Barf.d"
+        cp -L "$origin" "bar"
+        cp -L "$prefix/share/bar/Barf" "Barf"
+        cp -Lr "$prefix/share/bar/Barf.d" "Barf.d"
     else
-          cp -L "$origin" ".bar"
-          cp -L "$prefix/share/bar/Barf" ".Barf"
-          cp -Lr "$prefix/share/bar/Barf.d" ".Barf.d"
+        cp -L "$origin" ".bar"
+        cp -L "$prefix/share/bar/Barf" ".Barf"
+        cp -Lr "$prefix/share/bar/Barf.d" ".Barf.d"
     fi
     return 0
 }
