@@ -16,7 +16,6 @@ function githook_enable
 }
 
 rule githook_enable: is_git_toplevel -
-#- githook_enable
 
 function githook_disable
 {

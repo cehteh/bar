@@ -2,7 +2,6 @@
 
 rule is_shellcheck_available: 'is_command_installed shellcheck' has_shellcheck_scripts
 
-
 function shellcheck_is_shscript ## <file> - Check if <file> is a shell script
 {
     [[ -f "$1" ]] && { head -1 "$1" | grep -q "^#!.*sh" ; }
