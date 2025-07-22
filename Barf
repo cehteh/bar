@@ -14,7 +14,7 @@ rule test_staged: testdir_enter lint
 rule build_docs: -- './bar help >README'
 
 # TODO: check that doc is up to date when committing
-#rule test_doc: -- 'git diff --exit-code README'
+rule lint_docs: build_docs -- 'git diff --exit-code README'
 
 # called as *bar run the 'main' rule in the current dir
 rule 'called_as? *bar' main
