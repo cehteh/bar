@@ -27,6 +27,20 @@ rule activate: 'githook_enable~ pre-commit'
 
 rule watch: -- 'rule_eval entr_watch "${RULE_ARGS[@]}"'
 
+# enter a recursive shell for debugging
+rule dbgsh: -- '
+     echo "Entering bar shell, try <help>."
+     bash --rcfile <(
+          declare -f
+          typeset -p | grep -Ev "^declare -[a-zA-Z]*r"
+          echo "
+          PS1=\"(bar) \w \$ \"
+          enable -n help
+          require help
+          "
+     )
+'
+
 # for debugging
 rule --debug: -- '
      BAR_VERBOSITY_LEVEL=5
