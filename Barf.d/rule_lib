@@ -1,0 +1,254 @@
+#!/bash
+#shellcheck disable=SC2016
+
+# library for the rule functions
+
+declare -g   BAR_CHECK_LEVEL=0         ## less alerting for check dependencies
+declare -g   BAR_RULES_SEALED          ## set to the last rule or 'true' when rules are sealed
+declare -gAx BAR_RULES                 ## discovered rules as name:"clauseidx.."
+declare -gAx BAR_RULES_RESULT          ## result "name args..":rc
+declare -gax BAR_CLAUSES=()            ## clause bodies enumerated
+declare -gax BAR_CLAUSE_DEPS=()        ## dependencies for each clause
+
+function rule () ## [<name>:] [[!]dep[?] [arg]..].. [-- body..] - defines a rule
+{
+    trace "$*"
+    local name="$1"
+    if [[ "$name" = *: ]]; then
+        name="${name%:}"
+        shift
+    else
+        name=""
+    fi
+
+    local deps=()
+    local has_body=
+    local deps_for_cmd=
+    while [[ $# -ne 0 ]]; do
+        if [[ "$1" = - ]]; then
+            shift
+            deps_for_cmd=true
+            break
+        fi
+        if [[ "$1" = -- ]]; then
+            shift
+            has_body=true
+            break
+        fi
+        deps+=("$1")
+        shift
+    done
+
+    # name given but no deps, no body, make body default to the rule name
+    local body=""
+    if [[ "${#deps[*]}" = 0 && "$#" == 0 && -n "$name" ]]; then
+        body="$name "'"${RULE_ARGS[@]}"'
+    elif [[ -n "$deps_for_cmd" && "$#" == 0 && -n "$name" ]]; then
+        rule_exists "$name" && die "rule '$name' already defined"
+        body="$name "'"${RULE_ARGS[@]}"'
+    elif [[ -z "$name" ]]; then
+        # default to MAIN when no rule name is given
+        name="MAIN"
+    fi
+
+    if [[ -v BAR_RULES_SEALED ]]; then
+        trace "names ${!BAR_RULES[*]}"
+        if [[ -v BAR_RULES[$name] && "$name" != "$BAR_RULES_SEALED" && "$name" != "CLEANUP" ]]; then
+            die "Can not add clause '$name: ${deps[*]}' after rules are sealed"
+        else
+            BAR_RULES_SEALED="$name"
+        fi
+    fi
+
+    local ifs="$IFS"
+    IFS=$'\n'
+    BAR_CLAUSE_DEPS+=("${deps[*]}")
+    IFS="$ifs"
+
+    if [[ "$has_body" = true && $# = 0 ]]; then
+        BAR_CLAUSES+=("$(cat)")
+    else
+        BAR_CLAUSES+=("$body$*")
+    fi
+
+    BAR_RULES["$name"]+=" $(( ${#BAR_CLAUSES[@]} - 1))"
+}
+
+function newrule ## <name:> ... - creates a new rule with the given name, deletes the existing one
+
+{
+    rule_delete "${1%:}"
+    rule "$@"
+}
+
+function rule_delete
+{
+    trace "$*"
+    local name="$1"
+    if [[ -z "$name" ]]; then
+        die "rule_delete requires a rule name"
+    fi
+
+    if ! rule_exists "$name"; then
+        error "rule '$name' does not exist"
+        return 1
+    fi
+
+    if [[ -n "${BAR_RULES_SEALED:-}" ]]; then
+        error "Can not delete rule '$name' after rules are sealed"
+        return 1
+    fi
+
+    unset "BAR_RULES[$name]"
+    unset "BAR_RULES_RESULT[$name]"
+}
+
+function rule_rename ## <oldname> <newname> - renames a rule
+{
+    trace "$*"
+    local oldname="$1"
+    local newname="$2"
+
+    if [[ -z "$oldname" || -z "$newname" ]]; then
+        die "rule_rename requires two rule names"
+    fi
+
+    if ! rule_exists "$oldname"; then
+        error "rule '$oldname' does not exist"
+        return 1
+    fi
+
+    if [[ -n "${BAR_RULES_SEALED:-}" ]]; then
+        error "Can not rename rule '$oldname' after rules are sealed"
+        return 1
+    fi
+
+    BAR_RULES["$newname"]="${BAR_RULES[$oldname]}"
+    unset "BAR_RULES[$oldname]"
+    if [[ -v BAR_RULES_RESULT["$oldname"] ]]; then
+        BAR_RULES_RESULT["$newname"]="${BAR_RULES_RESULT[$oldname]}"
+        unset "BAR_RULES_RESULT[$oldname]"
+    fi
+}
+
+function rule_eval ## <name> [args..]
+{
+    trace "$*"
+    # shellcheck disable=2155
+    local rule_id="$(hash_args "$PWD $*")"
+    local name="$1"
+    shift
+
+    # shellcheck disable=2034
+    local RULE_ARGS=("$@")
+    rule_exists "$name" || rule_autoload "$name"
+
+#    local rc
+
+    if [[ ! "$name" = "always_"* && -v BAR_RULES_RESULT[$rule_id] ]]; then
+        # rc="${BAR_RULES_RESULT[$rule_id]}"
+        # if (( "$rc" == 0 )); then
+        #     success "$name"
+        # else
+        #     failure "$name"
+        # fi
+        return "${BAR_RULES_RESULT[$rule_id]}"
+    fi
+
+    BAR_RULES_RESULT[rule_id]="pending"
+
+    local clause
+    for clause in ${BAR_RULES[$name]}; do
+        local skip=
+        local dep
+        local deps=()
+        [[ "${#BAR_CLAUSE_DEPS[$clause]}" -gt 0 ]] && readarray -d $'\n' -t deps <<<"${BAR_CLAUSE_DEPS[$clause]}"
+
+        local dep
+        for dep in "${deps[@]}"; do
+            local depname="${dep%% *}"
+            declare -a depargs
+            read -r -a depargs <<<"${dep:${#depname}+1}"
+            local check=
+
+            if [[ "$depname" = *"?" ]]; then
+                check=true
+                depname="${depname%?}"
+            fi
+            if [[ "$depname" = "!"* ]]; then
+                check=negated
+                depname="${depname:1}"
+            fi
+            if [[ "$depname" = *"~" ]]; then
+                [[ -z "$check" ]] || die "~ can not be combined with ! or ?"
+                check=unconditional
+                depname="${depname%?}"
+            fi
+            [[ -n "$check" ]] && BAR_CHECK_LEVEL=$((BAR_CHECK_LEVEL+1))
+
+            # shellcheck disable=2155
+            local dep_id="$(hash_args "$PWD $depname ${depargs[*]}")"
+            local dep_rc="${BAR_RULES_RESULT[$dep_id]:-}"
+            if [[ "$dep_id" = "always_"* || -z "$dep_rc" ]]; then
+                dep_rc=0
+                # shellcheck disable=2086
+                rule_eval "$depname" "${depargs[@]}" || dep_rc=$?
+            fi
+
+            if [[ "$dep_rc" == pending ]]; then
+                die "recursive rule $name: $depname"
+            elif [[ "$check" = unconditional ]]; then
+                uncond_call "$dep_rc" "$name: $depname~ ${depargs[*]}"
+                [[ -n "$check" ]] && BAR_CHECK_LEVEL=$((BAR_CHECK_LEVEL-1))
+                continue
+            elif [[ "$dep_rc" == 0 && "$check" = negated ]]; then
+                skip=true
+                failure "$name: !$depname ${depargs[*]}"
+                [[ -n "$check" ]] && BAR_CHECK_LEVEL=$((BAR_CHECK_LEVEL-1))
+                break
+            elif [[ "$dep_rc" != 0 ]]; then
+                if [[ "$check" = true ]]; then
+                    failure "$name: $depname? ${depargs[*]}"
+                    skip=true
+                    [[ -n "$check" ]] && BAR_CHECK_LEVEL=$((BAR_CHECK_LEVEL-1))
+                    break
+                elif [[ "$check" = negated ]]; then
+                    success "$name: !$depname ${depargs[*]}"
+                    [[ -n "$check" ]] && BAR_CHECK_LEVEL=$((BAR_CHECK_LEVEL-1))
+                    continue
+                fi
+                # conclusive fail because of dep failure
+                failure "$name: $depname ${depargs[*]}"
+                [[ -n "$check" ]] && BAR_CHECK_LEVEL=$((BAR_CHECK_LEVEL-1))
+                BAR_RULES_RESULT[rule_id]="$dep_rc"
+                return "$dep_rc"
+            else
+                if [[ "$check" = true ]]; then
+                    success "$name: $depname? ${depargs[*]}"
+                elif [[ "$check" = negated ]]; then
+                    success "$name: !$depname ${depargs[*]}"
+                else
+                    success "$name: $depname ${depargs[*]}"
+                fi
+                [[ -n "$check" ]] && BAR_CHECK_LEVEL=$((BAR_CHECK_LEVEL-1))
+            fi
+        done
+
+        if [[ "$skip" != true ]]; then
+            local rc=0
+            eval "${BAR_CLAUSES[$clause]}" || rc=$?
+            if [[ "$rc" != 0 ]]; then
+                BAR_RULES_RESULT[rule_id]=$rc
+                return "$rc"
+            fi
+        fi
+    done
+
+    BAR_RULES_RESULT[rule_id]=0
+}
+
+function rule_exists ## <name> - checks if a rule is defined
+{
+    [[ -v BAR_RULES[$1] ]]
+}
+

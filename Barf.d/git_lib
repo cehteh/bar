@@ -1,5 +1,4 @@
 #!/bash
-
 # shellcheck disable=2016
 
 function git_toplevel

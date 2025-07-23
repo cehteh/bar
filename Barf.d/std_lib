@@ -2,6 +2,111 @@
 
 # library of general functions
 
+# TODO: add [-s|--state "extrastate"]
+
+function memo ## [-c|-d] [cmd args..].. - memoize the result/stdout/stderr of commands, will always return the same result again
+{
+    if [[ $1 == "-c" ]]; then
+        unset MEMO_RC MEMO_STDOUT MEMO_STDERR
+        shift
+    fi
+
+    local delete=false
+    if [[ $1 == "-d" ]]; then
+        delete=true
+        shift
+    fi
+
+    declare -gAi MEMO_RC
+    declare -gA MEMO_STDOUT MEMO_STDERR
+
+    # shellcheck disable=SC2155
+    local key="$(hash_args "$$ $PWD $*")"
+
+    if [[ $delete = true && -v MEMO_RC["$key"] ]]; then
+        unset "MEMO_RC[$key]" "MEMO_STDOUT[$key]" "MEMO_STDERR[$key]"
+    fi
+
+    if [[ -v MEMO_RC["$key"] ]]; then
+        echo -n "${MEMO_STDOUT[$key]}"
+        echo -n "${MEMO_STDERR[$key]}" 1>&2
+        return ${MEMO_RC["$key"]}
+    elif [[ $# -ge 1 ]]; then
+        touch "/tmp/$key.stdout" "/tmp/$key.stderr"
+        local rc=0
+        eval "$*" > >(tee "/tmp/$key.stdout") 2> >(tee "/tmp/$key.stderr" 1>&2) || rc=$?
+        MEMO_RC["$key"]=$rc
+        IFS= read -r -d '' MEMO_STDOUT["$key"] < "/tmp/$key.stdout"
+        IFS= read -r -d '' MEMO_STDERR["$key"] < "/tmp/$key.stderr"
+        rm "/tmp/$key.stdout" "/tmp/$key.stderr"
+        return "$rc"
+    fi
+}
+
+function memofn ## <functionnames..> - rewrites a function into a function that uses 'memo'
+{
+    for fn in "$@"; do
+        # rename the original function as nomemo_*
+        eval "nomemo_$(declare -f "$fn")"
+        # create a new function that calls memo with the original function
+        eval "function $fn () { memo nomemo_$fn \"\$@\" ; }"
+    done
+}
+
+
+function success ## [message..] -
+{
+    if (( BAR_CHECK_LEVEL > 0 )); then
+        (( "${BAR_VERBOSITY_LEVEL:-5}" > 2 )) && echo -e "\033[1;32mCHECK:\033[0m $*" >&2
+    else
+        (( "${BAR_VERBOSITY_LEVEL:-5}" > 1 )) && echo -e "\033[1;32m   OK:\033[0m $*" >&2
+    fi
+}
+
+function failure ## [message..] -
+{
+    if (( BAR_CHECK_LEVEL > 0 )); then
+        (( "${BAR_VERBOSITY_LEVEL:-5}" > 2 )) && echo -e "\033[1;90mCHECK: \033[9m$*\033[0m" >&2
+    else
+        (( "${BAR_VERBOSITY_LEVEL:-5}" > 1 )) && echo -e "\033[1;31m FAIL:\033[0m $*" >&2
+    fi
+}
+
+function uncond_call ## <rc> [message..] -
+{
+    declare -i rc="$1"
+    shift
+    if (( "${BAR_VERBOSITY_LEVEL:-5}" > 2 )); then
+        if (( rc == 0 )); then
+            echo -e "\033[1;32m EVAL:\033[0m $*" >&2
+        else
+            echo -e "\033[1;90m EVAL:\033[0m $*" >&2
+        fi
+    fi
+}
+
+
+function rule_autoload ## <name>
+{
+    trace "$*"
+    local modname="${1#always_}"
+    modname="${modname#is_}"
+    modname="${modname#has_}"
+    modname="${modname%%_*}"
+    require "$modname" || true
+
+    # when $name exists as command or function then create a rule for that
+    if ! rule_exists "$1" && command -v "$1" >/dev/null ; then
+        rule "$1:"
+    fi
+    rule_exists "$1" || die "no rule, command or function '$1' defined"
+}
+
+
+
+
+
+
 # checks whenever a shell command is in PATH
 function is_command_installed
 {
@@ -29,3 +134,34 @@ function called_as ## [pattern..]
     return 1
 }
 
+function bar_now() ## - returns the current timestamp in microseconds since epoch
+{
+    echo "${EPOCHREALTIME//[^0-9]/}"
+}
+
+function call_subcommand # commmand subcommand [command_args].. -- [subcommand_args]..
+{
+    local command="$1"
+    local subcommand="$2"
+    shift 2
+    local args=()
+    local has_dash_dash=
+    while [[ "$#" -gt 0 && "$1" != -- ]]; do
+        args+=("$1")
+        shift
+    done
+    [[ "${1:-}" = '--' ]] && { has_dash_dash=true; shift ;}
+
+    if [[ -n "$has_dash_dash" ]]; then
+        "$command" "${args[@]}" "$subcommand" "$@"
+    else
+        "$command" "$subcommand" "${args[@]}"
+    fi
+}
+
+function hash_args # - returns the sha1hash of all supplied args
+{
+    # shellcheck disable=SC2155
+    local hash="$(sha1sum <<<"$*")"
+    echo "${hash:0:40}"
+}
