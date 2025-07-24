@@ -11,6 +11,10 @@
 
 function lock_wait #api {lockfile} - lock a lockfile, waits until we have the lock
 {
+    [[ -L "$1" && "$(cat "$1")" = "$$" ]] && {
+        die "lockfile $1 already exists and is owned by this process ($$), skipping lock"
+    }
+
     # Create a temporary lockfile specific to this process
     local tmp_lockfile="${1}.$$"
 
