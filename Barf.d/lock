@@ -29,18 +29,24 @@ function lock_wait #api {lockfile} - lock a lockfile, waits until we have the lo
             local lockpid="${lockfile_target##*.}"
 
             # Check if the process still exists
-            if ! kill -0 "$lockpid" 2>/dev/null; then
-                # Process is gone, remove the stale lock
-                rm -f "$1"
-                trace "removed stale lock from process $lockpid"
-                continue
-            else
+            if kill -0 "$lockpid" 2>/dev/null; then
                 # Wait for the process to exit
                 trace "wait: $lockpid to complete"
                 wait "$lockpid" 2>/dev/null || sleep "${backoff:: -1}.${backoff: -1}"
-                (( backoff < 50 )) && (( backoff+=1 ))
+                (( backoff < 100 )) && (( backoff+=1 ))
+            else
+                rm -f "$1"
+                continue
             fi
         fi
+    done
+    # remove stale tmp_lockfiles
+    local file
+    for file in "$1."*; do
+        local lockpid="${file##*.}"
+        [[ "$lockpid" != "$$" && "$(cat "$file")" = "$lockpid" ]] &&
+            ! kill -0 "$lockpid" 2>/dev/null &&
+            rm -f "$file"
     done
     trace "locked: $1 as $$"
 }
