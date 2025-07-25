@@ -27,6 +27,12 @@ rule activate: 'githook_enable~ pre-commit'
 
 rule watch: -- 'rule_eval entr_watch "${RULE_ARGS[@]}"'
 
+require search
+rule issues: -- search_for -B1 -A2 '" (FIXME|TODO|PLANNED). "'
+rule fixmes: -- search_for " FIXME. "
+rule todos: -- search_for " TODO. "
+rule planned: -- search_for " PLANNED. "
+
 # enter a recursive shell for debugging
 rule dbgsh: -- '
      echo "Entering bar shell, try <help>."

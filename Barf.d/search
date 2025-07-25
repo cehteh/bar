@@ -1,0 +1,13 @@
+#!/bash
+#shellcheck disable=2016
+
+# for now only ripgrep support, feel free to PR other searchers
+
+function search_for
+{
+    rg -S -p "$@" | less -SR
+}
+
+rule search_for: 'is_command_installed less' 'is_command_installed rg' -
+
+
