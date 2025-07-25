@@ -143,19 +143,11 @@ function rule_eval ## <name> [args..]
     local RULE_ARGS=("$@")
     rule_exists "$name" || rule_autoload "$name"
 
-#    local rc
-
-    if [[ ! "$name" = "always_"* && -v BAR_RULES_RESULT[$rule_id] ]]; then
-        # rc="${BAR_RULES_RESULT[$rule_id]}"
-        # if (( "$rc" == 0 )); then
-        #     success "$name"
-        # else
-        #     failure "$name"
-        # fi
+    if [[ ! "$name" = "always_"* && -v BAR_RULES_RESULT["$rule_id"] ]]; then
         return "${BAR_RULES_RESULT[$rule_id]}"
     fi
 
-    BAR_RULES_RESULT[rule_id]="pending"
+    BAR_RULES_RESULT["$rule_id"]="pending"
 
     local clause
     for clause in ${BAR_RULES[$name]}; do
@@ -238,13 +230,13 @@ function rule_eval ## <name> [args..]
             local rc=0
             eval "${BAR_CLAUSES[$clause]}" || rc=$?
             if [[ "$rc" != 0 ]]; then
-                BAR_RULES_RESULT[rule_id]=$rc
+                BAR_RULES_RESULT["$rule_id"]=$rc
                 return "$rc"
             fi
         fi
     done
 
-    BAR_RULES_RESULT[rule_id]=0
+    BAR_RULES_RESULT["$rule_id"]=0
 }
 
 function rule_exists ## <name> - checks if a rule is defined
