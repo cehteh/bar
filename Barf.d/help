@@ -8,24 +8,28 @@ function help
 
 ABOUT
 
-  Bar allows one to define rules that dependently and conditionally evaluate shell statements.
+  Bar allows to define rules that dependently and conditionally evaluate shell statements.
   This is similar to other tools such as 'make' or 'just' but adds some opinionated
   differences. There is support for using bar as driver for githooks for automating workflows.
 
-  Rules in bar can have multiple clauses. When any clause of a rule fails then the rule is
-  considerd failed as well and not further evaluated. The results of rules are cached. Clauses
-  can be conditionally skipped.
+  The notable differences to other similar tools are:
+
+  * Rules in bar can have multiple clauses. When any clause of a rule fails then the rule is
+    considerd failed as well and not further evaluated.
+  * Clauses can be conditionally skipped.
+  * The results of rules are cached. Normally rules are evaluated only once, although there is
+    a form to define rules that always evaluate.
 
   When you read this because you seen 'bar' or '.bar' used in a repository then you may look
   at INITIAL INSTALLATION below.
 
 
-INVOCATION
+INVOCATION AND SEMANTICS
 
     bar [rulefile] [rule [arguments]]
     ./bar [rulefile] [rule [arguments]]
 
-  Starts by loading all modules that have underscores in their name (not autoloaded ones) and
+  Starts by loading all initial modules (those which have underscores in their name) and
   the main rulefile, which is "Barf", "barf", ".Barf", ".barf" when the first argument is not
   a file.
 
@@ -41,7 +45,7 @@ INVOCATION
 
 GIT HOOK ACTIVATION
 
-  Bar will be inert in a project that has bar initialized. One can call it manually by
+  Bar will be inert in a project that ships with bar initialized. One can call it manually by
   './bar'.  A maintainer of the project may define 'activate' rules that activate
   githooks. These are then activated by './bar activate'. This will create symlinks in the
   '.git/hooks/' directory to the 'bar' script. These hooks will then be executed when the
@@ -53,10 +57,11 @@ RULE SEMANTICS
 
   Rules are a named, ordered collection of clauses. They are considered pure with inputs being
   the current directory name and the rules arguments. Note that the content of files is *not*
-  considered and the body should not depend on external variables. By being pure rules are
-  evaluated lazily and only once, the result of a rule is cached. This means that rules, esp
-  the actions within the body must have deterministic sematics. For performance reasons this
-  is not enforced but one may observe surprising behavior when this requirement is violated.
+  considered and the outcome of the rule should not depend on external variables. By being
+  pure rules are evaluated lazily, only once, the result of a rule is cached. This means that
+  rules, esp. the actions within the body must have deterministic sematics. For performance
+  reasons this is not enforced but one may observe surprising behavior when this requirement
+  is violated.
 
   An exception are rule names that start with 'always_', such rules results are not taken from
   the cache and the rule is always evaluated.
@@ -65,19 +70,21 @@ RULE SEMANTICS
   LOADING). For rules where this fails a fallback exits that creates an implicit rule for any
   command and shell function defined with a body calling the respective command.
 
-  Each clause in a rule has its own set of dependencies. Dependencies are otehr rules which
-  are evaluated in order. When a (normal) dependency fails then rule evaluating it is
-  considered to be failed as well and no further attempts to evaluate following dependencies
-  and clauses are made.
+  Each clause in a rule has its own set of dependencies. Dependencies are other rules which
+  are evaluated in order. When a (normal) dependency fails then rule it is considered to be
+  failed as well and no further attempts to evaluate following dependencies and clauses are
+  made.
 
-  Dependencies can be marked as 'checking' dependency which either expects the dependency to
+  Dependencies can be used as 'checking' dependency which either expects the dependency to
   succeed (suffixed with a '?') or fail (prefixed with a '!'). When such a checking dependency
   fails then the rest of the current clause is skipped. This allows conditional evaluation.
-  Further some dependencies may be tagged as unconditional, these are just evaluated but the
-  dependent rules evaluation proceeds even if such a unconditional rule fails.
+  Further dependencies may be tagged as unconditional by suffix them when a tilde '~', these
+  are just evaluated but rules evaluation will proceed unconditionally even if such a
+  dependency fails.
 
   Finally every clause can have an optional body. This are shell commands executed when all
-  dependencies succeeded.
+  dependencies succeeded. Because of quotiung in shell becomes a but unwieldly there are
+  shortcuts to make the body refer to shell functions, this should be preferred.
 
 
 RULE DEFINITION SYNTAX
@@ -86,13 +93,14 @@ RULE DEFINITION SYNTAX
   rule [<name>:] [[!]deps[?|~] args..].. -
   rule [<name>:] [[!]deps[?|~] args..].. -- [body..]
 
+  Adds a clause to 'name' or 'MAIN'.
+
   * [<name>:]
 
     A rule can have a optional name (suffixed with a colon).  When the name is not given it
-    defaults to 'MAIN'.
-    Rules that have only a name but no dependencies and no body create a body that
-    body that calls a bash command or function with the same name as the rule passing
-    rule arguments to it.
+    defaults to 'MAIN'.  Rules that have only a name but no dependencies and no body create a
+    body that calls a bash command or function with the same name as the rule passing rule
+    arguments to it.
 
   * [[!]deps[?|~] args..]..
 
@@ -153,7 +161,7 @@ RULE DEFINITION SYNTAX
     # Make a rule that fails
     rule foo_fail: -- false
 
-    # functions and commands can be used as rules
+    # functions and commands can be used as rules, this should be preferred
     function example
     {
         echo "i am example called with $*"
@@ -171,23 +179,25 @@ RULE DEFINITION SYNTAX
 
     Rules that do not have a name fall back to 'MAIN', if no rule name is given at execution
     time then 'MAIN' will be called.  If exist 'CLEANUP' will be called after after the main
-    rule was evaluated. Normally rules are sealed and one can not add clauses to existing
-    rules after rule evaluation stated. As the outcome would be unexpected and impure.
-    As an exception adding clauses to 'CLEANUP' is allowed.
+    rule was evaluated. Rules become sealed and one can not add clauses to existing rules
+    after rule evaluation stated. As the outcome would be unexpected and impure.  As an
+    exception adding clauses to 'CLEANUP' is allowed (but no rule should depend on or call
+    CLEANUP).
 
 
 MODULES
 
-  Modules are shell snippets located in 'Barf.d/', 'barf.d/', '.Barf.d/' or '.barf.d/'.
-  All modules that contain a underscore in their name are loaded at startup.
-  Modules with alphabetic names without underscores are lazy loaded on demand.
+  Modules are shell snippets located in 'Barf.d/', 'barf.d/', '.Barf.d/' or '.barf.d/'.  All
+  modules that contain a underscore in their name are loaded at startup. Modules with
+  alphabetic names without underscores are lazy loaded on demand.
 
-  The first variant for modules that are unconditionally loaded is used for modules that
-  define helper functions that don't have associated rules or rules that are primarly used for
+  The first variant for modules that are iniitially loaded is used for modules that define
+  helper functions that don't have associated rules or rules that are primarly used for
   checking conditions before delegating to the actual rules which do the work.
 
   The second variant is for mudules that define rules which are self-contained and can't
-  extend existing rules with new clauses. Here are the rules which do the actual work defined.
+  extend existing rules with new clauses. Here are the rules and functions which do the actual
+  work.
 
   The reason for this is that some will add clauses to existing rule which must be done before
   the rules are evaluated while we can improve performance by lazy loading modules that are
@@ -200,28 +210,24 @@ MODULES
 
 AUTOMATIC MODULE LOADING
 
- Rule names may include underscores, then the word before the first
-    underscore is used to determine a module name used for auto-loading rules. They can have
-    special prefixes which are removed when auto-loading:
+  Rule names may include underscores, then the word before the first underscore is used to
+  determine a module name used for auto-loading rules. They can have special prefixes which
+  are removed when auto-loading:
 
-    - 'is_' and 'has_' are reserved for check rules they don't have any special semantic
-      except for being stripped at auto loading.
-    - The result of rules which start with 'always_' will no be cached and if used as
-      dependency it will always be evaluated.  This is useful for stateful rules like
-      counters. Can be combined in front of 'is_' or 'has_'. Is also stripped for auto
-      loading.
-
+  - 'is_' and 'has_' are reserved for check rules they don't have any special semantic
+    except for being stripped at auto loading.
+  - The result of rules which start with 'always_' will no be cached and if used as
+    dependency it will always be evaluated.  This is useful for stateful rules like
+    counters. Can be combined in front of 'is_' or 'has_'. Is also stripped for auto
+    loading.
 
   When a rule is not found then a module name is derived from the rule name by removing the
-  'always_', 'is_', 'has_' prefixes and cutting off anything with and behind the first
+  'always_', 'is_', 'has_' prefixes and cutting off anything behind the first
   underscore. Eg. 'always_if_module_check' results in 'module'. This is then searched as
   'Barf.d/module', 'barf.d/module', '.Barf.d/module' or '.barf.d/module' and loaded if
   present. Thus modules that are automatically loaded must be named by single word without
   underscores. This automatically loaded modules can only add new rules but not add clauses to
-  existing rules.
-
-  Modules that contain underscores are unconditionally loaded at startup. These can add
-  clauses to existing rules because no rule evaluation took place yet.
+  existing rules because the rules are sealed at evaluation time.
 
 
 STANDARD RULES
@@ -229,7 +235,7 @@ STANDARD RULES
   Bar ships with a module that defines a set of standard rules where other modules can add
   clauses to. Check 'Barf.d/std_rules' for details.
 
-  Aside from 'MAIN' and 'CLEANUP' there are no other predefined rules.
+  Aside from 'MAIN' and 'CLEANUP' there are no other special rule names.
 
 
 INITIAL INSTALLATION
