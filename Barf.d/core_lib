@@ -9,22 +9,26 @@ declare -gA BAR_REQUIRE_LOADED=(["core_lib"]=true)
 function require
 {
     trace "$*"
+    declare -i rc=0
     local mod
     #shellcheck disable=2167,2165
     for mod in "$@"; do
-        # TODO: for moddir in "$BAR_PWD/Barf.d/" "$BAR_PWD/barf.d/" "$BAR_PWD/.Barf.d/" "$BAR_PWD/.barf.d/"; do
-        for mod in "$BARF_DIR/"$mod "$BAR_PWD/barf.d/"$mod "$BAR_PWD/.Barf.d/"$mod "$BAR_PWD/.barf.d/"$mod; do
+        for mod in "$BARF_DIR/"$mod; do
             local modname="${mod##*/}"
-            if [[ ! -v BAR_REQUIRE_LOADED[$modname] && -f "$mod" ]]; then
-                trace "loading: $mod"
-                # TODO: negative caching
-                BAR_REQUIRE_LOADED["$modname"]=true
-                # shellcheck disable=SC1090 # dynamic source
-                source "$mod"
-                # TODO: return 0  finally return 1
+            if [[ ! -v BAR_REQUIRE_LOADED["$modname"] ]]; then
+                if [[ -f "$mod" ]]; then
+                    trace "loading: $mod"
+                    BAR_REQUIRE_LOADED["$modname"]=pending
+                    # shellcheck disable=SC1090 # dynamic source
+                    source "$mod" && BAR_REQUIRE_LOADED["$modname"]=true
+                else
+                    BAR_REQUIRE_LOADED["$modname"]=false
+                    rc=1
+                fi
             fi
         done
     done
+    return $rc
 }
 
 
