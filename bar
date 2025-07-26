@@ -1,4 +1,5 @@
 #!/bin/bash
+# bar -- BAsh Rulez
 #shellcheck disable=SC2016
 
 ## BAsh Rules
@@ -25,14 +26,12 @@ function bar_main ## [Rulefile] [Rule [Arguments]] - loads a Barf file and execu
 
     # bootstrap/load std_lib (which defines 'require')
     # shellcheck disable=SC1091
-    find_barfd && source "$BARF_DIR/core_lib"
+    find_toplevel && source "$BARF_DIR/core_lib"
+    debug "using Barf directory: $BARF_DIR"
     # the std_lib and rule_lib are omnipresent other modules don't need to require it
     require std_lib rule_lib
     # load all modules with underscores in the name
     require '*_*'
-
-    debug "using Barf directory: $BARF_DIR"
-    [[ "$BARF_DIR" = "$BAR_PREFIX/share/bar/Barf.d" ]] && debug "I am the installed original bar"
 
     for BARF_FILE in "${1:-}" "Barf" "barf" ".Barf" ".barf"; do
         if [[ -f "$BARF_FILE" ]]; then
@@ -73,27 +72,34 @@ or
     fi
 }
 
-function find_barfd
+function find_toplevel
 {
-    # TODO: introduce BAR_TOPLEVEL, walk tree upward not crossing fs borders unless BAR_CROSS_FS is set
-    # TODO: BAR_TOPLEVEL must have Barf and Barf.d
-    # TODO: only if no toplevel is found then use the prefix/shared/bar/Barf.d and no Barf
-
-    for BARF_DIR in "$BAR_PWD/Barf.d" "$BAR_PWD/barf.d/" "$BAR_PWD/.Barf.d/" "$BAR_PWD/.barf.d/"; do
-        if [[ -d "$BARF_DIR" ]]; then
-            break
-        fi
-    done
-
     # shellcheck disable=2155
     local origin="$(command -v bar)"
     declare -gxr BAR_PREFIX="${origin%/bin/*}"
+    declare -gx BAR_TOPLEVEL="$BAR_PWD"
+    # shellcheck disable=2155
+    local initial_fs_id="$(stat -f -c %i "$BAR_TOPLEVEL")"
+
+    for BARF_DIR in "$BAR_TOPLEVEL/Barf.d" "$BAR_TOPLEVEL/barf.d/" "$BAR_TOPLEVEL/.Barf.d/" "$BAR_TOPLEVEL/.barf.d/"; do
+        if [[ -d "$BARF_DIR" ]]; then
+            readonly BAR_TOPLEVEL
+            return 0
+        fi
+        if [[ "$BAR_TOPLEVEL" = "/" ]]; then
+            break
+        fi
+        BAR_TOPLEVEL="$(readlink "$BAR_TOPLEVEL/..")"
+        if [[ ! -v BAR_CROSS_FS && "$(stat -f -c %i "$BAR_TOPLEVEL")" != "$initial_fs_id" ]]; then
+            break
+        fi
+    done
+    warn "No Barf.d directory found, trying original/installed"
 
     if [[ ! -d "$BARF_DIR" ]]; then
         BARF_DIR="$BAR_PREFIX/share/bar/Barf.d"
         [[ -d "$BARF_DIR" ]] || die "Barf directory '$BARF_DIR' does not exist"
     fi
 }
-
 
 bar_main "$@"
