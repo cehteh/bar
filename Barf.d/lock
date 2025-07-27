@@ -11,10 +11,10 @@
 
 declare -gA LOCK_REC=()
 
-function lock_wait #api {lockfile} - lock a lockfile, waits until we have the lock
+function lock_wait #api {lockname} - lock a lockfile, waits until we have the lock
 {
     # shellcheck disable=SC2155
-    local lockfile="$(realpath -s "$1")"
+    local lockfile="$(realpath -s "$1.lock")"
     if (( LOCK_REC["$lockfile"] > 0 )); then
         (( LOCK_REC["$lockfile"]+=1 ))
         trace "recursive lock: $1 as $$"
@@ -22,21 +22,22 @@ function lock_wait #api {lockfile} - lock a lockfile, waits until we have the lo
     fi
 
     # Create a temporary lockfile specific to this process
-    local tmp_lockfile="${1}.$$"
+    local tmp_lockfile="${1}.$$.lock"
 
     # Put our PID in the temporary file
     echo $$ > "$tmp_lockfile"
 
-    # backoff with a binomial sequence
+    # backoff with a binomial sequence up to 100ms
     declare -i backoff=1
 
     # Try to atomically acquire the lock
-    while ! ln -s "$tmp_lockfile" "$1" 2>/dev/null; do
+    while ! ln -s "$tmp_lockfile" "$lockfile" 2>/dev/null; do
         # Lock exists, check if it's stale
-        if [[ -L "$1" ]]; then
+        if [[ -L "$lockfile" ]]; then
             # shellcheck disable=SC2155 # want to ignore errors here
-            local lockfile_target=$(readlink "$1")
-            local lockpid="${lockfile_target##*.}"
+            local lockfile_target=$(readlink "$lockfile")
+            local lockpid="${lockfile_target%.lock}"
+            lockpid="${lockpid##*.}"
 
             # Check if the process still exists
             if kill -0 "$lockpid" 2>/dev/null; then
@@ -52,8 +53,9 @@ function lock_wait #api {lockfile} - lock a lockfile, waits until we have the lo
     done
     # remove stale tmp_lockfiles
     local file
-    for file in "$1."*; do
-        local lockpid="${file##*.}"
+    for file in "$1."*".lock"; do
+        local lockpid="${file%.lock}"
+        lockpid="${lockpid##*.}"
         [[ "$lockpid" != "$$" && "$(cat "$file")" = "$lockpid" ]] &&
             ! kill -0 "$lockpid" 2>/dev/null &&
             rm -f "$file"
@@ -73,7 +75,7 @@ function lock_next # old new - hand over hand locking
 function lock_remove #api {name} - remove a lockfile, unlock
 {
     # shellcheck disable=SC2155
-    local lockfile="$(realpath -s "$1")"
+    local lockfile="$(realpath -s "$1.lock")"
 
     (( LOCK_REC["$lockfile"]-=1 ))
     if (( LOCK_REC["$lockfile"] > 0 )); then
@@ -81,28 +83,29 @@ function lock_remove #api {name} - remove a lockfile, unlock
         return 0
     fi
 
-    if [[ -L "$1" ]]; then
+    if [[ -L "$lockfile" ]]; then
         unset "LOCK_REC[$lockfile]"
 
         # shellcheck disable=SC2155 # want to ignore errors here
-        local lockfile_target=$(readlink "$1")
-        local lockpid="${lockfile_target##*.}"
+        local lockfile_target=$(readlink "$lockfile")
+        local lockpid="${lockfile_target%.lock}"
+        lockpid="${lockpid##*.}"
 
         if [[ "$lockpid" = "$$" ]]; then
             trace "unlock $1"
             # Remove both the lock and the temporary file
-            rm -f "$1"
+            rm -f "$lockfile"
             rm -f "$lockfile_target"
             return 0
         else
-            error "$1 is not ours (we are $$, owned by $lockpid)"
+            error "$lockfile is not ours (we are $$, owned by $lockpid)"
             return 1
         fi
-    elif [[ -f "$1" ]]; then
-        error "$1 is not a symbolic link lockfile"
+    elif [[ -f "$lockfile" ]]; then
+        error "$lockfile is not a symbolic link lockfile"
         return 1
     else
-        error "$1 does not exist"
+        error "$lockfile does not exist"
         return 1
     fi
 }

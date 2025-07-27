@@ -14,7 +14,7 @@ rule testdir_enter: is_git_toplevel -
 function testdir_enter # treeish - Sets up a test directory change dir into it.
 {
     trace "$*"
-    lock_wait .bar.lock
+    lock_wait .bar
     local treeish="${1:-}"
 
     [[ -z "$treeish" ]] && treeish="$(git write-tree)"
@@ -33,8 +33,8 @@ function testdir_enter # treeish - Sets up a test directory change dir into it.
     else
         info "using existing: $TESTDIR"
     fi
-    lock_next .bar.lock "$TESTDIR/.bar.lock"
-    rule CLEANUP: -- "cd '$(git_toplevel)'; lock_remove '$TESTDIR/.bar.lock'"
+    lock_next .bar "$TESTDIR/.bar"
+    rule CLEANUP: -- "cd '$(git_toplevel)'; lock_remove '$TESTDIR/.bar'"
     rule CLEANUP: -- testdir_gc
     cd "$TESTDIR" || { error "cant change into $TESTDIR"; return 1; }
 }
