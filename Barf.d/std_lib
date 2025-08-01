@@ -118,22 +118,6 @@ function is_command_installed
 }
 memofn is_command_installed
 
-# checks whenever 'bar' is called by a name matching a pattern (eg. git hook symlinks)
-function called_as ## [pattern..]
-{
-    local pat
-    for pat in "$@"; do
-        # shellcheck disable=SC2053
-        [[ "$BASH_ARGV0" = $pat ]] && {
-            debug "called as $BASH_ARGV0 matched $pat"
-            return 0
-        }
-    done
-    trace "$BASH_ARGV0 not matched"
-    return 1
-}
-memofn called_as
-
 function bar_now() ## - returns the current timestamp in microseconds since epoch
 {
     echo "${EPOCHREALTIME//[^0-9]/}"

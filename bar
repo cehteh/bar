@@ -19,6 +19,7 @@ function bar_main ## [Rulefile] [Rule [Arguments]] - loads a Barf file and execu
 
     # shellcheck disable=SC2155
     declare -grx BAR_SELF="$(readlink "$BASH_ARGV0")"  ## bar itself
+    declare -grx BAR_CALLED_AS="${BASH_ARGV0##*/}"     ## called as name
     declare -gx  BARF_DIR                  ## directory to load rules from
     declare -gx  BARF_FILE                 ## the Barf file used
     declare -gxr BAR_PWD="$PWD"            ## initial working directory
@@ -35,10 +36,10 @@ function bar_main ## [Rulefile] [Rule [Arguments]] - loads a Barf file and execu
 
     local maybe_barf=
     local initial_rule=
-    if called_as "*/bar" "*/.bar"; then
+    if [[ "$BAR_CALLED_AS" =~ \.?bar ]]; then
         maybe_barf="${1:-}"
     else
-        initial_rule="${BASH_ARGV0##*/}"
+        initial_rule="$BAR_CALLED_AS"
     fi
 
     for BARF_FILE in "$maybe_barf" "Barf" "barf" ".Barf" ".barf"; do
