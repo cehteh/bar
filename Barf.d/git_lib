@@ -50,7 +50,7 @@ function git_tree_hash ## [git-ls-files-opts].. - Returns a hash over the curren
 {
     local hash
     # needs || true here to suppress errors on directories
-    hash="$(git_ls_files -z "$@" | xargs -0 sha1sum 2>/dev/null || true | sha1sum)"
+    hash="$(git_ls_files -z "$@" | { xargs -0 sha1sum 2>/dev/null || true ; } | sha1sum)"
     echo "${hash:0:40}"
 }
 
