@@ -33,10 +33,18 @@ function bar_main ## [Rulefile] [Rule [Arguments]] - loads a Barf file and execu
     # load all modules with underscores in the name
     require '*_*'
 
-    for BARF_FILE in "${1:-}" "Barf" "barf" ".Barf" ".barf"; do
+    local maybe_barf=
+    local initial_rule=
+    if called_as "*/bar" "*/.bar"; then
+        maybe_barf="${1:-}"
+    else
+        initial_rule="${BASH_ARGV0##*/}"
+    fi
+
+    for BARF_FILE in "$maybe_barf" "Barf" "barf" ".Barf" ".barf"; do
         if [[ -f "$BARF_FILE" ]]; then
             debug "using: $BARF_FILE"
-            [[ "$BARF_FILE" = "${1:-}" ]] && shift
+            [[ "$BARF_FILE" = "$maybe_barf" ]] && shift
             # shellcheck disable=SC1090 # dynamic source
             source "$BARF_FILE"
             break
@@ -44,19 +52,24 @@ function bar_main ## [Rulefile] [Rule [Arguments]] - loads a Barf file and execu
     done
 
     local rc=0
-    [[ -n "${1:-}" ]] && rule_autoload "$1"
+    [[ -z "$initial_rule" && -n "${1:-}" ]] && rule_autoload "$1"
     # shellcheck disable=2034
     BAR_RULES_SEALED=true
     trace "SEALING RULES"
     # shellcheck disable=SC2155
     declare -grix BAR_TIMESTAMP="$(bar_now)" ## Timestamp in microseconds since epoch of this invocation
 
-    if rule_exists "${1:-MAIN}"; then
-        rule_eval "${@:-MAIN}" || rc=$?
+    [[ -z "${initial_rule}" ]] && {
+        initial_rule="${1:-MAIN}"
+        shift || true
+    }
+
+    if rule_exists "$initial_rule"; then
+        rule_eval "$initial_rule" "$@" || rc=$?
         if (( "$rc" == 0 )); then
-            success "${@:-MAIN}"
+            success "$initial_rule" "$@"
         else
-            failure "${@:-MAIN}"
+            failure "$initial_rule" "$@"
         fi
         rule_exists CLEANUP && rule_eval CLEANUP
         return $rc

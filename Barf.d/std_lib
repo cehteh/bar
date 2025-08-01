@@ -53,7 +53,6 @@ function memofn ## <functionnames..> - rewrites a function into a function that 
     done
 }
 
-
 function success ## [message..] -
 {
     if (( BAR_CHECK_LEVEL > 0 )); then
@@ -133,6 +132,7 @@ function called_as ## [pattern..]
     trace "$BASH_ARGV0 not matched"
     return 1
 }
+memofn called_as
 
 function bar_now() ## - returns the current timestamp in microseconds since epoch
 {

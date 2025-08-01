@@ -8,9 +8,13 @@ function githook_enable
      bar="${bar##*/}"
      for hook in "$@"; do
          info "enabling hook: $hook"
-          ln -s "../../$bar" "$(git_dir)/hooks/$hook" || {
-              error "installing hook $hook failed"
-              return 1
+         ln -s "../../$bar" "$(git_dir)/hooks/$hook" 2>/dev/null || {
+             if [[ "$(readlink -f "$(git_dir)/hooks/$hook")" = "$(git_bar)" ]]; then
+                 info "hook $hook already enabled"
+             else
+                 error "installing hook $hook failed"
+                 return 1
+             fi
           }
      done
 }
@@ -23,14 +27,12 @@ function githook_disable
      for hook in "$@"; do
          info "disabling hook $hook"
 
-         # shellcheck disable=SC2155
-         local hook_link="$(readlink -f "$(git_dir)/hooks/$hook")" 
-         if [[ "$hook_link" = "$(git_bar)" ]]; then
-                rm "$(git_dir)/hooks/$hook"
-                debug "removed hook $hook"
-            else
-                error "$hook: not a hook under bar control"
-                return 1
+         if [[ "$(readlink -f "$(git_dir)/hooks/$hook")" = "$(git_bar)" ]]; then
+             rm "$(git_dir)/hooks/$hook"
+             debug "removed hook $hook"
+         else
+             error "$hook: not a hook under bar control"
+             return 1
          fi
      done
 }

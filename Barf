@@ -17,13 +17,21 @@ rule build_docs: -- './bar help >README'
 rule readme_up_to_date: build_docs -- 'git diff --exit-code README'
 
 # called as *bar run the 'main' rule in the current dir
-rule 'called_as? *bar' main
+rule main
 
 # called by another name (githook), create temporary testdir and run the main rule there
-rule '!called_as *bar' testdir_enter main
-#rule 'called_as? *.git/hooks/*'
+rule pre-commit: -- info "called as pre-commit hook"
+rule pre-commit: testdir_enter main
+rule pre-merge-commit: -- info "called as pre-merge-commit hook"
+rule prepare-commit-msg: -- info "called as prepare-commit-msg hook"
+rule commit-msg: -- info "called as commit-msg hook"
 
-rule activate: 'githook_enable~ pre-commit'
+rule activate: \
+     'githook_enable~ pre-commit'\
+     'githook_enable~ pre-merge-commit'\
+     'githook_enable~ prepare-commit-msg'\
+     'githook_enable~ commit-msg'
+
 
 rule watch: -- 'rule_eval entr_watch "${RULE_ARGS[@]}"'
 

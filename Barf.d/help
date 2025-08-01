@@ -26,11 +26,12 @@ ABOUT
 
 INVOCATION AND SEMANTICS
 
-    bar [rulefile] [rule [arguments]]
-    ./bar [rulefile] [rule [arguments]]
+    bar [rulefile] [rule [arguments..]]
+    ./bar [rulefile] [rule [arguments..]]
+    <symlink> [arguments..]
 
   Starts by loading all initial modules (those which have underscores in their name) and
-  the main rulefile, which is "Barf", "barf", ".Barf", ".barf" when the first argument is not
+  the a rulefile, which is "Barf", "barf", ".Barf", ".barf" when the first argument is not
   a file.
 
   Then the given rule (or MAIN) with the supplied arguments becomes evaluated. Finally if
@@ -41,6 +42,9 @@ INVOCATION AND SEMANTICS
   Just calling 'bar' without any arguments will evaluate the 'MAIN' rule which should be what
   people expect by default. Other useful rules like 'help' for this documentation are defined
   by modules.
+
+  When called by a symlink then the standard rulefile (as above) is loaded and instead 'MAIN'
+  a rule with the same name as the symlink is called with all arguments passed.
 
 
 GIT HOOK ACTIVATION
@@ -286,13 +290,13 @@ INITIAL INSTALLATION
      Will do a merge of the installed 'Barf' file with the local one. This *will* leave 3-way
      conflict markers behind when there are changes. These must be manually resolved!
 
-     The updated 'bar' should then be committed to version control.
+     The updated files should then be committed to version control.
 
   3. githooks symlinked from './.git/hooks/*' -> '../../bar'
      'bar' has support to be used as githooks. This needs manual enabling. Individual hooks can be
      enabled or disabled with 'bar githook_enable <hook>' and 'bar githook_disable <hook>'.
      For exiting projects using 'bar' a maintainer can setup rules to activate all necessary hooks.
-     This then can be activated by 'bar activate'.
+     This then can be activated by './bar activate'.
 
 
 LICENSE
