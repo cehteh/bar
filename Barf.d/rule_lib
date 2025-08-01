@@ -136,21 +136,21 @@ function rule_eval ## <name> [args..]
     trace "$*"
     # shellcheck disable=2155
     local rule_id="$(hash_args "$PWD $*")"
-    local name="$1"
+    local RULE_NAME="$1"
     shift
 
     # shellcheck disable=2034
     local RULE_ARGS=("$@")
-    rule_exists "$name" || rule_autoload "$name"
+    rule_exists "$RULE_NAME" || rule_autoload "$RULE_NAME"
 
-    if [[ ! "$name" = "always_"* && -v BAR_RULES_RESULT["$rule_id"] ]]; then
+    if [[ ! "$RULE_NAME" = "always_"* && -v BAR_RULES_RESULT["$rule_id"] ]]; then
         return "${BAR_RULES_RESULT[$rule_id]}"
     fi
 
     BAR_RULES_RESULT["$rule_id"]="pending"
 
     local clause
-    for clause in ${BAR_RULES[$name]}; do
+    for clause in ${BAR_RULES[$RULE_NAME]}; do
         local skip=
         local dep
         local deps=()
@@ -188,39 +188,39 @@ function rule_eval ## <name> [args..]
             fi
 
             if [[ "$dep_rc" == pending ]]; then
-                die "recursive rule $name: $depname"
+                die "recursive rule $RULE_NAME: $depname"
             elif [[ "$check" = unconditional ]]; then
-                uncond_call "$dep_rc" "$name: $depname~ ${depargs[*]}"
+                uncond_call "$dep_rc" "$RULE_NAME: $depname~ ${depargs[*]}"
                 [[ -n "$check" ]] && BAR_CHECK_LEVEL=$((BAR_CHECK_LEVEL-1))
                 continue
             elif [[ "$dep_rc" == 0 && "$check" = negated ]]; then
                 skip=true
-                failure "$name: !$depname ${depargs[*]}"
+                failure "$RULE_NAME: !$depname ${depargs[*]}"
                 [[ -n "$check" ]] && BAR_CHECK_LEVEL=$((BAR_CHECK_LEVEL-1))
                 break
             elif [[ "$dep_rc" != 0 ]]; then
                 if [[ "$check" = true ]]; then
-                    failure "$name: $depname? ${depargs[*]}"
+                    failure "$RULE_NAME: $depname? ${depargs[*]}"
                     skip=true
                     [[ -n "$check" ]] && BAR_CHECK_LEVEL=$((BAR_CHECK_LEVEL-1))
                     break
                 elif [[ "$check" = negated ]]; then
-                    success "$name: !$depname ${depargs[*]}"
+                    success "$RULE_NAME: !$depname ${depargs[*]}"
                     [[ -n "$check" ]] && BAR_CHECK_LEVEL=$((BAR_CHECK_LEVEL-1))
                     continue
                 fi
                 # conclusive fail because of dep failure
-                failure "$name: $depname ${depargs[*]}"
+                failure "$RULE_NAME: $depname ${depargs[*]}"
                 [[ -n "$check" ]] && BAR_CHECK_LEVEL=$((BAR_CHECK_LEVEL-1))
                 BAR_RULES_RESULT[rule_id]="$dep_rc"
                 return "$dep_rc"
             else
                 if [[ "$check" = true ]]; then
-                    success "$name: $depname? ${depargs[*]}"
+                    success "$RULE_NAME: $depname? ${depargs[*]}"
                 elif [[ "$check" = negated ]]; then
-                    success "$name: !$depname ${depargs[*]}"
+                    success "$RULE_NAME: !$depname ${depargs[*]}"
                 else
-                    success "$name: $depname ${depargs[*]}"
+                    success "$RULE_NAME: $depname ${depargs[*]}"
                 fi
                 [[ -n "$check" ]] && BAR_CHECK_LEVEL=$((BAR_CHECK_LEVEL-1))
             fi

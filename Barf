@@ -20,11 +20,11 @@ rule readme_up_to_date: build_docs -- 'git diff --exit-code README'
 rule main
 
 # called by another name (githook), create temporary testdir and run the main rule there
-rule pre-commit: -- info "called as pre-commit hook"
+rule pre-commit: -- 'info "called as $RULE_NAME hook"'
 rule pre-commit: testdir_enter main
-rule pre-merge-commit: -- info "called as pre-merge-commit hook"
-rule prepare-commit-msg: -- info "called as prepare-commit-msg hook"
-rule commit-msg: -- info "called as commit-msg hook"
+rule pre-merge-commit: -- 'info "called as $RULE_NAME hook"'
+rule prepare-commit-msg: -- 'info "called as $RULE_NAME hook"'
+rule commit-msg: -- 'info "called as $RULE_NAME hook"'
 
 rule activate: \
      'githook_enable~ pre-commit'\
