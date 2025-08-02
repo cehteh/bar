@@ -7,6 +7,18 @@
 # We lint and build the doc here
 rule main: doc lint
 
+require git
+
+function nodbg
+{
+    # shellcheck disable=2046
+    if grep -n '^[[:space:]]*DBG' $(git_ls_files -c --other); then
+        return 1
+    fi
+}
+
+rule lint: '!called_as bar' nodbg
+
 # manually testing the staged changes
 rule test_staged: testdir_enter lint readme_up_to_date
 
