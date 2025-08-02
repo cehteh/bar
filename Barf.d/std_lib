@@ -53,6 +53,16 @@ function memofn ## <functionnames..> - rewrites a function into a function that 
     done
 }
 
+function called_as
+{
+    local pat
+    for pat in "$@"; do
+        # shellcheck disable=2053
+        [[ "$BAR_CALLED_AS" = $pat ]] && return 0
+    done
+    return 1
+}
+
 function success ## [message..] -
 {
     if (( BAR_CHECK_LEVEL > 0 )); then
