@@ -55,9 +55,9 @@ function statedb_init #api <tag> - initializes a state log
     readonly STATEDB_DIR
 
     declare -gx STATEDB_LOG="$STATEDB_DIR/.log"
-    declare -gAx STATEDB      #S state database, "pwd//cmd args" : "state cmdhash"
+    declare -gAx STATEDB      #S state database, "pwd//#cmd args" : "state cmdhash"
 
-    # LOG keeps "$exitcode $cmdhash $PWD//$*"
+    # LOG keeps "$exitcode $cmdhash $PWD//#$*"
     # the tag log keeps the last used tags and tree hashes
     # echo "$1 $BAR_TREE_HASH" >>".bar.s/.tag.log"
 
@@ -80,13 +80,13 @@ function statedb_init #api <tag> - initializes a state log
 
 function statedb_cached # cmd args.. - returns the last cached log entry state
 {
-    local entry="${STATEDB[$PWD//$*]:-}"
+    local entry="${STATEDB[$PWD//#$*]:-}"
     echo "${entry%% *}"
 }
 
 function statedb_cmdhash # cmd args.. - returns the hash of $PWD, a command and its args
 {
-    local entry="${STATEDB[$PWD//$*]:-}"
+    local entry="${STATEDB[$PWD//#$*]:-}"
 
     if [[ -n "$entry" ]]; then
         entry="${entry#* }"
@@ -110,8 +110,8 @@ function statedb_log # exitcode hash cmd args.. - logs a state
     shift 2
 
     trace "STATEDB: $exitcode $* >> $STATEDB_LOG"
-    echo "$exitcode $hash $PWD//$*" >>"$STATEDB_LOG"
-    STATEDB[$PWD//$*]="$exitcode $hash"
+    echo "$exitcode $hash $PWD//#$*" >>"$STATEDB_LOG"
+    STATEDB[$PWD//#$*]="$exitcode $hash"
 }
 
 
