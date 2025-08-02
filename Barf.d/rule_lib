@@ -244,3 +244,34 @@ function rule_exists ## <name> - checks if a rule is defined
     [[ -v BAR_RULES[$1] ]]
 }
 
+function rule_list ## [pattern] - lists all loaded rules or rules matching pattern
+{
+    local rule
+    for rule in $(tr ' ' '\n' <<<"${!BAR_RULES[@]}" | sort); do
+        # shellcheck disable=2053
+        if [[ "$rule" = ${1:-*} ]]; then
+            local clause
+            for clause in ${BAR_RULES[$rule]}; do
+                local dep
+                local deps
+                deps=""
+                while read -r dep; do
+                    [[ -n "$deps" ]] && deps+=" "
+                    if [[ "$dep" = *" "* ]]; then
+                        deps+="'$dep'"
+                    else
+                        deps+="$dep"
+                    fi
+                done <<<"${BAR_CLAUSE_DEPS[$clause]}"
+                echo -n "$rule: $deps"
+                if [[ -n "${BAR_CLAUSES[$clause]}" ]]; then
+                    [[ -n "$deps" ]] && echo -n " "
+                    echo -e "-- '${BAR_CLAUSES[$clause]}'"
+                else
+                    echo
+                fi
+            done
+        fi
+        echo
+    done | less -SR
+}
