@@ -20,7 +20,7 @@ function testdir_enter # treeish - Sets up a test directory change dir into it.
     [[ -z "$treeish" ]] && treeish="$(git write-tree)"
 
     # shellcheck disable=2155
-    local TESTDIR="$(find "$(git_toplevel)" -type d -name "$TESTDIR_PREFIX*-$treeish" | tail -1)"
+    TESTDIR="$(find "$(git_toplevel)" -type d -name "$TESTDIR_PREFIX*-$treeish" | tail -1)"
     if [[ -z "$TESTDIR" ]]; then
         TESTDIR="$(git_toplevel)/${TESTDIR_PREFIX}-$BAR_TIMESTAMP-$treeish"
         info "creating: $TESTDIR"
@@ -37,6 +37,11 @@ function testdir_enter # treeish - Sets up a test directory change dir into it.
     rule CLEANUP: -- "cd '$(git_toplevel)'; lock_remove '$TESTDIR/.bar'"
     rule CLEANUP: -- testdir_gc
     cd "$TESTDIR" || { error "cant change into $TESTDIR"; return 1; }
+}
+
+function is_testdir_used
+{
+    [[ -v TESTDIR && "$PWD" = "$TESTDIR"* ]]
 }
 
 function testdir_gc # - cleanup old testdirs

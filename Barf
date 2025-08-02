@@ -17,7 +17,7 @@ function nodbg
     fi
 }
 
-rule lint: '!called_as bar' nodbg
+rule lint: 'is_testdir_used?' nodbg
 
 # manually testing the staged changes
 rule test_staged: testdir_enter lint readme_up_to_date
