@@ -37,6 +37,11 @@ function source_info # [N] - returns file:line N (or 0) up the bash call stack
     echo "${BASH_SOURCE[$((${1:-0}+1))]}:${BASH_LINENO[$((${1:-0}))]}:${FUNCNAME[$((${1:-0}+1))]:+${FUNCNAME[$((${1:-0}+1))]}:}"
 }
 
+function DBG ## [message..] - for print-style debugging, should not be present in production code
+{
+    echo -e "\033[1;37;41m  DBG:\033[0m $(source_info 1) $*" >&2
+}
+
 function die ## [message..] - prints 'message' to stderr and exits with failure
 {
     if [[ "${BAR_VERBOSITY_LEVEL:-5}" -gt 0 ]]; then
