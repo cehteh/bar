@@ -46,7 +46,7 @@ function lock_wait #api {lockname} - lock a lockfile, waits until we have the lo
                 wait "$lockpid" 2>/dev/null || sleep "${backoff:: -1}.${backoff: -1}"
                 (( backoff < 100 )) && (( backoff+=1 ))
             else
-                rm -f "$1"
+                rm -f "$lockfile"
                 continue
             fi
         fi
@@ -61,6 +61,43 @@ function lock_wait #api {lockname} - lock a lockfile, waits until we have the lo
             rm -f "$file"
     done
 
+    LOCK_REC["$lockfile"]=1
+
+    trace "locked: $1 as $$"
+}
+
+function lock_try_norec #api {lockname} - try to lock a lockfile non recursively, will not wait, fails when we already have the lock
+{
+    # shellcheck disable=SC2155
+    local lockfile="$(realpath -s "$1.lock")"
+    if (( LOCK_REC["$lockfile"] > 0 )); then
+        return 1
+    fi
+
+    # Create a temporary lockfile specific to this process
+    local tmp_lockfile="${1}.$$.lock"
+
+    # Put our PID in the temporary file
+    echo $$ > "$tmp_lockfile"
+
+    # Try to atomically acquire the lock
+    while ! ln -s "$tmp_lockfile" "$lockfile" 2>/dev/null; do
+        # Lock exists, check if it's stale
+        if [[ -L "$lockfile" ]]; then
+            # shellcheck disable=SC2155 # want to ignore errors here
+            local lockfile_target=$(readlink "$lockfile")
+            local lockpid="${lockfile_target%.lock}"
+            lockpid="${lockpid##*.}"
+
+            # Check if the process still exists
+            if kill -0 "$lockpid" 2>/dev/null; then
+                return 1
+            else
+                rm -f "$lockfile"
+                continue
+            fi
+        fi
+    done
     LOCK_REC["$lockfile"]=1
 
     trace "locked: $1 as $$"
