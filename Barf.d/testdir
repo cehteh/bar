@@ -46,14 +46,24 @@ function is_testdir_used
 
 function testdir_gc # - cleanup old testdirs
 {
-    # FIXME: only delete testdirs that can be locked
-    find "$(git_toplevel)" -name "${TESTDIR_PREFIX}*" -type d -print0 | sort -z -n | head -z -n -$((TESTDIR_KEEP)) | xargs -0 -n1 -r rm -rf
+    local testdir
+    find "$(git_toplevel)" -name "${TESTDIR_PREFIX}*" -type d -print0 | sort -z -n | head -z -n -$((TESTDIR_KEEP)) |
+        while IFS= read -r -d '' testdir; do
+            if lock_try_norec "$testdir/.bar"; then
+                rm -rf "$testdir"
+            fi
+        done
 }
 
 function testdir_clean # - cleanup all testdirs
 {
-    # FIXME: only delete testdirs that can be locked
-    find "$(git_toplevel)" -name "${TESTDIR_PREFIX}*" -type d -print0 | xargs -0 -n1 -r rm -rf
+    local testdir
+    find "$(git_toplevel)" -name "${TESTDIR_PREFIX}*" -type d -print0 |
+        while IFS= read -r -d '' testdir; do
+            if lock_try_norec "$testdir/.bar"; then
+                rm -rf "$testdir"
+            fi
+        done
 }
 
 function testdir_list # - list all testdirs
