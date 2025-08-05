@@ -5,6 +5,7 @@
 
 declare -g   BAR_CHECK_LEVEL=0         ## less alerting for check dependencies
 declare -g   BAR_RULES_SEALED          ## set to the last rule or 'true' when rules are sealed
+declare -gA  BAR_RULES_UNSEALED=([CLEANUP]=true [POSTPROCESS]=true) ## rules exempt from sealing
 declare -gAx BAR_RULES                 ## discovered rules as name:"clauseidx.."
 declare -gAx BAR_RULES_RESULT          ## result "name args..":rc
 declare -gax BAR_CLAUSES=()            ## clause bodies enumerated
@@ -53,7 +54,7 @@ function rule () ## [<name>:] [[!]dep[?] [arg]..].. [-- body..] - defines a rule
 
     if [[ -v BAR_RULES_SEALED ]]; then
         trace "names ${!BAR_RULES[*]}"
-        if [[ -v BAR_RULES[$name] && "$name" != "$BAR_RULES_SEALED" && "$name" != "CLEANUP" ]]; then
+        if [[ -v BAR_RULES[$name] && "$name" != "$BAR_RULES_SEALED" && ! -v BAR_RULES_UNSEALED["$name"] ]]; then
             die "Can not add clause '$name: ${deps[*]}' after rules are sealed"
         else
             BAR_RULES_SEALED="$name"
@@ -138,6 +139,8 @@ function rule_eval ## <name> [args..]
     local rule_id="$(hash_args "$PWD $*")"
     local RULE_NAME="$1"
     shift
+
+    [[ -v BAR_RULES_UNSEALED["$RULE_NAME"] ]] && die "Tried to evaluate unsealed rule: $RULE_NAME"
 
     # shellcheck disable=2034
     local RULE_ARGS=("$@")

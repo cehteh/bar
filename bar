@@ -72,6 +72,10 @@ function bar_main ## [Rulefile] [Rule [Arguments]] - loads a Barf file and execu
         else
             failure "$initial_rule" "$@"
         fi
+
+        unset "BAR_RULES_UNSEALED[POSTPROCESS]"
+        rule_exists POSTPROCESS && rule_eval POSTPROCESS
+        unset "BAR_RULES_UNSEALED[CLEANUP]"
         rule_exists CLEANUP && rule_eval CLEANUP
         return $rc
     else

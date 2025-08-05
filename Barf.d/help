@@ -181,12 +181,20 @@ RULE DEFINITION SYNTAX
 
   Special Rule Names
 
-    Rules that do not have a name fall back to 'MAIN', if no rule name is given at execution
-    time then 'MAIN' will be called.  If exist 'CLEANUP' will be called after after the main
-    rule was evaluated. Rules become sealed and one can not add clauses to existing rules
-    after rule evaluation stated. As the outcome would be unexpected and impure.  As an
-    exception adding clauses to 'CLEANUP' is allowed (but no rule should depend on or call
-    CLEANUP).
+    Rules that do not have a name fall back to 'MAIN', when no rule name is given at execution
+    time then 'MAIN' will be called.  If exist 'POSTPROCESS' and then 'CLEANUP' will be called
+    after after the main rule was evaluated. Once evaluation starts, rules become sealed and
+    one can not add clauses to existing rules, As the outcome would be unexpected and impure.
+
+    Some rules like 'POSTPROCESS' and 'CLEANUP' are exempted from sealing. These must not be
+    evaluated (as dependencies) from any rule evaluated.
+
+    POSTPROCESS is for executing things after the main rule finsihed. The environment and
+    state is still the same as in the main rule.
+
+    CLEANUP is for removing temporary resources and doing any other kind of cleanup work. This
+    means the state and environment at cleanup time may be differen/partially destructed and
+    should not be relied upon.
 
 
 MODULES
