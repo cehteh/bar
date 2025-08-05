@@ -179,7 +179,7 @@ RULE DEFINITION SYNTAX
     # add tests to MAIN
     rule tests
 
-  Special Rule Names
+  Special Rules and Names
 
     Rules that do not have a name fall back to 'MAIN', when no rule name is given at execution
     time then 'MAIN' will be called.  If exist 'POSTPROCESS' and then 'CLEANUP' will be called
@@ -194,7 +194,12 @@ RULE DEFINITION SYNTAX
 
     CLEANUP is for removing temporary resources and doing any other kind of cleanup work. This
     means the state and environment at cleanup time may be differen/partially destructed and
-    should not be relied upon.
+    should not be relied upon. Clauses in the CLEANUP rule are evaluated in reverse order of
+    their definition.
+
+    The rules that are exempt from sealing are tracked in the 'BAR_RULES_UNSEALED' array.
+    Rules whose clauses should be evaluated in reverse order are tracked in the
+    'BAR_RULES_REVERSE_CLAUSES' array.
 
 
 MODULES

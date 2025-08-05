@@ -8,6 +8,7 @@ declare -g   BAR_RULES_SEALED          ## set to the last rule or 'true' when ru
 declare -gA  BAR_RULES_UNSEALED=([CLEANUP]=true [POSTPROCESS]=true) ## rules exempt from sealing
 declare -gAx BAR_RULES                 ## discovered rules as name:"clauseidx.."
 declare -gAx BAR_RULES_RESULT          ## result "name args..":rc
+declare -gA  BAR_RULES_REVERSE_CLAUSES=([CLEANUP]=true) ## rules with clause evaluated in reverse order
 declare -gax BAR_CLAUSES=()            ## clause bodies enumerated
 declare -gax BAR_CLAUSE_DEPS=()        ## dependencies for each clause
 
@@ -152,8 +153,18 @@ function rule_eval ## <name> [args..]
 
     BAR_RULES_RESULT["$rule_id"]="pending"
 
+    local clauses="${BAR_RULES[$RULE_NAME]}"
+
+    if [[ -v BAR_RULES_REVERSE_CLAUSES["$RULE_NAME"] ]]; then
+        local rclauses=""
+        for n in $clauses; do
+            rclauses="$n $rclauses"
+        done
+        clauses=${rclauses# }
+    fi
+
     local clause
-    for clause in ${BAR_RULES[$RULE_NAME]}; do
+    for clause in $clauses; do
         local skip=
         local dep
         local deps=()
