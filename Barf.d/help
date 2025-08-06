@@ -182,20 +182,35 @@ RULE DEFINITION SYNTAX
   Special Rules and Names
 
     Rules that do not have a name fall back to 'MAIN', when no rule name is given at execution
-    time then 'MAIN' will be called.  If exist 'POSTPROCESS' and then 'CLEANUP' will be called
-    after after the main rule was evaluated. Once evaluation starts, rules become sealed and
-    one can not add clauses to existing rules, As the outcome would be unexpected and impure.
+    time then 'MAIN' will be evaluated.
+
+    If exist 'SETUP', 'PREPROCESS', 'POSTPROCESS' and 'CLEANUP' will be called.
+     * SETUP
+       Should set up the environment for all subsequent evaluation. Setup rules
+       should be self-sufficient and not expect a working environment yet.
+       A failure here will abort bar.
+     * PREPROCESS
+       Doing any preparatory tasks within the set up environmnet.
+       A failure here will abort bar.
+     * MAIN
+       When the bar is not called via a symlink or the user did not provide a rule to
+       evaluate, then MAIN is the default rule. Otherwise the user supplied or symlink deduced
+       rulename will be evaluated. The result of this rule determines the exitcode of bar.
+     * POSTPROCESS
+       Is for evaluating things after the main rule finsihed. The environment and
+       state is still the same as in the main rule. A failure here will be reported but not
+       reflected in the exitode.
+     * CLEANUP
+       Is for removing temporary resources and doing any other kind of cleanup work. This
+       means the state and environment at cleanup time may be differen/partially destructed and
+       should not be relied upon. Clauses in the CLEANUP rule are evaluated in reverse order of
+       their definition. A failure here will be reported but not reflected in the exitcode.
+
+    Once evaluation starts, rules become sealed and one can not add clauses to existing rules,
+    As the outcome would be unexpected and impure.
 
     Some rules like 'POSTPROCESS' and 'CLEANUP' are exempted from sealing. These must not be
     evaluated (as dependencies) from any rule evaluated.
-
-    POSTPROCESS is for executing things after the main rule finsihed. The environment and
-    state is still the same as in the main rule.
-
-    CLEANUP is for removing temporary resources and doing any other kind of cleanup work. This
-    means the state and environment at cleanup time may be differen/partially destructed and
-    should not be relied upon. Clauses in the CLEANUP rule are evaluated in reverse order of
-    their definition.
 
     The rules that are exempt from sealing are tracked in the 'BAR_RULES_UNSEALED' array.
     Rules whose clauses should be evaluated in reverse order are tracked in the
