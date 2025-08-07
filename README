@@ -129,15 +129,18 @@ RULE DEFINITION SYNTAX
 
   * -- [body..]
 
-    After a double hyphen a optional rule body follows. This are the commands to execute for
-    this clause. If these fail then the rule is considered failed. When a name but no body and
-    no dependencies are given then the body defaults to the rule name. This makes it easy to
-    translate simple parameterless commands and functions to rules. Usually the body has to be
-    quoted to prevent shell expansions at definition time. Later when a rule becomes evaluated
-    the body is passed to 'eval'.
+    After a double hyphen a optional rule body follows. This are the commands to
+    execute for this clause. If these fail then the rule is considered failed. When a name but
+    no body and no dependencies are given then the body defaults to the rule name. This makes
+    it easy to translate simple parameterless commands and functions to rules. Usually the
+    body has to be quoted to prevent shell expansions at definition time. Later when a rule
+    becomes evaluated the body is passed to 'eval'.
 
-    When there was as double hyphen but no remaining arguments, then the rule body is read
-    from stdin. This allows to use heredocs or herestrings or read the body from a file.
+    When the body is omitted, then the rule body is read from stdin. This allows to use
+    heredocs or herestrings or read the body from a file.
+
+    When a rule overrides an existing command a 'NOTE' will be printed on higher verbosity
+    levels. The user is responsible for sensible overiding of commands.
 
   Rules must not have mutually recursive dependencies. When such is detected the
   evaluation aborts.

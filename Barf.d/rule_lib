@@ -51,6 +51,8 @@ function rule () ## [<name>:] [[!]dep[?] [arg]..].. [-- body..] - defines a rule
     elif [[ -z "$name" ]]; then
         # default to MAIN when no rule name is given
         name="MAIN"
+    elif [[ -z "$deps_for_cmd" && -z "${BAR_RULES[$name]:-}" ]]  && command -v -- "$name" >/dev/null ; then
+        note "defining rule '$name' for existing command"
     fi
 
     if [[ -v BAR_RULES_SEALED ]]; then
