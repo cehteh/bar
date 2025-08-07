@@ -23,7 +23,7 @@ rule lint: 'is_testdir_used?' nodbg
 rule test_staged: testdir_enter lint readme_up_to_date
 
 # maintenance rules
-rule build_docs: -- './bar help >README'
+rule build_docs: 'test? Barf.d/help -nt README' -- './bar help >README'
 
 # check that the readme is up to date when committing
 rule readme_up_to_date: build_docs -- 'git diff --exit-code README'
