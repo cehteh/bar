@@ -226,7 +226,7 @@ function rule_eval ## <name> [args..]
                 # conclusive fail because of dep failure
                 failure "$RULE_NAME: $depname ${depargs[*]}"
                 [[ -n "$check" ]] && BAR_CHECK_LEVEL=$((BAR_CHECK_LEVEL-1))
-                BAR_RULES_RESULT[rule_id]="$dep_rc"
+                BAR_RULES_RESULT["$rule_id"]="$dep_rc"
                 return "$dep_rc"
             else
                 if [[ "$check" = true ]]; then
