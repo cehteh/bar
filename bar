@@ -192,7 +192,7 @@ function trace ## [message] - may prints a trace message to stderr
 
 function note ## [message..] - may print an important notice to stderr
 {
-    if [[ "${BAR_VERBOSITY_LEVEL:-5}" -gt 1 ]]; then
+    if [[ "${BAR_VERBOSITY_LEVEL:-5}" -gt 2 ]]; then
         echo -e "\033[1;35m NOTE:\033[0m $*" >&2
     fi
 }
