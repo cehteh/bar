@@ -38,7 +38,7 @@ rule build_doc: is_rust_project? cargo_doc
 # --bench [<NAME>]    Test only the specified bench target
 # --all-targets       Test all targets (does not include doctests)
 # --doc               Test only this library's documentation
-rule test: is_rust_project? 'cargo_test'
+rule tests: is_rust_project? cargo_test
 
 # rule test_doc: -- info "Testing documentation..."
 

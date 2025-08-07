@@ -19,7 +19,7 @@ rule lint: lint_sources lint_docs
 
 rule build: fetch_resources build_assets build_libs build_bins
 
-rule test: test_units test_integrations
+rule tests: test_units test_integrations
 
 rule doc: lint_docs build_docs
 
