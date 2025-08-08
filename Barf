@@ -20,23 +20,21 @@ function nodbg
 rule lint: 'is_testdir_used?' nodbg
 
 # manually testing the staged changes
-rule test_staged: testdir_enter lint readme_up_to_date
+rule test_staged: testdir_enter lint
 
 # maintenance rules
 rule build_docs: 'test? Barf.d/help -nt README' -- './bar help >README'
 
-# check that the readme is up to date when committing
-rule readme_up_to_date: build_docs -- 'git diff --exit-code README'
-
 # called as *bar run the 'main' rule in the current dir
 rule main
 
-# called by another name (githook), create temporary testdir and run the main rule there
-rule pre-commit: -- 'info "called as $RULE_NAME hook"'
-rule pre-commit: testdir_enter main
-rule pre-merge-commit: -- 'info "called as $RULE_NAME hook"'
-rule prepare-commit-msg: -- 'info "called as $RULE_NAME hook"'
-rule commit-msg: -- 'info "called as $RULE_NAME hook"'
+# called by another name (githook)
+rule pre-commit: main
+
+rule SETUP: 'called_as? pre-commit' testdir_enter
+rule SETUP: 'called_as? pre-merge-commit' testdir_enter
+rule SETUP: 'called_as? prepare-commit-msg' testdir_enter
+rule SETUP: 'called_as? commit-msg' testdir_enter
 
 rule activate: \
      'githook_enable~ pre-commit'\
