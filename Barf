@@ -5,7 +5,7 @@
 # that become installed with 'bar init_local' is the Barf.default file in this directory.
 
 # We lint and build the doc here
-rule main: doc lint
+rule doc lint
 
 require git
 
@@ -25,11 +25,10 @@ rule test_staged: testdir_enter lint
 # maintenance rules
 rule build_docs: 'test? Barf.d/help -nt README' -- './bar help >README'
 
-# called as *bar run the 'main' rule in the current dir
-rule main
-
 # called by another name (githook)
-rule pre-commit: main
+rule pre-commit: MAIN
+
+# TODO: test Barf.default
 
 rule SETUP: 'called_as? pre-commit' testdir_enter
 rule SETUP: 'called_as? pre-merge-commit' testdir_enter
