@@ -1,50 +1,49 @@
-#!
-#/bash
-
-
+#!/bash
 
 ## memo db and log
 
-# A memodb is a persistent database which records the stdout, stderr and exitcode/memo of commands
+# A memodb is a persistent database which records the stdout, stderr and state/exitcode of commands
 
 # This is used for
 #  1. Persist/cache command results throughout multiple invocations
 #  2. Implement background processing where one invocation can schedule commands to be
 #     executed in the background and a later invocation can collect the results
-
-# memodb_eval
-#   executes a command in foreground and stores its results (exitcode, stdout, stderr)
-
-# Backgrounding Details:
-
-# memodb_schedule [--tag <tag>] cmd [args]
-#   schedules a command to be run in background
-#   will memodb_eval the command when not backgrounding
-# memodb_result [--tag <tag>] cmd [args]
-#   waits and returns the result of a backgrounded command
-#   just returns the (memodb cached) result when backgrounding is disabled
-#   will error when the command was not previously scheduled and backgrounding is enabled
-
-# in the form of 'memo hash command..'.
-# Where memo is either a numeric exit code or 'bg' for backgrounding.
-# We may have multiple memo logs that are distinguished by their name and the tree hash.
-# Each memo log is used to cache the result of tests and to schedule background jobs.
-# A memo log is appended to after each test is run.
 #
-# the memo dir .bar.s/<timestamp>-<treehash>/ contains:
-#  - .bar_<tag>.lock - the lock per tag/operation the memo dir
-#  - .bar_<tag>.log  - log for the cached memos holding "exitcode cmdhash cmd args.."
+# Functions
+#   memodb_eval
+#     executes a command in foreground and stores its results (exitcode, stdout, stderr)
+#
+#   memodb_schedule [--tag <tag>] cmd [args]
+#     schedules a command to be run in background
+#     will memodb_eval the command when not backgrounding
+##   memodb_result [--tag <tag>] cmd [args]
+#     waits and returns the result of a backgrounded command
+#     just returns the (memodb cached) result when backgrounding is disabled
+#     will error when the command was not previously scheduled and backgrounding is enabled
+#
+
+# Internals
+
+# the memo dir .bar.db/<timestamp>-<treehash>/ contains:
+#  - .bar.lock - the lock per tag/operation the memo dir
+#  - .bar.log  - log for the cached memos holding "state cmdhash pwd//#cmd args.."
+#                Where state is either a numeric exit code alphabetic for backgrounding.
 #  - <cmdhash>.stdout   - stdout of commands
 #  - <cmdhash>.stderr   - stderr of commands
 #
-# At runtime the MEMODB stores a "cmd args" : "exitcode hash" relation.
-# When a log exists then at startup then MEMO_DB is replayed from the log.
+# At runtime the MEMODB stores a "pwd//#cmd args" : "state hash" relation.
+# When a log exists then at startup then MEMODB is replayed from the log.
+
+# We may have multiple memo logs that are distinguished by their name and the tree hash.
+# Each memo log is used to cache the result of tests and to schedule background jobs.
+# A memo log is appended to after each test is run.
+
 
 # PLANNED: store stdouthash in MEMODB
 
 # TODO: document that this needs clean .gitignore
 # TODO: rule memodb_eval: memodb_init -
-#
+# TODO: make a gitignore rule, add .bar.db, .bar*.lock etc, add that to activate
 
 require lock
 
@@ -55,16 +54,16 @@ function memodb_init #api <tag> - initializes a memo log
 
     # main lock will be released hand-over-hand
     lock_wait "$BAR_TOPLEVEL/.bar"
-    mkdir -p "$BAR_TOPLEVEL/.Bar.s"
+    mkdir -p "$BAR_TOPLEVEL/.bar.db"
 
     # PLANNED: make tree_hash a rule that can be overridden by the user
     # shellcheck disable=SC2155
     local tree_hash="$(git_tree_hash -c --other)"
 
     # shellcheck disable=SC2155
-    declare -gx MEMODB_DIR="$(find "$BAR_TOPLEVEL/.Bar.s" -type d -name "*-$tree_hash" | tail -1)"
+    declare -gx MEMODB_DIR="$(find "$BAR_TOPLEVEL/.bar.db" -type d -name "*-$tree_hash" | tail -1)"
     if [[ -z "$MEMODB_DIR" ]]; then
-        MEMODB_DIR="$BAR_TOPLEVEL/.Bar.s/$BAR_TIMESTAMP-$tree_hash"
+        MEMODB_DIR="$BAR_TOPLEVEL/.bar.db/$BAR_TIMESTAMP-$tree_hash"
         info "creating: $MEMODB_DIR"
         mkdir -p "$MEMODB_DIR"
     else
@@ -79,7 +78,7 @@ function memodb_init #api <tag> - initializes a memo log
 
     # LOG keeps "$exitcode $cmdhash $PWD//#$*"
     # the tag log keeps the last used tags and tree hashes
-    # echo "$1 $BAR_TREE_HASH" >>".bar.s/.tag.log"
+    # echo "$1 $BAR_TREE_HASH" >>".bar.db/.tag.log"
 
     if [[ -f "$MEMODB_LOG" ]]; then
         # replay the log
