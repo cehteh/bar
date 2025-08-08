@@ -149,7 +149,7 @@ declare -gx MEMODB_BACKGROUNDING="${MEMODB_BACKGROUNDING:-true}"
 # if true then start backgrounding server which is connected via a pipe where bg requests like LOG entries are send to
 
 
-declare -g MEMODB_BACKGROUND_PROCEESS
+# declare -g MEMODB_BACKGROUND_PROCEESS
 
 function memodb_background_process
 {
@@ -179,8 +179,8 @@ function memodb_background_process
 #
 #
 
-# tag: scheduling|merged
-declare -gA MEMODB_BACKGROUNDED
+# # tag: scheduling|merged
+# declare -gA MEMODB_BACKGROUNDED
 
 
 
