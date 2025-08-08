@@ -1,4 +1,5 @@
 #!/bash
 
-# one can delete/rename shellcheck_lint to disable shellcheck linting
-rule lint: 'rule_exists? shellcheck_lint' shellcheck_lint
+# one can delete/rename shellcheck_lint_opt to disable shellcheck linting
+rule shellcheck_lint_opt: shellcheck_lint
+rule lint: shellcheck_lint_opt
