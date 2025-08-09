@@ -33,3 +33,8 @@ rule tests: example_fail? -- echo "This is also never called"
 
 # add tests to MAIN
 rule tests
+
+rule test_conclusive: example_fail? conclusive -- echo "This is skipped"
+rule test_conclusive: !example_fail conclusive -- echo "This is conclusive"
+rule test_conclusive: -- echo "This is not reached"
+

@@ -11,6 +11,8 @@ declare -gAx BAR_RULES_RESULT          ## result "name args..":rc
 declare -gA  BAR_RULES_REVERSE_CLAUSES=([CLEANUP]=true) ## rules with clause evaluated in reverse order
 declare -gax BAR_CLAUSES=()            ## clause bodies enumerated
 declare -gax BAR_CLAUSE_DEPS=()        ## dependencies for each clause
+declare -gax BAR_CLAUSE_STACK=()
+declare -ga  BAR_CLAUSE_FLAGS          ## [c]onclusive
 
 function rule () ## [<name>:] [[!]dep[?] [arg]..].. [-- body..] - defines a rule
 {
@@ -74,12 +76,12 @@ function rule () ## [<name>:] [[!]dep[?] [arg]..].. [-- body..] - defines a rule
     else
         BAR_CLAUSES+=("$body$*")
     fi
+    BAR_CLAUSE_FLAGS+=("")
 
     BAR_RULES["$name"]+=" $(( ${#BAR_CLAUSES[@]} - 1))"
 }
 
 function newrule ## <name:> ... - creates a new rule with the given name, deletes the existing one
-
 {
     rule_delete "${1%:}"
     rule "$@"
@@ -135,6 +137,11 @@ function rule_rename ## <oldname> <newname> - renames a rule
     fi
 }
 
+function bar_stack_pop
+{
+    unset "BAR_CLAUSE_STACK[$((${#BAR_CLAUSE_STACK[*]} - 1 ))]"
+}
+
 function rule_eval ## <name> [args..]
 {
     trace "$*"
@@ -165,8 +172,10 @@ function rule_eval ## <name> [args..]
         clauses=${rclauses# }
     fi
 
+    BAR_CLAUSE_STACK+=(x)
     local clause
     for clause in $clauses; do
+        BAR_CLAUSE_STACK[${#BAR_CLAUSE_STACK[@]}-1]="$clause"
         local skip=
         local dep
         local deps=()
@@ -229,6 +238,7 @@ function rule_eval ## <name> [args..]
                 failure "$RULE_NAME: $depname ${depargs[*]}"
                 [[ -n "$check" ]] && BAR_CHECK_LEVEL=$((BAR_CHECK_LEVEL-1))
                 BAR_RULES_RESULT["$rule_id"]="$dep_rc"
+                bar_stack_pop
                 return "$dep_rc"
             else
                 if [[ "$check" = true ]]; then
@@ -245,13 +255,20 @@ function rule_eval ## <name> [args..]
         if [[ "$skip" != true ]]; then
             local rc=0
             eval "${BAR_CLAUSES[$clause]}" || rc=$?
+            if [[ "${BAR_CLAUSE_FLAGS[$clause]}" = *c* ]]; then
+                BAR_RULES_RESULT["$rule_id"]=$rc
+                bar_stack_pop
+                return "$rc"
+            fi
             if [[ "$rc" != 0 ]]; then
                 BAR_RULES_RESULT["$rule_id"]=$rc
+                bar_stack_pop
                 return "$rc"
             fi
         fi
     done
 
+    bar_stack_pop
     BAR_RULES_RESULT["$rule_id"]=0
 }
 
@@ -291,3 +308,14 @@ function rule_list ## [pattern] - lists all loaded rules or rules matching patte
         echo
     done | less -SR
 }
+
+function conclusive ## as dependency makes a clause result conclusive for the rule, when not skipped, no more clauses will be tried
+{
+    [[ "$(( ${#BAR_CLAUSE_STACK[*]} ))" -gt 1 ]] || die "conclusive must be used as dependency"
+    local parent_clause="${BAR_CLAUSE_STACK[$(( ${#BAR_CLAUSE_STACK[*]} - 2 ))]}"
+
+    if [[ "${BAR_CLAUSE_FLAGS[$parent_clause]}" != *c*  ]] ; then
+        BAR_CLAUSE_FLAGS["$parent_clause"]+="c"
+    fi
+}
+

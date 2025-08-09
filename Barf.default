@@ -16,6 +16,9 @@ rule SETUP: 'called_as? pre-merge-commit' testdir_enter
 rule SETUP: 'called_as? prepare-commit-msg' testdir_enter
 rule SETUP: 'called_as? commit-msg' testdir_enter
 
+# watcher reevaluate rules when files change
+rule watch: is_entr_installed? conclusive -- 'rule_eval entr_watch "${RULE_ARGS[@]}"'
+
 rule activate: \
      'githook_enable~ pre-commit'\
      'githook_enable~ pre-merge-commit'\
