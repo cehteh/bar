@@ -73,13 +73,13 @@ function bar_main ## [Rulefile] [Rule [Arguments]] - loads a Barf file and execu
         rule_eval "$initial_rule" "$@" || rc=$?
         if (( "$rc" == 0 )); then
             success "$initial_rule" "$@"
-            unset "BAR_RULES_UNSEALED[POSTPROCESS]"
+            BAR_RULE_FLAGS[POSTPROCESS]="${BAR_RULE_FLAGS[POSTPROCESS]/u/}"
             rule_exists POSTPROCESS && { rule_eval POSTPROCESS || error "POSTPROCCESS failed" ; }
         else
             failure "$initial_rule" "$@"
         fi
 
-        unset "BAR_RULES_UNSEALED[CLEANUP]"
+        BAR_RULE_FLAGS[CLEANUP]="${BAR_RULE_FLAGS[CLEANUP]/u/}"
         rule_exists CLEANUP && { rule_eval CLEANUP || error "CLEANUP failed" ; }
         return $rc
     else

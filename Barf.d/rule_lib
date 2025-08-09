@@ -2,21 +2,39 @@
 #shellcheck disable=SC2016
 
 # library for the rule functions
-
 declare -g   BAR_CHECK_LEVEL=0         ## less alerting for check dependencies
 declare -g   BAR_RULES_SEALED          ## set to the last rule or 'true' when rules are sealed
-declare -gA  BAR_RULES_UNSEALED=([CLEANUP]=true [POSTPROCESS]=true) ## rules exempt from sealing
 declare -gAx BAR_RULES                 ## discovered rules as name:"clauseidx.."
 declare -gAx BAR_RULES_RESULT          ## result "name args..":rc
-declare -gA  BAR_RULES_REVERSE_CLAUSES=([CLEANUP]=true) ## rules with clause evaluated in reverse order
+declare -gA  BAR_RULE_FLAGS=([CLEANUP]="ur" [POSTPROCESS]="u")    ## [r]everse [u]nsealed [a]lways
 declare -gax BAR_CLAUSES=()            ## clause bodies enumerated
 declare -gax BAR_CLAUSE_DEPS=()        ## dependencies for each clause
 declare -gax BAR_CLAUSE_STACK=()
 declare -ga  BAR_CLAUSE_FLAGS          ## [c]onclusive
 
-function rule () ## [<name>:] [[!]dep[?] [arg]..].. [-- body..] - defines a rule
+function rule () ## [[--rule-flag].. <name>:] [[!]dep[?] [arg]..].. [-- body..] - defines a rule
 {
     trace "$*"
+
+    local ruleflags=""
+    while [[ "$#" -gt 0 ]]; do
+        case "$1" in
+        --always)
+            ruleflags+="a"
+            ;;
+        --reverse)
+            ruleflags+="r"
+            ;;
+        # internal flag
+        # --unsealed)
+        #     ruleflags+="u"
+        #     ;;
+        *)
+            break;;
+        esac
+        shift
+    done
+
     local name="$1"
     if [[ "$name" = *: ]]; then
         name="${name%:}"
@@ -59,7 +77,8 @@ function rule () ## [<name>:] [[!]dep[?] [arg]..].. [-- body..] - defines a rule
 
     if [[ -v BAR_RULES_SEALED ]]; then
         trace "names ${!BAR_RULES[*]}"
-        if [[ -v BAR_RULES[$name] && "$name" != "$BAR_RULES_SEALED" && ! -v BAR_RULES_UNSEALED["$name"] ]]; then
+        if [[ -v BAR_RULES[$name] && "$name" != "$BAR_RULES_SEALED"
+         && ! ( "$ruleflags" = *u* || "${BAR_RULE_FLAGS[$name]}" = *u* ) ]]; then
             die "Can not add clause '$name: ${deps[*]}' after rules are sealed"
         else
             BAR_RULES_SEALED="$name"
@@ -78,6 +97,7 @@ function rule () ## [<name>:] [[!]dep[?] [arg]..].. [-- body..] - defines a rule
     fi
     BAR_CLAUSE_FLAGS+=("")
 
+    BAR_RULE_FLAGS["$name"]="${BAR_RULE_FLAGS[$name]:-}$ruleflags"
     BAR_RULES["$name"]+=" $(( ${#BAR_CLAUSES[@]} - 1))"
 }
 
@@ -150,13 +170,13 @@ function rule_eval ## <name> [args..]
     local RULE_NAME="$1"
     shift
 
-    [[ -v BAR_RULES_UNSEALED["$RULE_NAME"] ]] && die "Tried to evaluate unsealed rule: $RULE_NAME"
+    [[ "${BAR_RULE_FLAGS[$RULE_NAME]:-}" = *u* ]] && die "Tried to evaluate unsealed rule: $RULE_NAME"
 
     # shellcheck disable=2034
     local RULE_ARGS=("$@")
     rule_exists "$RULE_NAME" || rule_autoload "$RULE_NAME"
 
-    if [[ ! "$RULE_NAME" = "always_"* && -v BAR_RULES_RESULT["$rule_id"] ]]; then
+    if [[ ! "${BAR_RULE_FLAGS[$RULE_NAME]:-}" = *a* && -v BAR_RULES_RESULT["$rule_id"] ]]; then
         return "${BAR_RULES_RESULT[$rule_id]}"
     fi
 
@@ -164,7 +184,7 @@ function rule_eval ## <name> [args..]
 
     local clauses="${BAR_RULES[$RULE_NAME]}"
 
-    if [[ -v BAR_RULES_REVERSE_CLAUSES["$RULE_NAME"] ]]; then
+    if [[ "${BAR_RULE_FLAGS[$RULE_NAME]}" = *r* ]]; then
         local rclauses=""
         for n in $clauses; do
             rclauses="$n $rclauses"
@@ -206,7 +226,7 @@ function rule_eval ## <name> [args..]
             # shellcheck disable=2155
             local dep_id="$(hash_args "$PWD $depname ${depargs[*]}")"
             local dep_rc="${BAR_RULES_RESULT[$dep_id]:-}"
-            if [[ "$dep_id" = "always_"* || -z "$dep_rc" ]]; then
+            if [[ "${BAR_RULE_FLAGS[$depname]-a}" = *a* || -z "$dep_rc" ]]; then
                 dep_rc=0
                 # shellcheck disable=2086
                 rule_eval "$depname" "${depargs[@]}" || dep_rc=$?

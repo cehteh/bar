@@ -67,9 +67,6 @@ RULE SEMANTICS
   reasons this is not enforced but one may observe surprising behavior when this requirement
   is violated.
 
-  An exception are rule names that start with 'always_', such rules results are not taken from
-  the cache and the rule is always evaluated.
-
   Rules will be autoloaded on demand from modules in 'Barf.d/' (see below AUTOMATIC MODULE
   LOADING). For rules where this fails a fallback exits that creates an implicit rule for any
   command and shell function defined with a body calling the respective command.
@@ -93,11 +90,18 @@ RULE SEMANTICS
 
 RULE DEFINITION SYNTAX
 
-  rule [<name>:] [[!]deps[?|~] args..]..
-  rule [<name>:] [[!]deps[?|~] args..].. -
-  rule [<name>:] [[!]deps[?|~] args..].. -- [body..]
+  rule [[--rule-flag].. <name>:] [[!]deps[?|~] args..]..
+  rule [[--rule-flag].. <name>:] [[!]deps[?|~] args..].. -
+  rule [[--rule-flag].. <name>:] [[!]deps[?|~] args..].. -- [body..]
 
   Adds a clause to 'name' or 'MAIN'.
+
+  * [--rule-flag]
+    Sets a flag for a rule. Flags are additive and affect the rule, not single clauses.
+    * --always
+      The result is not cached and the rule will be always evaluated again.
+    * --reverse
+      The clauses of this rule will be evaluated in reverse order
 
   * [<name>:]
 
@@ -218,6 +222,19 @@ RULE DEFINITION SYNTAX
     The rules that are exempt from sealing are tracked in the 'BAR_RULES_UNSEALED' array.
     Rules whose clauses should be evaluated in reverse order are tracked in the
     'BAR_RULES_REVERSE_CLAUSES' array.
+
+    Special rule names for dependencies
+
+    * conclusive
+      Makes a clause result conclusive, if not skipped no more clauses will be tried
+
+RULE ENVIRONMENT
+
+  Rules implicitly depend on the arguments passed and the current directory they run in. Any
+  other state or environment variable is not considered. When the result of a rule would
+  depend on such external state then the rule is impure and may lead to wrong
+  results. Currently such can be mitigated by using 'always_*' rules. Future versions of bar
+  may improve this in other ways.
 
 
 MODULES
