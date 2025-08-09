@@ -309,13 +309,22 @@ function rule_list ## [pattern] - lists all loaded rules or rules matching patte
     done | less -SR
 }
 
-function conclusive ## as dependency makes a clause result conclusive for the rule, when not skipped, no more clauses will be tried
+function is_dependency
 {
-    [[ "$(( ${#BAR_CLAUSE_STACK[*]} ))" -gt 1 ]] || die "conclusive must be used as dependency"
+    [[ "$(( ${#BAR_CLAUSE_STACK[*]} ))" -gt 1 ]]
+}
+
+function bar_set_parent_clause_flag
+{
     local parent_clause="${BAR_CLAUSE_STACK[$(( ${#BAR_CLAUSE_STACK[*]} - 2 ))]}"
 
-    if [[ "${BAR_CLAUSE_FLAGS[$parent_clause]}" != *c*  ]] ; then
-        BAR_CLAUSE_FLAGS["$parent_clause"]+="c"
+    if [[ "${BAR_CLAUSE_FLAGS[$parent_clause]}" != *"$1"*  ]] ; then
+        BAR_CLAUSE_FLAGS["$parent_clause"]+="$1"
     fi
 }
 
+function conclusive ## as dependency makes a clause result conclusive for the rule, when not skipped, no more clauses will be tried
+{
+    is_dependency || die "conclusive must be evaluated as dependency"
+    bar_set_parent_clause_flag c
+}
