@@ -9,10 +9,9 @@ declare -gAx BAR_RULES_RESULT          ## result "name args..":rc
 declare -gA  BAR_RULE_FLAGS=([CLEANUP]="ur" [POSTPROCESS]="u")    ## [r]everse [u]nsealed [a]lways
 declare -gax BAR_CLAUSES=()            ## clause bodies enumerated
 declare -gax BAR_CLAUSE_DEPS=()        ## dependencies for each clause
-declare -gax BAR_CLAUSE_STACK=()
-declare -ga  BAR_CLAUSE_FLAGS          ## [c]onclusive
+declare -ga  BAR_CLAUSE_FLAGS=()       ## [c]onclusive
 
-function rule () ## [[--rule-flag].. <name>:] [[!]dep[?] [arg]..].. [-- body..] - defines a rule
+function rule () ## [[--rule-flag].. <name>:] [--clause-flag].. [[!]dep[?] [arg]..].. [-- body..] - defines a rule
 {
     trace "$*"
 
@@ -43,6 +42,18 @@ function rule () ## [[--rule-flag].. <name>:] [[!]dep[?] [arg]..].. [-- body..] 
         name=""
     fi
 
+    local clauseflags=""
+    while [[ "$#" -gt 0 ]]; do
+        case "$1" in
+        --conclusive)
+            clauseflags+="c"
+            ;;
+        *)
+            break;;
+        esac
+        shift
+    done
+
     local deps=()
     local has_body=
     local deps_for_cmd=
@@ -64,8 +75,10 @@ function rule () ## [[--rule-flag].. <name>:] [[!]dep[?] [arg]..].. [-- body..] 
     # name given but no deps, no body, make body default to the rule name
     local body=""
     if [[ "${#deps[*]}" = 0 && "$#" == 0 && -n "$name" ]]; then
+        clauseflags+="c"
         body="$name "'"${RULE_ARGS[@]}"'
     elif [[ -n "$deps_for_cmd" && "$#" == 0 && -n "$name" ]]; then
+        clauseflags+="c"
         rule_exists "$name" && die "rule '$name' already defined"
         body="$name "'"${RULE_ARGS[@]}"'
     elif [[ -z "$name" ]]; then
@@ -95,8 +108,8 @@ function rule () ## [[--rule-flag].. <name>:] [[!]dep[?] [arg]..].. [-- body..] 
     else
         BAR_CLAUSES+=("$body$*")
     fi
-    BAR_CLAUSE_FLAGS+=("")
 
+    BAR_CLAUSE_FLAGS+=("$clauseflags")
     BAR_RULE_FLAGS["$name"]="${BAR_RULE_FLAGS[$name]:-}$ruleflags"
     BAR_RULES["$name"]+=" $(( ${#BAR_CLAUSES[@]} - 1))"
 }
@@ -157,11 +170,6 @@ function rule_rename ## <oldname> <newname> - renames a rule
     fi
 }
 
-function bar_stack_pop
-{
-    unset "BAR_CLAUSE_STACK[$((${#BAR_CLAUSE_STACK[*]} - 1 ))]"
-}
-
 function rule_eval ## <name> [args..]
 {
     trace "$*"
@@ -192,10 +200,8 @@ function rule_eval ## <name> [args..]
         clauses=${rclauses# }
     fi
 
-    BAR_CLAUSE_STACK+=(x)
     local clause
     for clause in $clauses; do
-        BAR_CLAUSE_STACK[${#BAR_CLAUSE_STACK[@]}-1]="$clause"
         local skip=
         local dep
         local deps=()
@@ -258,7 +264,6 @@ function rule_eval ## <name> [args..]
                 failure "$RULE_NAME: $depname ${depargs[*]}"
                 [[ -n "$check" ]] && BAR_CHECK_LEVEL=$((BAR_CHECK_LEVEL-1))
                 BAR_RULES_RESULT["$rule_id"]="$dep_rc"
-                bar_stack_pop
                 return "$dep_rc"
             else
                 if [[ "$check" = true ]]; then
@@ -277,18 +282,15 @@ function rule_eval ## <name> [args..]
             eval "${BAR_CLAUSES[$clause]}" || rc=$?
             if [[ "${BAR_CLAUSE_FLAGS[$clause]}" = *c* ]]; then
                 BAR_RULES_RESULT["$rule_id"]=$rc
-                bar_stack_pop
                 return "$rc"
             fi
             if [[ "$rc" != 0 ]]; then
                 BAR_RULES_RESULT["$rule_id"]=$rc
-                bar_stack_pop
                 return "$rc"
             fi
         fi
     done
 
-    bar_stack_pop
     BAR_RULES_RESULT["$rule_id"]=0
 }
 
@@ -327,24 +329,4 @@ function rule_list ## [pattern] - lists all loaded rules or rules matching patte
         fi
         echo
     done | less -SR
-}
-
-function is_dependency
-{
-    [[ "$(( ${#BAR_CLAUSE_STACK[*]} ))" -gt 1 ]]
-}
-
-function bar_set_parent_clause_flag
-{
-    local parent_clause="${BAR_CLAUSE_STACK[$(( ${#BAR_CLAUSE_STACK[*]} - 2 ))]}"
-
-    if [[ "${BAR_CLAUSE_FLAGS[$parent_clause]}" != *"$1"*  ]] ; then
-        BAR_CLAUSE_FLAGS["$parent_clause"]+="$1"
-    fi
-}
-
-function conclusive ## as dependency makes a clause result conclusive for the rule, when not skipped, no more clauses will be tried
-{
-    is_dependency || die "conclusive must be evaluated as dependency"
-    bar_set_parent_clause_flag c
 }

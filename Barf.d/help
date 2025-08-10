@@ -90,17 +90,20 @@ RULE SEMANTICS
 
 RULE DEFINITION SYNTAX
 
-  rule [[--rule-flag].. <name>:] [[!]deps[?|~] args..]..
-  rule [[--rule-flag].. <name>:] [[!]deps[?|~] args..].. -
-  rule [[--rule-flag].. <name>:] [[!]deps[?|~] args..].. -- [body..]
+  rule [[--rule-flag].. <name>:] [--clause-flag].. [[!]deps[?|~] args..]..
+  rule [[--rule-flag].. <name>:] [--clause-flag].. [[!]deps[?|~] args..].. -
+  rule [[--rule-flag].. <name>:] [--clause-flag].. [[!]deps[?|~] args..].. -- [body..]
 
   Adds a clause to 'name' or 'MAIN'.
 
   * [--rule-flag]
-    Sets a flag for a rule. Flags are additive and affect the rule, not single clauses.
-    * --always
+
+    Sets flags for a rule. Flags are additive and affect the rule, not single clauses.
+
+    --always
       The result is not cached and the rule will be always evaluated again.
-    * --reverse
+
+    --reverse
       The clauses of this rule will be evaluated in reverse order
 
   * [<name>:]
@@ -108,7 +111,14 @@ RULE DEFINITION SYNTAX
     A rule can have a optional name (suffixed with a colon).  When the name is not given it
     defaults to 'MAIN'.  Rules that have only a name but no dependencies and no body create a
     body that calls a bash command or function with the same name as the rule passing rule
-    arguments to it.
+    arguments to it. The --conclusive flag is implied for such rules.
+
+  * [--clause-flag]..
+
+    Sets flags affecting this clause only.
+
+    --conclusive
+      Makes a clause result conclusive, if not skipped no more clauses will be tried.
 
   * [[!]deps[?|~] args..]..
 
@@ -135,6 +145,7 @@ RULE DEFINITION SYNTAX
     When there is a single hypen '-' at the end of a rule definition then the rule body is a
     call to a command or function of the same name as the rule with all arguments passed. This
     is used when one wants to add dependencies to a existing command or function.
+    A rule defined this way implies the --conclusive clause flag
 
   * -- [body..]
 
@@ -201,7 +212,7 @@ RULE DEFINITION SYNTAX
        A failure here will abort bar.
      * MAIN
        When the bar is not called via a symlink or the user did not provide a rule to
-       evaluate, then MAIN is the default rule. Otherwise the user supplied or symlink deduced
+       evaluate, then MAIN is the default rule. Otherwise the user supplied or symlink-deduced
        rulename will be evaluated. The result of this rule determines the exitcode of bar.
      * POSTPROCESS
        Is for evaluating things after the main rule finsihed. The environment and
@@ -223,10 +234,6 @@ RULE DEFINITION SYNTAX
     Rules whose clauses should be evaluated in reverse order are tracked in the
     'BAR_RULES_REVERSE_CLAUSES' array.
 
-    Special rule names for dependencies
-
-    * conclusive
-      Makes a clause result conclusive, if not skipped no more clauses will be tried
 
 RULE ENVIRONMENT
 
