@@ -14,7 +14,7 @@ rule testdir_enter: is_git_toplevel -
 function testdir_enter # treeish - Sets up a test directory change dir into it.
 {
     trace "$*"
-    lock_wait .bar
+    lock_wait "$BAR_TOPLEVEL/.bar"
     local treeish="${1:-}"
 
     [[ -z "$treeish" ]] && treeish="$(git write-tree)"
@@ -33,9 +33,9 @@ function testdir_enter # treeish - Sets up a test directory change dir into it.
     else
         info "using existing: $TESTDIR"
     fi
-    lock_next .bar "$TESTDIR/.bar"
-    rule CLEANUP: -- "cd '$(git_toplevel)'; lock_remove '$TESTDIR/.bar'"
+    lock_next "$BAR_TOPLEVEL/.bar" "$TESTDIR/.bar"
     rule CLEANUP: -- testdir_gc
+    rule CLEANUP: -- "cd '$(git_toplevel)'; lock_remove '$TESTDIR/.bar'"
     cd "$TESTDIR" || { error "cant change into $TESTDIR"; return 1; }
 }
 
@@ -47,27 +47,30 @@ function is_testdir_used
 function testdir_gc # - cleanup old testdirs
 {
     local testdir
+    lock_wait "$BAR_TOPLEVEL/.bar"
     find "$(git_toplevel)" -name "${TESTDIR_PREFIX}*" -type d -print0 | sort -z -n | head -z -n -$((TESTDIR_KEEP)) |
         while IFS= read -r -d '' testdir; do
             if lock_try_norec "$testdir/.bar"; then
                 rm -rf "$testdir"
             fi
         done
+    lock_remove "$BAR_TOPLEVEL/.bar"
 }
 
 function testdir_clean # - cleanup all testdirs
 {
     local testdir
+    lock_wait "$BAR_TOPLEVEL/.bar"
     find "$(git_toplevel)" -name "${TESTDIR_PREFIX}*" -type d -print0 |
         while IFS= read -r -d '' testdir; do
             if lock_try_norec "$testdir/.bar"; then
                 rm -rf "$testdir"
             fi
         done
+    lock_remove "$BAR_TOPLEVEL/.bar"
 }
 
 function testdir_list # - list all testdirs
 {
     find "$(git_toplevel)" -name "${TESTDIR_PREFIX}*" -type d
 }
-
