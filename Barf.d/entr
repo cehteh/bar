@@ -5,6 +5,9 @@
 rule is_entr_installed: 'is_command_installed entr'
 
 # shellcheck disable=2016
-rule entr_watch: is_entr_installed -- '
-         git_ls_files --other | entr -c -s "$BAR_SELF $BARF_FILE ${RULE_ARGS[*]}"
-'
+function entr_watch
+{
+    git_ls_files --other | entr -c -s "$BAR_SELF $BARF_FILE $*"
+}
+
+rule entr_watch: is_entr_installed -

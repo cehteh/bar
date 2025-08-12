@@ -41,7 +41,7 @@ rule activate: \
      'githook_enable~ prepare-commit-msg'\
      'githook_enable~ commit-msg'
 
-rule watch: is_entr_installed? conclusive -- 'rule_eval entr_watch "${RULE_ARGS[@]}"'
+#rule watch: --conclusive is_entr_installed? -- 'rule_eval entr_watch "${RULE_ARGS[@]}"'
 
 require search
 rule issues: -- search_for -B1 -A2 '" (FIXME|TODO|PLANNED). "'
