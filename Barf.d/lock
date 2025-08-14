@@ -5,27 +5,29 @@
 # Lockfiles: Manage ownership of resources.  We can create or wait on a lockfile with
 # lock_wait and remove it with lock_remove.  These locks are recursive the same process can
 # lock_wait on the same lockfile multiple times which must be paired with the same numbers of
-# lock_remove to unlock it.
-# lock_next does hand over hand locking locking a new lockfile and then releases the original one.
-# lock_remove takes a name as parameter and removes the lockfile if it is owned by the current process.
-
+# lock_remove to unlock it.  lock_next does hand over hand locking locking a new lockfile and
+# then releases the original one.  lock_remove takes a name as parameter and removes the
+# lockfile if it is owned by the current process.  Locks can be send atomically to another
+# process. lock_receive blocks until the the process gets the lock, lock_send registers the
+# lock to be send to a process. It will be send at the final lock_remove in the sending
+# process.
 declare -gA LOCK_REC=()
 
-function lock_wait #api {lockname} - lock a lockfile, waits until we have the lock
+function lock_wait #api <lockname> - lock a lockfile, waits until we have the lock
 {
     # shellcheck disable=SC2155
     local lockfile="$(realpath -s "$1.lock")"
     if (( LOCK_REC["$lockfile"] > 0 )); then
         (( LOCK_REC["$lockfile"]+=1 ))
-        trace "recursive lock: $1 as $$"
+        trace "recursive lock: $1 as $BASHPID"
         return 0
     fi
 
     # Create a temporary lockfile specific to this process
-    local tmp_lockfile="${1}.$$.lock"
+    local tmp_lockfile="${1}.$BASHPID.lock"
 
     # Put our PID in the temporary file
-    echo $$ > "$tmp_lockfile"
+    echo -n $BASHPID > "$tmp_lockfile"
 
     # backoff with a binomial sequence up to 100ms
     declare -i backoff=1
@@ -56,17 +58,17 @@ function lock_wait #api {lockname} - lock a lockfile, waits until we have the lo
     for file in "$1."*".lock"; do
         local lockpid="${file%.lock}"
         lockpid="${lockpid##*.}"
-        [[ "$lockpid" != "$$" && "$(cat "$file")" = "$lockpid" ]] &&
+        [[ "$lockpid" != "$BASHPID" && "$(cat "$file")" = "$lockpid" ]] &&
             ! kill -0 "$lockpid" 2>/dev/null &&
             rm -f "$file"
     done
 
     LOCK_REC["$lockfile"]=1
 
-    trace "locked: $1 as $$"
+    trace "locked: $1 as $BASHPID"
 }
 
-function lock_try_norec #api {lockname} - try to lock a lockfile non recursively, will not wait, fails when we already have the lock
+function lock_try_norec #api <lockname> - try to lock a lockfile non recursively, will not wait, fails when we already have the lock
 {
     # shellcheck disable=SC2155
     local lockfile="$(realpath -s "$1.lock")"
@@ -75,10 +77,10 @@ function lock_try_norec #api {lockname} - try to lock a lockfile non recursively
     fi
 
     # Create a temporary lockfile specific to this process
-    local tmp_lockfile="${1}.$$.lock"
+    local tmp_lockfile="${1}.$BASHPID.lock"
 
     # Put our PID in the temporary file
-    echo $$ > "$tmp_lockfile"
+    echo $BASHPID > "$tmp_lockfile"
 
     # Try to atomically acquire the lock
     while ! ln -s "$tmp_lockfile" "$lockfile" 2>/dev/null; do
@@ -100,13 +102,54 @@ function lock_try_norec #api {lockname} - try to lock a lockfile non recursively
     done
     LOCK_REC["$lockfile"]=1
 
-    trace "locked: $1 as $$"
+    trace "locked: $1 as $BASHPID"
 }
 
 function lock_next # old new - hand over hand locking
 {
     lock_wait "$2"
     lock_remove "$1"
+}
+
+function lock_receive #api <lock> - to be called in a subprocess before sending the lock
+{
+    # shellcheck disable=SC2155
+    local lockfile="$(realpath -s "$1.lock")"
+
+    # Create a temporary lockfile specific to this process
+    local tmp_lockfile="${1}.$BASHPID.lock"
+
+    # Put our PID in the temporary file
+    echo $BASHPID > "$tmp_lockfile"
+
+    # backoff with a binomial sequence up to 100ms
+    declare -i backoff=1
+
+    while true; do
+        if [[ "$lockfile" -ef "$tmp_lockfile" ]]; then
+            trace "lock received: $1"
+            return 0
+        fi
+        # TODO: if sender still exists, else die
+        sleep "${backoff:: -1}.${backoff: -1}"
+        (( backoff < 100 )) && (( backoff+=1 ))
+    done
+}
+
+function lock_send #api <lock> <who> - to be called from parent after child forked
+{
+    # shellcheck disable=SC2155
+    local lockfile="$(realpath -s "$1.lock")"
+    (( LOCK_REC["$lockfile"] > 0 )) || die "lock $1 is not locked by $BASHPID"
+
+    # shellcheck disable=SC2155
+    local send_to=$(<"$lockfile")
+    [[ "$send_to" != "$BASHPID" ]] && {
+        error "lock $1 is already send to $send_to"
+        return 1
+    }
+
+    echo -n "$2" > "$lockfile"
 }
 
 function lock_remove #api {name} - remove a lockfile, unlock
@@ -128,14 +171,26 @@ function lock_remove #api {name} - remove a lockfile, unlock
         local lockpid="${lockfile_target%.lock}"
         lockpid="${lockpid##*.}"
 
-        if [[ "$lockpid" = "$$" ]]; then
-            trace "unlock $1"
-            # Remove both the lock and the temporary file
-            rm -f "$lockfile"
-            rm -f "$lockfile_target"
+        if [[ "$lockpid" = "$BASHPID" ]]; then
+            # shellcheck disable=SC2155
+            local send_to=$(<"$lockfile_target")
+            if [[ "$send_to" != "$BASHPID" ]]; then
+                trace "send lock $1 to $send_to"
+
+                local tmp_lockfile="${1}.$send_to.lock"
+                [[ -f "$tmp_lockfile" ]] || die "lock receiver $tmp_lockfile does not exist"
+
+                ln -sf "$tmp_lockfile" "$lockfile" 2>/dev/null
+                rm -f "$lockfile_target"
+            else
+                trace "unlock $1"
+                # Remove both the lock and the temporary file
+                rm -f "$lockfile"
+                rm -f "$lockfile_target"
+            fi
             return 0
         else
-            error "$lockfile is not ours (we are $$, owned by $lockpid)"
+            error "$lockfile is not ours (we are $BASHPID, owned by $lockpid)"
             return 1
         fi
     elif [[ -f "$lockfile" ]]; then

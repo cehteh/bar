@@ -1,6 +1,7 @@
 #!/bash
 
-# You can run this example with './bar example'
+# This file shows and tests some features
+# You can run this example with './bar example [rule]'
 
 # Add a clause to 'MAIN'
 rule -- echo "Example begin"
@@ -43,3 +44,24 @@ rule --always always: -- echo "always called second"
 rule --reverse always: -- echo "always called first"
 
 rule test_always: always always always
+
+rule test_memodb: memodb_init -- debug "Memo test begin"
+rule test_memodb: memotest1 memotest2 memotest3
+
+rule memotest1: -- memodb_eval echo "memotest"
+rule memotest2: -- memodb_eval echo "memotest"
+rule memotest3: -- memodb_eval echo "memotest"
+
+# run this first
+rule test_background_schedule: -- '
+     require memodb
+     memodb_schedule ls
+     memodb_schedule sleep 3
+'
+
+# then this
+rule test_background_result: -- '
+     require memodb
+     memodb_result ls
+     memodb_result sleep 3
+'

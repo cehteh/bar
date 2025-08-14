@@ -15,15 +15,16 @@
 #
 #   memodb_schedule [--tag <tag>] cmd [args]
 #     schedules a command to be run in background
-#     will memodb_eval the command when not backgrounding
-##   memodb_result [--tag <tag>] cmd [args]
-#     waits and returns the result of a backgrounded command
+#     will memodb_eval the command when backgrounding is disabled
+#
+#   memodb_result [--tag <tag>] cmd [args]
+#     waits and merges/returns the result of a backgrounded command of a former invication
 #     just returns the (memodb cached) result when backgrounding is disabled
 #     will error when the command was not previously scheduled and backgrounding is enabled
 #
 
 # Internals
-
+#
 # the memo dir .bar.db/<timestamp>-<treehash>/ contains:
 #  - .bar.lock - the lock per tag/operation the memo dir
 #  - .bar.log  - log for the cached memos holding "state cmdhash pwd//#cmd args.."
@@ -31,26 +32,35 @@
 #  - <cmdhash>.stdout   - stdout of commands
 #  - <cmdhash>.stderr   - stderr of commands
 #
-# At runtime the MEMODB stores a "pwd//#cmd args" : "state hash" relation.
-# When a log exists then at startup then MEMODB is replayed from the log.
+# At runtime the MEMODB stores a "pwd//#cmd args" : "state hash" relation.  Note that '//#' is
+# a fancy delimiter here as it should not appear in paths or in front of commands When a log
+# exists then at startup then the MEMODB is replayed from the log.
+
+# PLANNED: for now only one background process is spawned eventually there will be one per tag
 
 # We may have multiple memo logs that are distinguished by their name and the tree hash.
 # Each memo log is used to cache the result of tests and to schedule background jobs.
 # A memo log is appended to after each test is run.
 
-
-# PLANNED: store stdouthash in MEMODB
-
 # TODO: document that this needs clean .gitignore
-# TODO: rule memodb_eval: memodb_init -
 # TODO: make a gitignore rule, add .bar.db, .bar*.lock etc, add that to activate
 
 require lock
 
+declare -gx MEMODB_KEEP="${MEMODB_KEEP:-5}"
+declare -gx MEMODB_BACKGROUNDING="${MEMODB_BACKGROUNDING:-true}"
+declare -gA MEMODB_INITIALIZED_TAGS=()
+
 # (re-) initializes a memo log, acquires a lock
-function memodb_init #api <tag> - initializes a memo log
+function memodb_init #api [tag] - initializes a memo log
 {
     trace "$*"
+
+    local tag="${1:-bg}"
+
+    # initialize only once
+    [[ -v MEMODB_INITIALIZED_TAGS[$tag] ]] && return 0
+    MEMODB_INITIALIZED_TAGS[$tag]=true
 
     # main lock will be released hand-over-hand
     lock_wait "$BAR_TOPLEVEL/.bar"
@@ -73,32 +83,25 @@ function memodb_init #api <tag> - initializes a memo log
 
     readonly MEMODB_DIR
 
+    # MEMODB_LOG keeps "$exitcode $cmdhash $PWD//#$*"
     declare -gx MEMODB_LOG="$MEMODB_DIR/.log"
-    declare -gAx MEMODB      #S (last) memo database, "pwd//#cmd args" : "memo cmdhash"
-
-    # LOG keeps "$exitcode $cmdhash $PWD//#$*"
-    # the tag log keeps the last used tags and tree hashes
-    # echo "$1 $BAR_TREE_HASH" >>".bar.db/.tag.log"
+    declare -gAx MEMODB      # the actual state: "pwd//#cmd args":"state cmdhash"
 
     if [[ -f "$MEMODB_LOG" ]]; then
         # replay the log
-        local rc
+        local state
         local cmdhash
         local rest
-        while read -r rc cmdhash rest; do
-            MEMODB[$rest]="$rc $cmdhash"
+        while read -r state cmdhash rest; do
+            MEMODB[$rest]="$state $cmdhash"
         done <"$MEMODB_LOG"
     else
         # new memo log
         touch "$MEMODB_LOG"
     fi
 
-    # TODO: lock .bglock -> background processing is done, if there is a bglog  then merge it, release bglock
-    #       merge bglog opportunistically? only when results are queried
-    
-
-    rule CLEANUP: -- "cd '$BAR_TOPLEVEL'; lock_remove '$MEMODB_DIR/.memodb'"
-    # TODO:    rule CLEANUP: -- memodb_gc
+    rule POSTPROCESS: -- memodb_start_background_processing
+    rule CLEANUP: -- "cd '$BAR_TOPLEVEL'; lock_remove '$MEMODB_DIR/.memodb'; memodb_gc;"
 }
 
 function memodb_cached # cmd args.. - returns the last cached log entry memo
@@ -109,7 +112,7 @@ function memodb_cached # cmd args.. - returns the last cached log entry memo
 
 function memodb_cmdhash # cmd args.. - returns the hash of $PWD, a command and its args
 {
-    local entry="${MEMODB[$PWD//#$*]:-}"
+    local entry="${MEMODB[${PWD}//#$*]:-}"
 
     if [[ -n "$entry" ]]; then
         entry="${entry#* }"
@@ -119,114 +122,196 @@ function memodb_cmdhash # cmd args.. - returns the hash of $PWD, a command and i
     fi
 }
 
-function memodb_replay_stdio #api <cmdhash> - replays the stdout and stderr of a command
+function memodb_replay_stdio # <cmdhash> - replays the stdout and stderr of a command
 {
-    debug "$*"
+    trace "$*"
     cat "$MEMODB_DIR/$1.stdout"
     cat "$MEMODB_DIR/$1.stderr" 1>&2
 }
 
-function memodb_log # exitcode hash cmd args.. - logs a memo
+function memodb_log # state hash cmd args.. - logs the state of a command
 {
-    local exitcode="$1"
+    local state="$1"
     local hash="$2"
     shift 2
 
-    trace "MEMODB: $exitcode $* >> $MEMODB_LOG"
-    echo "$exitcode $hash $PWD//#$*" >>"$MEMODB_LOG"
-    MEMODB[$PWD//#$*]="$exitcode $hash"
+    trace "$state $* >> $MEMODB_LOG"
+    echo "$state $hash $PWD//#$*" >>"$MEMODB_LOG"
+    MEMODB[$PWD//#$*]="$state $hash"
 }
 
-
-# PLANNED: backgrounding git_hook_matches "pre-commit" "pre-merge-commit" && background_schedule && return 0
-#                        git_hook_matches "commit-msg" && background_wait && return $(background_result)
-
-# PLANNED: reintroduce tags for backgrounding, create one background process per tag
-
-
-
-declare -gx MEMODB_BACKGROUNDING="${MEMODB_BACKGROUNDING:-true}"
-# if true then start backgrounding server which is connected via a pipe where bg requests like LOG entries are send to
-
-
-# declare -g MEMODB_BACKGROUND_PROCEESS
-
-function memodb_background_process
+function memodb_eval # [--tag <tag>] cmd [args..]
 {
-    # get lock
+    memodb_init ''
 
-    # lock testdir
-
-    
-
-    
-    # find bg jobs
-    # hand over lock to bglock
-    # start bg jobs. logging to bglog
-
-
-    # TODO: how and when to merge the bglog?
-
-    
-    :
-}
-
-
-
-# PLANNED: backgrounding memomachine
-#
-# scheduling->running->collecting
-#
-#
-
-# # tag: scheduling|merged
-# declare -gA MEMODB_BACKGROUNDED
-
-
-
-function memodb_eval # --bg | --bg-as <tag> cmd [args..]
-{
     # shellcheck disable=SC2155
     local cmdhash="$(memodb_cmdhash "$*")"
 
     # shellcheck disable=SC2155
-    local cached_memo="$(memodb_cached "$*")"
-    case "$cached_memo" in
+    local cached_state="$(memodb_cached "$*")"
+    case "$cached_state" in
     [[:alpha:]]*)
         # already scheduled in the background, just return
-        debug "already bg scheduled $*"
+        debug "bg scheduled $*"
         return 0
         ;;
     0)
         # already run successfully, just return
-        debug "already success: $*"
+        debug "cached success: $*"
         memodb_replay_stdio "$cmdhash"
         return 0
         ;;
     ?*)
         # already run with failure
-        debug "already failed: $*"
+        debug "cached failed: $*"
         memodb_replay_stdio "$cmdhash"
-        return "$cached_memo"
+        return "$cached_state"
         ;;
     esac
 
-    # if backgrounding and --bg then send to background else eval right here 
-    
     debug "eval: $*"
-    if (
-        "$@"
-    ) 1> >(tee "$MEMODB_DIR/$cmdhash.stdout") 2> >(tee "$MEMODB_DIR/$cmdhash.stderr" 1>&2 ) ; then
-        memodb_log 0 "$cmdhash" "$*"
-        return 0
+    local rc=0
+    ( "$@" ) 1> >(tee "$MEMODB_DIR/$cmdhash.stdout") 2> >(tee "$MEMODB_DIR/$cmdhash.stderr" 1>&2 ) || rc=$?
+    memodb_log "$rc" "$cmdhash" "$*"
+    return $rc
+}
+
+# list of schedules commands as "$cmdhash $PWD//#$*"
+declare -gax MEMODB_SCHEDULED=()
+
+function memodb_schedule # TODO: --tag <tag>
+{
+    trace "$*"
+    memodb_init ''
+    if [[ "$MEMODB_BACKGROUNDING" = true ]]; then
+        # shellcheck disable=SC2155
+        local cmdhash="$(memodb_cmdhash "$*")"
+        memodb_log "bg" "$cmdhash" "$@"
+        # TODO: should become "$tag $cmdhash $PWD//#$*"
+        MEMODB_SCHEDULED+=("$cmdhash $PWD//#$*")
     else
-        local rc=$?
-        memodb_log "$rc" "$cmdhash" "$*"
-        return $rc
+        memodb_eval "$@"
     fi
 }
 
-# function memo_exit #api - exits a memo, remove the lock, but keeps the log
+function memodb_replay_bg_log
+{
+    [[ "$MEMODB_BACKGROUNDING" = true && -f "$MEMODB_DIR/.bg.log" ]] || return 0
+
+    local state
+    local cmdhash
+    local rest
+    while read -r state cmdhash rest; do
+        trace "MEMODB merge: $state $rest >> $MEMODB_LOG"
+        MEMODB[$rest]="$state $cmdhash"
+        echo "$state $cmdhash $rest" >>"$MEMODB_LOG"
+    done <"$MEMODB_DIR/.bg.log"
+    rm "$MEMODB_DIR/.bg.log"
+}
+
+function memodb_result # TODO: --tag <tag>
+{
+    trace "$*"
+    memodb_init ''
+    # shellcheck disable=SC2155
+    local cmdhash="$(memodb_cmdhash "$*")"
+
+    memodb_replay_bg_log
+
+    # shellcheck disable=SC2155
+    local cached_state="$(memodb_cached "$*")"
+    case "$cached_state" in
+    [[:alpha:]]*)
+        # fall through
+        ;;
+    0)
+        # already run successfully, just return
+        debug "cached success: $*"
+        memodb_replay_stdio "$cmdhash"
+        return 0
+        ;;
+    ?*)
+        # already run with failure
+        debug "cached failed: $*"
+        memodb_replay_stdio "$cmdhash"
+        return "$cached_state"
+        ;;
+    esac
+
+    die "No result available for '$*'"
+}
+
+function memodb_start_background_processing
+{
+    [[ "${#MEMODB_SCHEDULED[@]}" = 0 ]] && return 0
+    trace "$*"
+
+    # TODO: one process per tag
+    {
+        lock_receive "$MEMODB_DIR/.memodb"
+
+        MEMODB_LOG="$MEMODB_DIR/.bg.log"
+        touch "$MEMODB_LOG"
+
+        for job in "${MEMODB_SCHEDULED[@]}"; do
+            local cmdhash="${job%% *}"
+            job="${job#* }"
+            local directory="${job%//#*}"
+            local cmd="${job#*//#}"
+
+            cd "$directory" || die "can't change to $directory"
+            # shellcheck disable=SC2155
+            local cached_state="$(memodb_cached "$cmd")"
+            if [[ "$cached_state" = [[:alpha:]]* ]]; then
+                debug "bgeval: $cmd"
+                if (
+                    $cmd
+                ) 1>"$MEMODB_DIR/$cmdhash.stdout" 2>"$MEMODB_DIR/$cmdhash.stderr" ; then
+                    trace "success: $cmd"
+                    memodb_log 0 "$cmdhash" "$cmd"
+                else
+                    local rc=$?
+                    trace "fail: $cmd"
+                    memodb_log "$rc" "$cmdhash" "$*"
+                fi
+            fi
+        done
+
+        lock_remove "$MEMODB_DIR/.memodb"
+    } 1>"$MEMODB_DIR/.bg.stdout" 2>"$MEMODB_DIR/.bg.stderr" &
+    lock_send "$MEMODB_DIR/.memodb" $!
+    disown $!
+}
+
+function memodb_clean # - cleanup/delete the memodb state
+{
+    local memodb
+    lock_wait "$BAR_TOPLEVEL/.bar"
+    find "$BAR_TOPLEVEL/.bar.db" -name "*-*" -type d -print0 |
+        while IFS= read -r -d '' memodb; do
+            if lock_try_norec "$memodb/.memodb"; then
+                rm -rf "$memodb"
+            fi
+        done
+
+    rm --ignore-fail-on-non-empty "$BAR_TOPLEVEL/.bar.db"
+    lock_remove "$BAR_TOPLEVEL/.bar"
+}
+
+function memodb_gc # - cleanup old memodbs
+{
+    local memodb
+    lock_wait "$BAR_TOPLEVEL/.bar"
+    find "$BAR_TOPLEVEL/.bar.db" -name "*-*" -type d -print0 | sort -z -n | head -z -n -$((MEMODB_KEEP)) |
+        while IFS= read -r -d '' memodb; do
+            if lock_try_norec "$memodb/.memodb"; then
+                rm -rf "$memodb"
+            fi
+        done
+    lock_remove "$BAR_TOPLEVEL/.bar"
+}
+
+# function memo_exit #api - exits a memodb, remove the lock, but keeps the log
 # {
 #     if [[ -n "$MEMO_LOCK" ]]; then
 #         unset MEMO_LOG
@@ -234,4 +319,7 @@ function memodb_eval # --bg | --bg-as <tag> cmd [args..]
 #         lock_remove "$MEMO_LOCK"
 #     fi
 # }
-# 
+#
+# PLANNED: backgrounding git_hook_matches "pre-commit" "pre-merge-commit" && background_schedule && return 0
+#                        git_hook_matches "commit-msg" && background_wait && return $(background_result)
+# PLANNED: reintroduce tags for backgrounding, create one background process per tag

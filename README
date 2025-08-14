@@ -14,6 +14,8 @@ ABOUT
   * Clauses can be conditionally skipped.
   * The results of rules are cached. Normally rules are evaluated only once, although there is
     a form to define rules that always evaluate.
+  * We have a module that can memorize commands persistently and schedule evaluation to the
+    background. A later instance can pick up the results from this background evaluation.
 
   When you read this because you seen 'bar' or '.bar' used in a repository then you may look
   at INITIAL INSTALLATION below.
