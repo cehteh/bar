@@ -29,12 +29,18 @@ ABOUT
 INVOCATION AND SEMANTICS
 
     bar [rulefile] [rule [arguments..]]
+    please [rulefile] [rule [arguments..]]
     ./bar [rulefile] [rule [arguments..]]
     <symlink> [arguments..]
 
-  Starts by loading all initial modules (those which have underscores in their name) and
-  the a rulefile, which is "Barf", "barf", ".Barf", ".barf" when the first argument is not
-  a file.
+  Starts by loading all initial modules (those which have underscores in their name) and the a
+  rulefile, which is either "Barf", "barf", ".Barf", ".barf" when called as 'bar' or
+  "Pleasef", "pleasef", ".Pleasef", ".pleasef" when called as 'please' and when the first
+  argument is not a file.
+
+  The duality of having 'bar' installed as 'please' as well is not only for making it more
+  polite. This allows for a user to have private '.Pleasef' and 'Please.d/' defining rules that are
+  for common local tasks distinct from public per-project 'Barf' and 'Bar.d'.
 
   Then the given rule (or MAIN) with the supplied arguments becomes evaluated. Finally if
   exists a 'CLEANUP' rule is evaluated.
@@ -69,7 +75,7 @@ RULE SEMANTICS
   reasons this is not enforced but one may observe surprising behavior when this requirement
   is violated.
 
-  Rules will be autoloaded on demand from modules in 'Barf.d/' (see below AUTOMATIC MODULE
+  Rules will be autoloaded on demand from modules in 'Bar.d/' (see below AUTOMATIC MODULE
   LOADING). For rules where this fails a fallback exits that creates an implicit rule for any
   command and shell function defined with a body calling the respective command.
 
@@ -248,9 +254,10 @@ RULE ENVIRONMENT
 
 MODULES
 
-  Modules are shell snippets located in 'Barf.d/', 'barf.d/', '.Barf.d/' or '.barf.d/'.  All
-  modules that contain a underscore in their name are loaded at startup. Modules with
-  alphabetic names without underscores are lazy loaded on demand.
+  Modules are shell snippets located in 'Bar.d/', 'bar.d/', '.Bar.d/' or '.bar.d/' or
+  'Please.d/', 'please.d/', '.Please.d/' or '.please.d/'.  All modules that contain a
+  underscore in their name are loaded at startup. Modules with alphabetic names without
+  underscores are lazy loaded on demand.
 
   The first variant for modules that are iniitially loaded is used for modules that define
   helper functions that don't have associated rules or rules that are primarly used for
@@ -285,16 +292,16 @@ AUTOMATIC MODULE LOADING
   When a rule is not found then a module name is derived from the rule name by removing the
   'always_', 'is_', 'has_' prefixes and cutting off anything behind the first
   underscore. Eg. 'always_if_module_check' results in 'module'. This is then searched as
-  'Barf.d/module', 'barf.d/module', '.Barf.d/module' or '.barf.d/module' and loaded if
-  present. Thus modules that are automatically loaded must be named by single word without
-  underscores. This automatically loaded modules can only add new rules but not add clauses to
-  existing rules because the rules are sealed at evaluation time.
+  'Bar.d/module', 'bar.d/module', '.Bar.d/module' or '.bar.d/module' (or respective please
+  variants) and loaded if present. Thus modules that are automatically loaded must be named by
+  single word without underscores. This automatically loaded modules can only add new rules
+  but not add clauses to existing rules because the rules are sealed at evaluation time.
 
 
 STANDARD RULES
 
   Bar ships with a module that defines a set of standard rules where other modules can add
-  clauses to. Check 'Barf.d/std_rules' for details.
+  clauses to. Check 'Bar.d/std_rules' for details.
 
   Aside from 'MAIN' and 'CLEANUP' there are no other special rule names.
 
@@ -320,7 +327,7 @@ INITIAL INSTALLATION
        cd bar
        ./bar init_install ~/.local/
 
-     This creates symlinks to 'bar' 'Barf.d' and 'Barf.default' in ~/.local to the
+     This creates symlinks to 'bar', 'please', 'Bar.d' and 'Barf.default' in ~/.local to the
      git checkout.
 
      Now 'bar' is installed, check it with 'bar help'
@@ -329,17 +336,17 @@ INITIAL INSTALLATION
      Since bar is a bash script its easy to version and ship it with other software.
      To initialize it in a current directory use either of:
 
-       bar init          # creates bar, Barf, Barf.d/
-       bar init --hidden # creates .bar, .Barf, .Barf.d/
+       bar init          # creates bar, Barf, Bar.d/
+       bar init --hidden # creates .bar, .Barf, .Bar.d/
 
-     After that Barf can be customized, unnecessary modules in Barf.d/ may be deleted.
+     After that Barf can be customized, unnecessary modules in Bar.d/ may be deleted.
      Once that is done these files should be put under version control.
 
      When the installed bar from 1. becomes updated then a local version can be updated by:
 
        bar init --update
 
-     This only updates 'bar' and any existing modules in 'Barf.d/' but will not touch the
+     This only updates 'bar' and any existing modules in 'Bar.d/' but will not touch the
      'Barf' file since that is meant for local customszation.
 
        bar init_update_merge_barf

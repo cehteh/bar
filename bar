@@ -20,7 +20,7 @@ function bar_main ## [Rulefile] [Rule [Arguments]] - loads a Barf file and execu
     # shellcheck disable=SC2155
     declare -grx BAR_SELF="$(readlink "$BASH_ARGV0")"  ## bar itself
     declare -grx BAR_CALLED_AS="${BASH_ARGV0##*/}"     ## called as name
-    declare -gx  BARF_DIR                  ## directory to load rules from
+    declare -gx  BAR_DIR                  ## directory to load rules from
     declare -gx  BARF_FILE                 ## the Barf file used
     declare -gxr BAR_PWD="$PWD"            ## initial working directory
     declare -gxi BAR_VERBOSITY_LEVEL="${BAR_VERBOSITY_LEVEL:-2}"
@@ -29,7 +29,7 @@ function bar_main ## [Rulefile] [Rule [Arguments]] - loads a Barf file and execu
     # bootstrap/load std_lib (which defines 'require')
     # shellcheck disable=SC1091
     find_toplevel
-    debug "using Barf directory: $BARF_DIR"
+    debug "using Bar directory: $BAR_DIR"
     # the std_lib and rule_lib are omnipresent other modules don't need to require it
     require std_lib rule_lib
     # load all modules with underscores in the name
@@ -37,13 +37,18 @@ function bar_main ## [Rulefile] [Rule [Arguments]] - loads a Barf file and execu
 
     local maybe_barf=
     local initial_rule=
-    if [[ "$BAR_CALLED_AS" =~ \.?bar ]]; then
+    if [[ "$BAR_CALLED_AS" =~ \.?bar|please ]]; then
         maybe_barf="${1:-}"
     else
         initial_rule="$BAR_CALLED_AS"
     fi
 
-    for BARF_FILE in "$maybe_barf" "Barf" "barf" ".Barf" ".barf"; do
+    local barfs=("$BAR_TOPLEVEL/Barf" "$BAR_TOPLEVEL/barf" "$BAR_TOPLEVEL/.Barf" "$BAR_TOPLEVEL/.barf")
+    if [[ "$BAR_CALLED_AS" = please ]]; then
+        barfs=("$BAR_TOPLEVEL/Pleasef" "$BAR_TOPLEVEL/pleasef" "$BAR_TOPLEVEL/.Pleasef" "$BAR_TOPLEVEL/.pleasef")
+    fi
+
+    for BARF_FILE in "$maybe_barf" "${barfs[@]}"; do
         if [[ -f "$BARF_FILE" ]]; then
             debug "using: $BARF_FILE"
             [[ "$BARF_FILE" = "$maybe_barf" ]] && shift
@@ -83,13 +88,15 @@ function bar_main ## [Rulefile] [Rule [Arguments]] - loads a Barf file and execu
         rule_exists CLEANUP && { rule_eval CLEANUP || error "CLEANUP failed" ; }
         return $rc
     else
-        die "No Barf file found in current directory and no rule defined.
+        die "No Barf/Pleasef file found in current directory and no rule defined.
 
 USAGE
 
   bar [Rulefile] [Rule [Arguments]]
+  please [Rulefile] [Rule [Arguments]]
 or
   bar help
+  please help
 "
     fi
 }
@@ -103,25 +110,30 @@ function find_toplevel
     # shellcheck disable=2155
     local initial_fs_id="$(stat -f -c %i "$BAR_TOPLEVEL")"
 
-    for BARF_DIR in "$BAR_TOPLEVEL/Barf.d" "$BAR_TOPLEVEL/barf.d/" "$BAR_TOPLEVEL/.Barf.d/" "$BAR_TOPLEVEL/.barf.d/"; do
-        if [[ -d "$BARF_DIR" ]]; then
+    local barfd=("$BAR_TOPLEVEL/Bar.d" "$BAR_TOPLEVEL/bar.d/" "$BAR_TOPLEVEL/.Bar.d/" "$BAR_TOPLEVEL/.bar.d/")
+    if [[ "$BAR_CALLED_AS" = please ]]; then
+        barfd=("$BAR_TOPLEVEL/Please.d" "$BAR_TOPLEVEL/please.d/" "$BAR_TOPLEVEL/.Please.d/" "$BAR_TOPLEVEL/.please.d/")
+    fi
+
+    for BAR_DIR in "${barfd[@]}"; do
+        if [[ -d "$BAR_DIR" ]]; then
             readonly BAR_TOPLEVEL
             return 0
         fi
         if [[ "$BAR_TOPLEVEL" = "/" ]]; then
             break
         fi
-        BAR_TOPLEVEL="$(readlink "$BAR_TOPLEVEL/..")"
+        BAR_TOPLEVEL="$(readlink -f "$BAR_TOPLEVEL/..")"
         if [[ ! -v BAR_CROSS_FS && "$(stat -f -c %i "$BAR_TOPLEVEL")" != "$initial_fs_id" ]]; then
             break
         fi
     done
 
-    warn "No Barf.d directory found, trying original/installed"
+    warn "No Bar.d directory found, trying original/installed"
 
-    if [[ ! -d "$BARF_DIR" ]]; then
-        BARF_DIR="$BAR_PREFIX/share/bar/Barf.d"
-        [[ -d "$BARF_DIR" ]] || die "Barf directory '$BARF_DIR' does not exist"
+    if [[ ! -d "$BAR_DIR" ]]; then
+        BAR_DIR="$BAR_PREFIX/share/bar/Bar.d"
+        [[ -d "$BAR_DIR" ]] || die "Bar directory '$BAR_DIR' does not exist"
     fi
 }
 
@@ -137,7 +149,7 @@ function require
     local mod
     #shellcheck disable=2167,2165
     for mod in "$@"; do
-        for mod in "$BARF_DIR/"$mod; do
+        for mod in "$BAR_DIR/"$mod; do
             local modname="${mod##*/}"
             if [[ ! -v BAR_REQUIRE_LOADED["$modname"] ]]; then
                 if [[ -f "$mod" ]]; then
@@ -183,13 +195,6 @@ function warn ## [message..] - may print an warning to stderr
     fi
 }
 
-function trace ## [message] - may prints a trace message to stderr
-{
-    if [[ "${BAR_VERBOSITY_LEVEL:-5}" -gt 5 ]]; then
-        echo -e "\033[1;96mTRACE:\033[0m $(source_info 1) $*" >&2
-    fi
-}
-
 function note ## [message..] - may print an important notice to stderr
 {
     if [[ "${BAR_VERBOSITY_LEVEL:-5}" -gt 2 ]]; then
@@ -208,6 +213,13 @@ function debug ## [message..] - may print a debug message to stderr
 {
     if [[ "${BAR_VERBOSITY_LEVEL:-5}" -gt 4 ]]; then
         echo -e "\033[1;36mDEBUG:\033[0m $(source_info 1) $*" >&2
+    fi
+}
+
+function trace ## [message] - may prints a trace message to stderr
+{
+    if [[ "${BAR_VERBOSITY_LEVEL:-5}" -gt 5 ]]; then
+        echo -e "\033[1;96mTRACE:\033[0m $(source_info 1) $*" >&2
     fi
 }
 

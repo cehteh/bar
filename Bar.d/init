@@ -6,7 +6,7 @@ function init # --hidden|--update
     local origin="$(command -v bar)"
     local prefix="${origin%/bin/*}"
 
-    [[ -f "$prefix/bin/bar" && -d "$prefix/share/bar/Barf.d" && -f "$prefix/share/bar/Barf" ]] ||
+    [[ -f "$prefix/bin/bar" && -d "$prefix/share/bar/Bar.d" && -f "$prefix/share/bar/Barf" ]] ||
         die "bar not properly installed, run './bar init_install <prefix>' from its git repository first"
 
     local update=
@@ -26,10 +26,10 @@ function init # --hidden|--update
     if [[ -n "$update" ]]; then
         if [[ -f bar ]]; then
             cp -Lu "$origin" "bar"
-            cp -Lru "$prefix/share/bar/Barf.d/"* "Barf.d"
+            cp -Lru "$prefix/share/bar/Bar.d/"* "Bar.d"
         elif [[ -f .bar ]]; then
             cp -Lu "$origin" ".bar"
-            cp -Lru "$prefix/share/bar/Barf.d/"* ".Barf.d"
+            cp -Lru "$prefix/share/bar/Bar.d/"* ".Bar.d"
         else
             die "bar not initialized"
         fi
@@ -39,11 +39,11 @@ function init # --hidden|--update
     if [[ -z "$hidden" ]]; then
         cp -L "$origin" "bar"
         cp -L "$prefix/share/bar/Barf" "Barf"
-        cp -Lr "$prefix/share/bar/Barf.d" "Barf.d"
+        cp -Lr "$prefix/share/bar/Bar.d" "Bar.d"
     else
         cp -L "$origin" ".bar"
         cp -L "$prefix/share/bar/Barf" ".Barf"
-        cp -Lr "$prefix/share/bar/Barf.d" ".Barf.d"
+        cp -Lr "$prefix/share/bar/Bar.d" ".Bar.d"
     fi
     return 0
 }
@@ -84,20 +84,18 @@ function init_install # <prefix>
         die "no <prefix> given"
     elif [[ "$origin" != *"/bar" ]]; then
         die "not called as original bar"
-    else
-        if [[ -d "$1" && ! -f "$1/bin/bar" ]]; then
-            mkdir -p "$1/bin"
-            ln -s "$origin" "$1/bin/bar"
-            info "linked $origin to $1/bin/bar"
-        else
-            die "cant link $origin to $1/bin/bar"
-        fi
+    elif [[ -d "$1" && ! -f "$1/bin/bar" ]]; then
+        mkdir -p "$1/bin"
+        ln -s "$origin" "$1/bin/bar" || error "linking $origin to $1/bin/bar"
+        info "linked $origin to $1/bin/bar"
+        ln -s "$origin" "$1/bin/please" || error "linking $origin to $1/bin/please"
+        info "linked $origin to $1/bin/please"
     fi
-    # link Barf.d
+    # link Bar.d
     if [[ ! -d "$1/share/bar" ]]; then
         mkdir -p "$1/share/bar"
-        ln -s "${origin%/*}/Barf.d" "$1/share/bar/Barf.d"
-        info "linked ${origin%/*}/Barf.d to $1/share/bar/Barf.d"
+        ln -s "${origin%/*}/Bar.d" "$1/share/bar/Bar.d"
+        info "linked ${origin%/*}/Bar.d to $1/share/bar/Bar.d"
         ln -s "${origin%/*}/Barf.default" "$1/share/bar/Barf"
         info "linked ${origin%/*}/Barf.default to $1/share/bar/Barf"
     else
