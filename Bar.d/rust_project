@@ -5,10 +5,10 @@ rule is_cargo_installed: 'is_command_installed cargo'
 function is_cargo_project ## - Checks if 'Cargo.toml' exists
 {
     if [[ -f "Cargo.toml" ]]; then
-        debug "is rust project"
+        debug "is cargo project"
         return 0
     else
-        trace "is not a rust project"
+        trace "is not a cargo project"
         return 1
     fi
 }
