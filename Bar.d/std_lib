@@ -36,8 +36,8 @@ function memo ## [-c|-d] [cmd args..].. - memoize the result/stdout/stderr of co
         local rc=0
         eval "$*" > >(tee "/tmp/$key.stdout") 2> >(tee "/tmp/$key.stderr" 1>&2) || rc=$?
         MEMO_RC["$key"]=$rc
-        IFS= read -r -d '' MEMO_STDOUT["$key"] < "/tmp/$key.stdout"
-        IFS= read -r -d '' MEMO_STDERR["$key"] < "/tmp/$key.stderr"
+        MEMO_STDOUT["$key"]=$(<"/tmp/$key.stdout")
+        MEMO_STDERR["$key"]=$(<"/tmp/$key.stderr")
         rm "/tmp/$key.stdout" "/tmp/$key.stderr"
         return "$rc"
     fi

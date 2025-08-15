@@ -34,8 +34,7 @@ function testdir_enter # treeish - Sets up a test directory change dir into it.
         info "using existing: $TESTDIR"
     fi
     lock_next "$BAR_TOPLEVEL/.bar" "$TESTDIR/.bar"
-    rule CLEANUP: -- testdir_gc
-    rule CLEANUP: -- "cd '$(git_toplevel)'; lock_remove '$TESTDIR/.bar'"
+    rule CLEANUP: -- "cd '$(git_toplevel)'; lock_remove '$TESTDIR/.bar'; testdir_gc"
     cd "$TESTDIR" || { error "cant change into $TESTDIR"; return 1; }
 }
 
