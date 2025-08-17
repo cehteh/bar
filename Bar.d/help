@@ -34,13 +34,18 @@ INVOCATION AND SEMANTICS
     <symlink> [arguments..]
 
   Starts by loading all initial modules (those which have underscores in their name) and the a
-  rulefile, which is either "Barf", "barf", ".Barf", ".barf" when called as 'bar' or
-  "Pleasef", "pleasef", ".Pleasef", ".pleasef" when called as 'please' and when the first
+  rulefile, which is either "Barf", "barf", ".Barf", ".barf" when called as 'bar' or "Pleasef"
+  "pleasef" ".Pleasef" ".pleasef" "$HOME/.Pleasef" when called as 'please' and when the first
   argument is not a file.
 
-  The duality of having 'bar' installed as 'please' as well is not only for making it more
-  polite. This allows for a user to have private '.Pleasef' and 'Please.d/' defining rules that are
-  for common local tasks distinct from public per-project 'Barf' and 'Bar.d'.
+  The duality of having 'bar' installed as 'please' is not only for making it more
+  polite. This allows for a user to have private '.Pleasef' defining rules that are for common
+  administration tasks distinct from versioned per-project 'Barf' and 'Bar.d' rules.
+
+  Note that the rules for looking up the Barf/Pleasef and the modules are somewhat distinct.
+  Nevertheless modules are in either way only loaded from a single directory and are not
+  located in different paths. This is a opinionated choice to make the module system
+  self-contained and not depend on secondary locations.
 
   Then the given rule (or MAIN) with the supplied arguments becomes evaluated. Finally if
   exists a 'CLEANUP' rule is evaluated.
@@ -254,9 +259,9 @@ RULE ENVIRONMENT
 
 MODULES
 
-  Modules are shell snippets located in 'Bar.d/', 'bar.d/', '.Bar.d/' or '.bar.d/' or
-  'Please.d/', 'please.d/', '.Please.d/' or '.please.d/'.  All modules that contain a
-  underscore in their name are loaded at startup. Modules with alphabetic names without
+  Modules are shell snippets located in 'Bar.d/', 'bar.d/', '.Bar.d/' or '.bar.d/' when called
+  as 'bar' or symlink or '~/.config/please' when called as 'please'.  All modules that contain
+  a underscore in their name are loaded at startup. Modules with alphabetic names without
   underscores are lazy loaded on demand.
 
   The first variant for modules that are iniitially loaded is used for modules that define
@@ -327,8 +332,8 @@ INITIAL INSTALLATION
        cd bar
        ./bar init_install ~/.local/
 
-     This creates symlinks to 'bar', 'please', 'Bar.d' and 'Barf.default' in ~/.local to the
-     git checkout.
+     This creates symlinks to 'bar', 'please', 'Bar.d', 'Barf.default', 'Please.default' in ~/.local
+     and symlinks 'Bar.d/*' to '~/.config/please/'.
 
      Now 'bar' is installed, check it with 'bar help'
 

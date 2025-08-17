@@ -75,31 +75,48 @@ function init_update_merge_barf
 }
 
 # install links in <prefix>
-function init_install # <prefix>
+function init_install # [prefix]
 {
+    local prefix="${1:-$HOME/.local}"
+    shift
+
     # shellcheck disable=2155
     local origin="$(realpath "$BASH_ARGV0")"
     # link the main script
-    if  [[ -z "${1:-}" ]]; then
-        die "no <prefix> given"
-    elif [[ "$origin" != *"/bar" ]]; then
+    if [[ "$origin" != *"/bar" ]]; then
         die "not called as original bar"
-    elif [[ -d "$1" && ! -f "$1/bin/bar" ]]; then
-        mkdir -p "$1/bin"
-        ln -s "$origin" "$1/bin/bar" || error "linking $origin to $1/bin/bar"
-        info "linked $origin to $1/bin/bar"
-        ln -s "$origin" "$1/bin/please" || error "linking $origin to $1/bin/please"
-        info "linked $origin to $1/bin/please"
+    elif [[ -d "$prefix" && ! -f "$prefix/bin/bar" ]]; then
+        mkdir -p "$prefix/bin"
+        ln -s "$origin" "$prefix/bin/bar" || error "linking $origin to $prefix/bin/bar"
+        info "linked $origin to $prefix/bin/bar"
+        ln -s "$origin" "$prefix/bin/please" || error "linking $origin to $prefix/bin/please"
+        info "linked $origin to $prefix/bin/please"
     fi
     # link Bar.d
-    if [[ ! -d "$1/share/bar" ]]; then
-        mkdir -p "$1/share/bar"
-        ln -s "${origin%/*}/Bar.d" "$1/share/bar/Bar.d"
-        info "linked ${origin%/*}/Bar.d to $1/share/bar/Bar.d"
-        ln -s "${origin%/*}/Barf.default" "$1/share/bar/Barf"
-        info "linked ${origin%/*}/Barf.default to $1/share/bar/Barf"
+    if [[ ! -d "$prefix/share/bar" ]]; then
+        mkdir -p "$prefix/share/bar"
+        ln -s "${origin%/*}/Bar.d" "$prefix/share/bar/Bar.d"
+        info "linked ${origin%/*}/Bar.d to $prefix/share/bar/Bar.d"
+        ln -s "${origin%/*}/Barf.default" "$prefix/share/bar/Barf"
+        info "linked ${origin%/*}/Barf.default to $prefix/share/bar/Barf"
+        ln -s "${origin%/*}/Pleasef.default" "$prefix/share/bar/Pleasef"
+        info "linked ${origin%/*}/Pleasef.default to $prefix/share/bar/Pleasef"
     else
-        die "cant link to $1/share/bar/"
+        warn "can't link to $prefix/share/bar/"
+    fi
+
+    # link .config/please
+    if [[ ! -d "$HOME/.config/please" || -L "$HOME/.config/please/rules_lib" ]]; then
+        mkdir -p "$HOME/.config/please"
+        ln -s "${origin%/*}/Bar.d/"* "$HOME/.config/please/" || true   # TODO: better update handling
+        info "linked ${origin%/*}/Bar.d/* to $HOME/.config/please/"
+    else
+        warn "can't create to $HOME/.config/please"
+    fi
+
+    if [[ ! -f "$HOME/.Pleasef" ]]; then
+        cp -L "$prefix/share/bar/Pleasef" "$HOME/.Pleasef"
+        info "installed default $HOME/.Pleasef"
     fi
 }
 

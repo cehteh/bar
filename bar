@@ -45,7 +45,7 @@ function bar_main ## [Rulefile] [Rule [Arguments]] - loads a Barf file and execu
 
     local barfs=("$BAR_TOPLEVEL/Barf" "$BAR_TOPLEVEL/barf" "$BAR_TOPLEVEL/.Barf" "$BAR_TOPLEVEL/.barf")
     if [[ "$BAR_CALLED_AS" = please ]]; then
-        barfs=("$BAR_TOPLEVEL/Pleasef" "$BAR_TOPLEVEL/pleasef" "$BAR_TOPLEVEL/.Pleasef" "$BAR_TOPLEVEL/.pleasef")
+        barfs=("Pleasef" "pleasef" ".Pleasef" ".pleasef" "$HOME/.Pleasef")
     fi
 
     for BARF_FILE in "$maybe_barf" "${barfs[@]}"; do
@@ -112,7 +112,7 @@ function find_toplevel
 
     local barfd=("$BAR_TOPLEVEL/Bar.d" "$BAR_TOPLEVEL/bar.d/" "$BAR_TOPLEVEL/.Bar.d/" "$BAR_TOPLEVEL/.bar.d/")
     if [[ "$BAR_CALLED_AS" = please ]]; then
-        barfd=("$BAR_TOPLEVEL/Please.d" "$BAR_TOPLEVEL/please.d/" "$BAR_TOPLEVEL/.Please.d/" "$BAR_TOPLEVEL/.please.d/")
+        barfd=("$HOME/.config/please")
     fi
 
     for BAR_DIR in "${barfd[@]}"; do

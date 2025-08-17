@@ -22,13 +22,6 @@ rule activate: \
      'githook_enable~ prepare-commit-msg'\
      'githook_enable~ commit-msg'
 
-
-rule activate: \
-     'githook_enable~ pre-commit'\
-     'githook_enable~ pre-merge-commit'\
-     'githook_enable~ prepare-commit-msg'\
-     'githook_enable~ commit-msg'
-
 # for debugging
 rule --debug: -- '
      BAR_VERBOSITY_LEVEL=5
