@@ -134,26 +134,6 @@ function bar_now() ## - returns the current timestamp in microseconds since epoc
     echo "${EPOCHREALTIME//[^0-9]/}"
 }
 
-function call_subcommand # commmand subcommand [command_args].. -- [subcommand_args]..
-{
-    local command="$1"
-    local subcommand="$2"
-    shift 2
-    local args=()
-    local has_dash_dash=
-    while [[ "$#" -gt 0 && "$1" != -- ]]; do
-        args+=("$1")
-        shift
-    done
-    [[ "${1:-}" = '--' ]] && { has_dash_dash=true; shift ;}
-
-    if [[ -n "$has_dash_dash" ]]; then
-        "$command" "${args[@]}" "$subcommand" "$@"
-    else
-        "$command" "$subcommand" "${args[@]}"
-    fi
-}
-
 function hash_args # - returns the sha1hash of all supplied args
 {
     # shellcheck disable=SC2155

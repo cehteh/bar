@@ -1,19 +1,23 @@
 #!/bash
 
+declare -gx NICE_LEVEL=1                             #G The nice level 'run_test' uses
+declare -gx TIMEOUT_SECS=10                          #G Timeout for tests
+declare -gx MEMORY_KB=16777216                       #G Memory limit for tests
+
 function run_test # [-n|--nice LEVEL] [-m|--memory KB] [-t|--timeout SECS] [program] [args..] - runs a test in a resource limited subshell
 {
     while [[ $# -gt 0 ]]; do
         case "${1:-}" in
         -n|--nice)
-            local nice_level="$2"
+            local NICE_LEVEL="$2"
             shift 2
             ;;
         -m|--memory)
-            local memory_kb="$2"
+            local MEMORY_KB="$2"
             shift 2
             ;;
         -t|--timeout)
-            local timeout_secs="$2"
+            local TIMEOUT_SECS="$2"
             shift 2
             ;;
         *)
@@ -24,8 +28,8 @@ function run_test # [-n|--nice LEVEL] [-m|--memory KB] [-t|--timeout SECS] [prog
 
     info "run_test $*"
     if (
-        renice -n "$nice_level" -p $BASHPID >/dev/null
-        ulimit -S -v "$memory_kb" -t "$timeout_secs"
+        renice -n "$NICE_LEVEL" -p $BASHPID >/dev/null
+        ulimit -S -v "$MEMORY_KB" -t "$TIMEOUT_SECS"
         "$@"
     ); then
         return 0
@@ -33,3 +37,24 @@ function run_test # [-n|--nice LEVEL] [-m|--memory KB] [-t|--timeout SECS] [prog
         return 1
     fi
 }
+
+function run_subcommand # commmand subcommand [command_args].. -- [subcommand_args].. - becomes 'command args subcommand args'
+{
+    local command="$1"
+    local subcommand="$2"
+    shift 2
+    local args=()
+    local has_dash_dash=
+    while [[ "$#" -gt 0 && "$1" != -- ]]; do
+        args+=("$1")
+        shift
+    done
+    [[ "${1:-}" = '--' ]] && { has_dash_dash=true; shift ;}
+
+    if [[ -n "$has_dash_dash" ]]; then
+        "$command" "${args[@]}" "$subcommand" "$@"
+    else
+        "$command" "$subcommand" "${args[@]}"
+    fi
+}
+
