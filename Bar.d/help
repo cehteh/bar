@@ -287,8 +287,8 @@ AUTOMATIC MODULE LOADING
   determine a module name used for auto-loading rules. They can have special prefixes which
   are removed when auto-loading:
 
-  - 'is_' and 'has_' are reserved for check rules they don't have any special semantic
-    except for being stripped at auto loading.
+  - 'is_', 'has_' and 'try_' are reserved for check rules they don't have any special
+    semantic except for being stripped at auto loading.
   - The result of rules which start with 'always_' will no be cached and if used as
     dependency it will always be evaluated.  This is useful for stateful rules like
     counters. Can be combined in front of 'is_' or 'has_'. Is also stripped for auto

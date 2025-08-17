@@ -101,6 +101,7 @@ function rule_autoload ## <name>
     local modname="${1#always_}"
     modname="${modname#is_}"
     modname="${modname#has_}"
+    modname="${modname#try_}"
     modname="${modname%%_*}"
     require "$modname" || true
 
