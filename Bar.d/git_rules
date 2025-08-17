@@ -1,0 +1,29 @@
+#!/bash
+#shellcheck disable=SC2016
+
+# called as githook (reserve and debug print all non p4 hooks)
+rule pre-commit: -- 'debug "called as $RULE_NAME hook"'
+rule pre-merge-commit: -- 'debug "called as $RULE_NAME hook"'
+rule prepare-commit-msg: -- 'debug "called as $RULE_NAME hook"'
+rule commit-msg: -- 'debug "called as $RULE_NAME hook"'
+rule applypatch-msg: -- 'debug "called as $RULE_NAME hook"'
+rule pre-applypatch: -- 'debug "called as $RULE_NAME hook"'
+rule post-applypatch: -- 'debug "called as $RULE_NAME hook"'
+rule post-commit: -- 'debug "called as $RULE_NAME hook"'
+rule pre-rebase: -- 'debug "called as $RULE_NAME hook"'
+rule post-checkout: -- 'debug "called as $RULE_NAME hook"'
+rule post-merge: -- 'debug "called as $RULE_NAME hook"'
+rule pre-push: -- 'debug "called as $RULE_NAME hook"'
+rule pre-receive: -- 'debug "called as $RULE_NAME hook"'
+rule update: -- 'debug "called as $RULE_NAME hook"'
+rule proc-receive: -- 'debug "called as $RULE_NAME hook"'
+rule post-receive: -- 'debug "called as $RULE_NAME hook"'
+rule post-update: -- 'debug "called as $RULE_NAME hook"'
+rule reference-transaction: -- 'debug "called as $RULE_NAME hook"'
+rule push-to-checkout: -- 'debug "called as $RULE_NAME hook"'
+rule pre-auto-gc: -- 'debug "called as $RULE_NAME hook"'
+rule post-rewrite: -- 'debug "called as $RULE_NAME hook"'
+rule sendemail-validate: -- 'debug "called as $RULE_NAME hook"'
+rule fsmonitor-watchman: -- 'debug "called as $RULE_NAME hook"'
+rule post-index-change: -- 'debug "called as $RULE_NAME hook"'
+
