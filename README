@@ -50,6 +50,7 @@ QUICKSTART
    please wake <hostname>     # sends a wake-on-lan packet to a host
    please suspend <hostname>  # remotely sends a host to suspend-to-ram
 
+
 INVOCATION AND SEMANTICS
 
     bar [rulefile] [rule [arguments..]]
@@ -59,7 +60,7 @@ INVOCATION AND SEMANTICS
 
   Starts by loading all initial modules (those which have underscores in their name) and the a
   rulefile, which is either "Barf", "barf", ".Barf", ".barf" when called as 'bar' or "Pleasef"
-  "pleasef" ".Pleasef" ".pleasef" "/home/ct/.Pleasef" when called as 'please' and when the first
+  "pleasef" ".Pleasef" ".pleasef" "$HOME/.Pleasef" when called as 'please' and when the first
   argument is not a file.
 
   The duality of having 'bar' installed as 'please' is not only for making it more
@@ -223,7 +224,7 @@ RULE DEFINITION SYNTAX
     # functions and commands can be used as rules, this should be preferred
     function example
     {
-        echo "i am example called with "
+        echo "i am example called with $*"
     }
 
     # add a tests rule with 3 clauses
