@@ -21,6 +21,35 @@ ABOUT
   at INITIAL INSTALLATION below.
 
 
+QUICKSTART
+
+  When you cloned a project that uses bar then you can:
+
+   ./bar           # just runs whatever the maintainer decided as default
+   ./bar watch     # watches the project for changes and runs tests
+   ./bar activate  # installs githooks and other local prep work
+
+  When you want to install and use it in your own projects
+
+   git clone https://seed.pipapo.org/z3WhBdHt1VVNyeQ61zpY66pNzuSrP.git bar
+   cd bar
+   ./bar init_install ~/.local/
+   git pull   # to get updates
+
+  Then you can initialize it in your projects with
+
+   bar init
+   git add Barf Bar.d .gitignore
+   git commit -m 'start using bar'
+   ./bar activate
+
+   bar init_update  # for updating the version stored in the project
+
+  The second personality of bar is 'please' eg.:
+
+   please wake <hostname>     # sends a wake-on-lan packet to a host
+   please suspend <hostname>  # remotely sends a host to suspend-to-ram
+
 INVOCATION AND SEMANTICS
 
     bar [rulefile] [rule [arguments..]]
