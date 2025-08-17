@@ -13,18 +13,16 @@ function is_cargo_project ## - Checks if 'Cargo.toml' exists
     fi
 }
 
-rule is_rust_project: is_cargo_project is_cargo_installed
+rule cargo_lint: cargo_check cargo_clippy_strict cargo_fmt_check
 
-rule rust_lint: cargo_check cargo_clippy_strict cargo_fmt_check
+rule lint_sources: is_cargo_project? 'rule_exists? cargo_lint' cargo_lint
 
-rule lint_sources: is_rust_project? 'rule_exists? rust_lint' rust_lint
-
-rule build_tests: is_rust_project? 'cargo_build --tests'
-rule build_benches: is_rust_project? 'cargo_build --benches'
-rule build_examples: is_rust_project? 'cargo_build --examples'
-rule build_lib: is_rust_project? 'cargo_build --lib'
-rule build_bin: is_rust_project? 'cargo build --bins'
-rule build_doc: is_rust_project? cargo_doc
+rule build_tests: is_cargo_project? 'cargo_build --tests'
+rule build_benches: is_cargo_project? 'cargo_build --benches'
+rule build_examples: is_cargo_project? 'cargo_build --examples'
+rule build_lib: is_cargo_project? 'cargo_build --lib'
+rule build_bin: is_cargo_project? 'cargo build --bins'
+rule build_doc: is_cargo_project? cargo_doc
 
 # TODO: split into
 # --lib               Test only this package's library
@@ -38,12 +36,14 @@ rule build_doc: is_rust_project? cargo_doc
 # --bench [<NAME>]    Test only the specified bench target
 # --all-targets       Test all targets (does not include doctests)
 # --doc               Test only this library's documentation
-rule tests: is_rust_project? cargo_test
+rule tests: is_cargo_project? cargo_test
+
+
 
 # rule test_doc: -- info "Testing documentation..."
 
 # running expensive tests
-#rule test_expensive: is_rust_project? cargo_mutants
+#rule test_expensive: is_cargo_project? cargo_mutants
 
 # 
 # # running benchmarks
