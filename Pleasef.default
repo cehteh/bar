@@ -1,0 +1,17 @@
+#!/bash
+
+require net
+require ssh
+
+function suspend
+{
+    net_host_reachable "$1" && ssh_bg_cmd "root@$1" systemctl suspend
+}
+
+function wake
+{
+    net_wakonlan "$1"
+}
+
+
+

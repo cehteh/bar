@@ -1,0 +1,28 @@
+#!/bash
+
+function canon_hostname # <host>
+{
+    getent hosts "$1" | awk '{print $2}'
+}
+
+function net_host_reachable # <host> [timeout [tries]]
+{
+    local i
+    for (( i=0; i<${3:-1}; ++i)); do
+        ping -q -W"${2:-10}" -c1 "$1" >/dev/null
+    done
+}
+
+function net_wakeonlan # <host>
+{
+    local host
+    host="$(canon_hostname "$1")"
+    if [[ -n "$host" ]]; then
+        wakeonlan "$host"
+        net_host_reachable "$host" 10 10 && return 0
+    fi
+    error "host $1 is not reachable"
+    return 1
+}
+
+rule net_wakeonlan: 'is_command_installed wakeonlan' -

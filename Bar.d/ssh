@@ -1,0 +1,16 @@
+#!/bash
+
+function ssh_ping
+{
+    ssh "$1" true
+}
+
+function ssh_cmd
+{
+    ssh "$@"
+}
+
+function ssh_bg_cmd
+{
+    ( ssh "$@" & )
+}
