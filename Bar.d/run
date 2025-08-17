@@ -1,0 +1,35 @@
+#!/bash
+
+function run_test # [-n|--nice LEVEL] [-m|--memory KB] [-t|--timeout SECS] [program] [args..] - runs a test in a resource limited subshell
+{
+    while [[ $# -gt 0 ]]; do
+        case "${1:-}" in
+        -n|--nice)
+            local nice_level="$2"
+            shift 2
+            ;;
+        -m|--memory)
+            local memory_kb="$2"
+            shift 2
+            ;;
+        -t|--timeout)
+            local timeout_secs="$2"
+            shift 2
+            ;;
+        *)
+            break
+            ;;
+        esac
+    done
+
+    info "run_test $*"
+    if (
+        renice -n "$nice_level" -p $BASHPID >/dev/null
+        ulimit -S -v "$memory_kb" -t "$timeout_secs"
+        "$@"
+    ); then
+        return 0
+    else
+        return 1
+    fi
+}
