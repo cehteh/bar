@@ -10,6 +10,8 @@ declare -gx TESTDIR_PREV
 
 # create and change into testdir
 rule testdir_enter: is_git_toplevel -
+# other modules can hook into here
+rule testdir_enter: testdir_enter_hook~
 
 function testdir_enter # treeish - Sets up a test directory change dir into it.
 {
@@ -22,14 +24,14 @@ function testdir_enter # treeish - Sets up a test directory change dir into it.
     # shellcheck disable=2155
     TESTDIR="$(find "$(git_toplevel)" -type d -name "$TESTDIR_PREFIX*-$treeish" | tail -1)"
     if [[ -z "$TESTDIR" ]]; then
-        TESTDIR="$(git_toplevel)/${TESTDIR_PREFIX}-$BAR_TIMESTAMP-$treeish"
+        # find the dir of the previous test if any
+        TESTDIR_PREV="$(find "$(git_toplevel)" -maxdepth 1 -path "$(git_toplevel)/${TESTDIR_PREFIX}-*" -type d | sort -rn | head -n 1)"
+
         info "creating: $TESTDIR"
+        TESTDIR="$(git_toplevel)/${TESTDIR_PREFIX}-$BAR_TIMESTAMP-$treeish"
         mkdir -p "$TESTDIR"
         ln -s "$(git_dir)" "$TESTDIR/.git" || { error "cant link .git to $TESTDIR/.git"; return 1; }
         git --work-tree "$TESTDIR" checkout "$treeish" -- . || { error "cant checkout $treeish into $TESTDIR"; return 1; }
-
-        # find the dir of the previous test if any
-        TESTDIR_PREV="$(find . -path "$(git_toplevel)/${TESTDIR_PREFIX}*" -type d | sort -rn | head -n 1)"
     else
         info "using existing: $TESTDIR"
     fi
@@ -50,7 +52,10 @@ function testdir_gc # - cleanup old testdirs
     find "$(git_toplevel)" -name "${TESTDIR_PREFIX}*" -type d -print0 | sort -z -n | head -z -n -$((TESTDIR_KEEP)) |
         while IFS= read -r -d '' testdir; do
             if lock_try_norec "$testdir/.bar"; then
+                info "deleting: $testdir"
                 rm -rf "$testdir"
+            else
+                info "preserving: $testdir"
             fi
         done
     lock_remove "$BAR_TOPLEVEL/.bar"
@@ -63,7 +68,10 @@ function testdir_clean # - cleanup all testdirs
     find "$(git_toplevel)" -name "${TESTDIR_PREFIX}*" -type d -print0 |
         while IFS= read -r -d '' testdir; do
             if lock_try_norec "$testdir/.bar"; then
+                info "deleting: $testdir"
                 rm -rf "$testdir"
+            else
+                info "preserving: $testdir"
             fi
         done
     lock_remove "$BAR_TOPLEVEL/.bar"
