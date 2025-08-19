@@ -103,7 +103,7 @@ function rule_autoload ## <name>
     modname="${modname#has_}"
     modname="${modname#try_}"
     modname="${modname%%_*}"
-    require "$modname" || true
+    require --try "$modname"
 
     # when $name exists as command or function then create a rule for that
     if ! rule_exists "$1" && command -v "$1" >/dev/null ; then

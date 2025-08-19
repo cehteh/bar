@@ -146,6 +146,11 @@ function require
 {
     trace "$*"
     declare -i rc=0
+    local try_load=""
+    if [[ "$1" = "--try" ]]; then
+        try_load=true
+        shift
+    fi
     local mod
     #shellcheck disable=2167,2165
     for mod in "$@"; do
@@ -153,13 +158,18 @@ function require
             local modname="${mod##*/}"
             if [[ ! -v BAR_REQUIRE_LOADED["$modname"] ]]; then
                 if [[ -f "$mod" ]]; then
-                    trace "loading: $mod"
+                    debug "loading: $mod"
                     BAR_REQUIRE_LOADED["$modname"]=pending
                     # shellcheck disable=SC1090 # dynamic source
                     source "$mod" && BAR_REQUIRE_LOADED["$modname"]=true
                 else
+                    if [[ -z "$try_load" ]]; then
+                        warn "failed loading: $mod"
+                        rc=1
+                    else
+                        trace "failed try loading: $mod"
+                    fi
                     BAR_REQUIRE_LOADED["$modname"]=false
-                    rc=1
                 fi
             fi
         done
