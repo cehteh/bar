@@ -3,13 +3,10 @@
 
 # library for the rule functions
 declare -g   BAR_CHECK_LEVEL=0         ## less alerting for check dependencies
-declare -g   BAR_RULES_SEALED          ## set to the last rule or 'true' when rules are sealed
 declare -gAx BAR_RULES                 ## discovered rules as name:"clauseidx.."
 declare -gAx BAR_RULES_RESULT          ## result "name args..":rc
 declare -gA  BAR_RULE_FLAGS=(          ## [r]everse [u]nsealed [a]lways
-    [PREPROCESS]="u"                   ## SETUP can add rules to preprocess
-    [POSTPROCESS]="u"
-    [CLEANUP]="ur"
+    [CLEANUP]="r"
 )
 declare -gax BAR_CLAUSES=()            ## clause bodies enumerated
 declare -gax BAR_CLAUSE_DEPS=()        ## dependencies for each clause
@@ -28,10 +25,6 @@ function rule () ## [[--rule-flag].. <name>:] [--clause-flag].. [[!]dep[?] [arg]
         --reverse)
             ruleflags+="r"
             ;;
-        # internal flag
-        # --unsealed)
-        #     ruleflags+="u"
-        #     ;;
         *)
             break;;
         esac
@@ -92,14 +85,8 @@ function rule () ## [[--rule-flag].. <name>:] [--clause-flag].. [[!]dep[?] [arg]
         note "defining rule '$name' for existing command"
     fi
 
-    if [[ -v BAR_RULES_SEALED ]]; then
-        if [[ -v BAR_RULES[$name] && "$name" != "$BAR_RULES_SEALED"
-         && ! ( "$ruleflags" = *u* || "${BAR_RULE_FLAGS[$name]}" = *u* ) ]]; then
-            die "Can not add clause '$name: ${deps[*]}' after rules are sealed"
-        else
-            trace "set current rule to $name"
-            BAR_RULES_SEALED="$name"
-        fi
+    if [[ -v BAR_RULES_RESULT[$name] ]]; then
+        die "Can not add clause '$name: ${deps[*]}' after rule got evaluated"
     fi
 
     local ifs="$IFS"
@@ -137,8 +124,8 @@ function rule_delete
         return 1
     fi
 
-    if [[ -n "${BAR_RULES_SEALED:-}" ]]; then
-        error "Can not delete rule '$name' after rules are sealed"
+    if [[ -v BAR_RULES_RESULT[$name] ]]; then
+        error "Can not delete rule '$name' after rule got evaluated"
         return 1
     fi
 
@@ -161,17 +148,13 @@ function rule_rename ## <oldname> <newname> - renames a rule
         return 1
     fi
 
-    if [[ -n "${BAR_RULES_SEALED:-}" ]]; then
-        error "Can not rename rule '$oldname' after rules are sealed"
+    if [[ -v BAR_RULES_RESULT[$name] ]]; then
+        error "Can not delete rule '$name' after rule got evaluated"
         return 1
     fi
 
     BAR_RULES["$newname"]="${BAR_RULES[$oldname]}"
     unset "BAR_RULES[$oldname]"
-    if [[ -v BAR_RULES_RESULT["$oldname"] ]]; then
-        BAR_RULES_RESULT["$newname"]="${BAR_RULES_RESULT[$oldname]}"
-        unset "BAR_RULES_RESULT[$oldname]"
-    fi
 }
 
 function rule_eval ## <name> [args..]
@@ -182,16 +165,20 @@ function rule_eval ## <name> [args..]
     local RULE_NAME="$1"
     shift
 
-    [[ "${BAR_RULE_FLAGS[$RULE_NAME]:-}" = *u* ]] && die "Tried to evaluate unsealed rule: $RULE_NAME"
-
     # shellcheck disable=2034
     local RULE_ARGS=("$@")
     rule_exists "$RULE_NAME" || rule_autoload "$RULE_NAME"
 
-    if [[ ! "${BAR_RULE_FLAGS[$RULE_NAME]:-}" = *a* && -v BAR_RULES_RESULT["$rule_id"] ]]; then
-        return "${BAR_RULES_RESULT[$rule_id]}"
-    fi
+    [[ -v BAR_RULES_RESULT["$rule_id"] ]] && {
+        local rc="${BAR_RULES_RESULT[$rule_id]}"
+        if [[ "$rc" == pending ]]; then
+            die "recursive rule $RULE_NAME"
+        else
+            return "$rc"
+        fi
+    }
 
+    local evaluate_always="${BAR_RULE_FLAGS[$RULE_NAME]:-}"
     BAR_RULES_RESULT["$rule_id"]="pending"
 
     local clauses="${BAR_RULES[$RULE_NAME]}"
@@ -242,9 +229,7 @@ function rule_eval ## <name> [args..]
                 rule_eval "$depname" "${depargs[@]}" || dep_rc=$?
             fi
 
-            if [[ "$dep_rc" == pending ]]; then
-                die "recursive rule $RULE_NAME: $depname"
-            elif [[ "$check" = unconditional ]]; then
+            if [[ "$check" = unconditional ]]; then
                 uncond_call "$dep_rc" "$RULE_NAME: $depname~ ${depargs[*]}"
                 [[ -n "$check" ]] && BAR_CHECK_LEVEL=$((BAR_CHECK_LEVEL-1))
                 continue
@@ -267,7 +252,11 @@ function rule_eval ## <name> [args..]
                 # conclusive fail because of dep failure
                 failure "$RULE_NAME: $depname ${depargs[*]}"
                 [[ -n "$check" ]] && BAR_CHECK_LEVEL=$((BAR_CHECK_LEVEL-1))
-                BAR_RULES_RESULT["$rule_id"]="$dep_rc"
+                if [[ -n "$evaluate_always" ]]; then
+                    unset "BAR_RULES_RESULT[$rule_id]"
+                else
+                    BAR_RULES_RESULT["$rule_id"]="$dep_rc"
+                fi
                 return "$dep_rc"
             else
                 if [[ "$check" = true ]]; then
@@ -284,18 +273,23 @@ function rule_eval ## <name> [args..]
         if [[ "$skip" != true ]]; then
             local rc=0
             eval "${BAR_CLAUSES[$clause]}" || rc=$?
-            if [[ "${BAR_CLAUSE_FLAGS[$clause]}" = *c* ]]; then
-                BAR_RULES_RESULT["$rule_id"]=$rc
-                return "$rc"
-            fi
-            if [[ "$rc" != 0 ]]; then
-                BAR_RULES_RESULT["$rule_id"]=$rc
+            if [[ "$rc" != 0 || "${BAR_CLAUSE_FLAGS[$clause]}" = *c* ]]; then
+                if [[ -n "$evaluate_always" ]]; then
+                    unset "BAR_RULES_RESULT[$rule_id]"
+                else
+                    BAR_RULES_RESULT["$rule_id"]="$rc"
+                fi
                 return "$rc"
             fi
         fi
     done
 
-    BAR_RULES_RESULT["$rule_id"]=0
+    if [[ -n "$evaluate_always" ]]; then
+        unset "BAR_RULES_RESULT[$rule_id]"
+    else
+        BAR_RULES_RESULT["$rule_id"]=0
+    fi
+    return 0
 }
 
 function rule_exists ## <name> - checks if a rule is defined

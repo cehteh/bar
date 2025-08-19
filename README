@@ -262,15 +262,8 @@ RULE DEFINITION SYNTAX
        should not be relied upon. Clauses in the CLEANUP rule are evaluated in reverse order of
        their definition. A failure here will be reported but not reflected in the exitcode.
 
-    Once evaluation starts, rules become sealed and one can not add clauses to existing rules,
-    As the outcome would be unexpected and impure.
-
-    Some rules like 'POSTPROCESS' and 'CLEANUP' are exempted from sealing. These must not be
-    evaluated (as dependencies) from any rule evaluated.
-
-    The rules that are exempt from sealing are tracked in the 'BAR_RULES_UNSEALED' array.
-    Rules whose clauses should be evaluated in reverse order are tracked in the
-    'BAR_RULES_REVERSE_CLAUSES' array.
+    After a rule that is not flagged with '--always' got evaluated it is not allowed to add
+    more clauses to it anymore, as the outcome would be unexpected and impure.
 
 
 RULE ENVIRONMENT
@@ -324,8 +317,7 @@ AUTOMATIC MODULE LOADING
   underscore. Eg. 'always_if_module_check' results in 'module'. This is then searched as
   'Bar.d/module', 'bar.d/module', '.Bar.d/module' or '.bar.d/module' (or respective please
   variants) and loaded if present. Thus modules that are automatically loaded must be named by
-  single word without underscores. This automatically loaded modules can only add new rules
-  but not add clauses to existing rules because the rules are sealed at evaluation time.
+  single word without underscores.
 
 
 STANDARD RULES

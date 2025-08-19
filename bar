@@ -60,9 +60,6 @@ function bar_main ## [Rulefile] [Rule [Arguments]] - loads a Barf file and execu
 
     local rc=0
     [[ -z "$initial_rule" && -n "${1:-}" ]] && rule_autoload "$1"
-    # shellcheck disable=2034
-    BAR_RULES_SEALED=true
-    trace "SEALING RULES"
     # shellcheck disable=SC2155
     declare -grix BAR_TIMESTAMP="$(bar_now)" ## Timestamp in microseconds since epoch of this invocation
 
@@ -76,20 +73,17 @@ function bar_main ## [Rulefile] [Rule [Arguments]] - loads a Barf file and execu
             rule_eval SETUP || die "SETUP failed" ;
         }
         rule_exists PREPROCESS && {
-            BAR_RULE_FLAGS[PREPROCESS]="${BAR_RULE_FLAGS[PREPROCESS]/u/}"
             rule_eval PREPROCESS || die "PREPROCESS failed" ;
         }
 
         rule_eval "$initial_rule" "$@" || rc=$?
         if (( "$rc" == 0 )); then
             success "$initial_rule" "$@"
-            BAR_RULE_FLAGS[POSTPROCESS]="${BAR_RULE_FLAGS[POSTPROCESS]/u/}"
             rule_exists POSTPROCESS && { rule_eval POSTPROCESS || error "POSTPROCCESS failed" ; }
         else
             failure "$initial_rule" "$@"
         fi
 
-        BAR_RULE_FLAGS[CLEANUP]="${BAR_RULE_FLAGS[CLEANUP]/u/}"
         rule_exists CLEANUP && { rule_eval CLEANUP || error "CLEANUP failed" ; }
         return $rc
     else
