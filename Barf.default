@@ -7,7 +7,7 @@
 # Please customize it for your project.
 #
 
-rule lint tests doc audit bench build
+rule lints tests doc audit bench build
 # tag test_expensive
 
 # called by githook), create temporary testdir and run the main rule there

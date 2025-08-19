@@ -2,4 +2,4 @@
 
 # one can delete/rename shellcheck_lint_opt to disable shellcheck linting
 rule shellcheck_lint_opt: shellcheck_lint
-rule lint: shellcheck_lint_opt
+rule lints: shellcheck_lint_opt

@@ -15,7 +15,7 @@
 # a rule that builds the software, documentation and necessary artifacts but will not do any testing.
 rule all: build doc
 
-rule lint: lint_sources lint_docs
+rule lints: lint_sources lint_docs
 
 rule build: fetch_resources build_assets build_libs build_bins
 

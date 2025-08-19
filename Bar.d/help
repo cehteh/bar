@@ -30,9 +30,9 @@ QUICKSTART
 
   When you cloned a project that uses bar then you can:
 
-   ./bar           # just runs whatever the maintainer decided as default
-   ./bar watch     # watches the project for changes and runs tests
-   ./bar activate  # installs githooks and other local prep work
+   ./bar              # just runs whatever the maintainer decided as default
+   ./bar watch lints  # watches the project for changes and run linters
+   ./bar activate     # installs githooks and other local prep work
 
   When you want to install and use it in your own projects
 
@@ -46,7 +46,6 @@ QUICKSTART
    bar init
    git add Barf Bar.d .gitignore
    git commit -m 'start using bar'
-   ./bar activate
 
    bar init_update  # for updating the version stored in the project
 

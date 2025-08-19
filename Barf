@@ -5,7 +5,7 @@
 # that become installed with 'bar init_local' is the Barf.default file in this directory.
 
 # We lint and build the doc here
-rule doc lint
+rule doc lints
 
 require git
 
@@ -17,10 +17,10 @@ function nodbg
     fi
 }
 
-rule lint: 'is_testdir_used?' nodbg
+rule lints: 'is_testdir_used?' nodbg
 
 # manually testing the staged changes
-rule test_staged: testdir_enter lint
+rule test_staged: testdir_enter lints
 
 # maintenance rules
 rule build_docs: 'test? Bar.d/help -nt README' -- './bar help >README'
