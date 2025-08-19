@@ -153,7 +153,7 @@ RULE DEFINITION SYNTAX
     A rule can have a optional name (suffixed with a colon).  When the name is not given it
     defaults to 'MAIN'.  Rules that have only a name but no dependencies and no body create a
     body that calls a bash command or function with the same name as the rule passing rule
-    arguments to it. The --conclusive flag is implied for such rules.
+    arguments to it.
 
   * [--clause-flag]..
 
@@ -187,7 +187,6 @@ RULE DEFINITION SYNTAX
     When there is a single hypen '-' at the end of a rule definition then the rule body is a
     call to a command or function of the same name as the rule with all arguments passed. This
     is used when one wants to add dependencies to a existing command or function.
-    A rule defined this way implies the --conclusive clause flag
 
   * -- [body..]
 

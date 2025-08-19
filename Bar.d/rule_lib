@@ -72,10 +72,8 @@ function rule () ## [[--rule-flag].. <name>:] [--clause-flag].. [[!]dep[?] [arg]
     # name given but no deps, no body, make body default to the rule name
     local body=""
     if [[ "${#deps[*]}" = 0 && "$#" == 0 && -n "$name" ]]; then
-        clauseflags+="c"
         body="$name "'"${RULE_ARGS[@]}"'
     elif [[ -n "$deps_for_cmd" && "$#" == 0 && -n "$name" ]]; then
-        clauseflags+="c"
         rule_exists "$name" && die "rule '$name' already defined"
         body="$name "'"${RULE_ARGS[@]}"'
     elif [[ -z "$name" ]]; then
