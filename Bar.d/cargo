@@ -42,8 +42,6 @@ function cargo_cache_artifacts
     fi
 }
 
-rule PREPROCESS: is_testdir_used? is_cargo_project? cargo_cache_artifacts
-
 rule cargo_lint: cargo_check cargo_clippy_strict cargo_fmt_check
 
 rule cargo_build_unit_tests: \

@@ -6,7 +6,11 @@ declare -g   BAR_CHECK_LEVEL=0         ## less alerting for check dependencies
 declare -g   BAR_RULES_SEALED          ## set to the last rule or 'true' when rules are sealed
 declare -gAx BAR_RULES                 ## discovered rules as name:"clauseidx.."
 declare -gAx BAR_RULES_RESULT          ## result "name args..":rc
-declare -gA  BAR_RULE_FLAGS=([CLEANUP]="ur" [POSTPROCESS]="u")    ## [r]everse [u]nsealed [a]lways
+declare -gA  BAR_RULE_FLAGS=(          ## [r]everse [u]nsealed [a]lways
+    [PREPROCESS]="u"                   ## SETUP can add rules to preprocess
+    [POSTPROCESS]="u"
+    [CLEANUP]="ur"
+)
 declare -gax BAR_CLAUSES=()            ## clause bodies enumerated
 declare -gax BAR_CLAUSE_DEPS=()        ## dependencies for each clause
 declare -ga  BAR_CLAUSE_FLAGS=()       ## [c]onclusive
@@ -89,11 +93,11 @@ function rule () ## [[--rule-flag].. <name>:] [--clause-flag].. [[!]dep[?] [arg]
     fi
 
     if [[ -v BAR_RULES_SEALED ]]; then
-        trace "names ${!BAR_RULES[*]}"
         if [[ -v BAR_RULES[$name] && "$name" != "$BAR_RULES_SEALED"
          && ! ( "$ruleflags" = *u* || "${BAR_RULE_FLAGS[$name]}" = *u* ) ]]; then
             die "Can not add clause '$name: ${deps[*]}' after rules are sealed"
         else
+            trace "set current rule to $name"
             BAR_RULES_SEALED="$name"
         fi
     fi

@@ -72,8 +72,13 @@ function bar_main ## [Rulefile] [Rule [Arguments]] - loads a Barf file and execu
     }
 
     if rule_exists "$initial_rule"; then
-        rule_exists SETUP && { rule_eval SETUP || die "SETUP failed" ; }
-        rule_exists PREPROCESS && { rule_eval PREPROCESS || die "PREPROCESS failed" ; }
+        rule_exists SETUP && {
+            rule_eval SETUP || die "SETUP failed" ;
+        }
+        rule_exists PREPROCESS && {
+            BAR_RULE_FLAGS[PREPROCESS]="${BAR_RULE_FLAGS[PREPROCESS]/u/}"
+            rule_eval PREPROCESS || die "PREPROCESS failed" ;
+        }
 
         rule_eval "$initial_rule" "$@" || rc=$?
         if (( "$rc" == 0 )); then
