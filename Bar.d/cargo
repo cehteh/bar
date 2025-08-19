@@ -32,13 +32,17 @@ memofn is_cargo_tool_installed
 
 function cargo_cache_artifacts
 {
-    if [[ -n "$TESTDIR_PREV" ]] && lock_wait "$TESTDIR_PREV/.bar" ; then
+    if [[ -n "${TESTDIR_PREV:-}" ]] && lock_wait "$TESTDIR_PREV/.bar" ; then
         info "caching artifacts from $TESTDIR_PREV"
-        [[ -d "$TESTDIR_PREV/target" ]] && cp -rluf "$TESTDIR_PREV/target" "./"
+        if [[ -d "$TESTDIR_PREV/target" ]]; then
+            cp -rluf "$TESTDIR_PREV/target" "./"
+        else
+            info "no $TESTDIR_PREV/target/ to copy from"
+        fi
         # PLANNED:    export CARGO_NET_OFFLINE="true"
         lock_remove "$TESTDIR_PREV/.bar"
     else
-        info "no previous build exists"
+        info "not populating /target cache"
     fi
 }
 
