@@ -30,6 +30,32 @@ function git_branch_matches ## [branchpattern..] - Checks that the current git b
 
 rule git_branch_matches: is_git_repository -
 
+# A set of git hook matchers
+rule is_git_pre_commit_hook: 'called_as pre-commit'
+rule is_git_pre_merge_commit_hook: 'called_as pre-merge-commit'
+rule is_git_prepare_commit_msg_hook: 'called_as prepare-commit-msg'
+rule is_git_commit_msg_hook: 'called_as commit-msg'
+rule is_git_applypatch_msg_hook: 'called_as applypatch-msg'
+rule is_git_pre_applypatch_hook: 'called_as pre-applypatch'
+rule is_git_post_applypatch_hook: 'called_as post-applypatch'
+rule is_git_post_commit_hook: 'called_as post-commit'
+rule is_git_pre_rebase_hook: 'called_as pre-rebase'
+rule is_git_post_checkout_hook: 'called_as post-checkout'
+rule is_git_post_merge_hook: 'called_as post-merge'
+rule is_git_pre_push_hook: 'called_as pre-push'
+rule is_git_pre_receive_hook: 'called_as pre-receive'
+rule is_git_update_hook: 'called_as update'
+rule is_git_proc_receive_hook: 'called_as proc-receive'
+rule is_git_post_receive_hook: 'called_as post-receive'
+rule is_git_post_update_hook: 'called_as post-update'
+rule is_git_reference_transaction_hook: 'called_as reference-transaction'
+rule is_git_push_to_checkout_hook: 'called_as push-to-checkout'
+rule is_git_pre_auto_gc_hook: 'called_as pre-auto-gc'
+rule is_git_post_rewrite_hook: 'called_as post-rewrite'
+rule is_git_sendemail_validate_hook: 'called_as sendemail-validate'
+rule is_git_fsmonitor_watchman_hook: 'called_as fsmonitor-watchman'
+rule is_git_post_index_change_hook: 'called_as post-index-change'
+
 # A set of common branch matchers
 rule is_git_main_branch: 'git_branch_matches main master'
 rule is_git_release_branch: 'git_branch_matches release-* release/*'
