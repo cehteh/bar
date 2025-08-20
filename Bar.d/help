@@ -148,6 +148,12 @@ RULE DEFINITION SYNTAX
     --reverse
       The clauses of this rule will be evaluated in reverse order
 
+    --disjunct
+      Makes the clauses of this rule disjunctive. The rule will succeed with the first
+      successful clause. Normally clauses are conjunctive and fail with the first failing
+      clause.
+
+
   * [<name>:]
 
     A rule can have a optional name (suffixed with a colon).  When the name is not given it

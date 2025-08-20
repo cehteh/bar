@@ -25,6 +25,9 @@ function rule () ## [[--rule-flag].. <name>:] [--clause-flag].. [[!]dep[?] [arg]
         --reverse)
             ruleflags+="r"
             ;;
+        --disjunct)
+            ruleflags+="d"
+            ;;
         *)
             break;;
         esac
@@ -136,6 +139,7 @@ function rule_rename ## <oldname> <newname> - renames a rule
     trace "$*"
     local oldname="$1"
     local newname="$2"
+    local rc
 
     if [[ -z "$oldname" || -z "$newname" ]]; then
         die "rule_rename requires two rule names"
@@ -168,7 +172,7 @@ function rule_eval ## <name> [args..]
     rule_exists "$RULE_NAME" || rule_autoload "$RULE_NAME"
 
     [[ -v BAR_RULES_RESULT["$rule_id"] ]] && {
-        local rc="${BAR_RULES_RESULT[$rule_id]}"
+        rc="${BAR_RULES_RESULT[$rule_id]}"
         if [[ "$rc" == pending ]]; then
             die "recursive rule $RULE_NAME"
         else
@@ -276,16 +280,21 @@ function rule_eval ## <name> [args..]
            fi
         done
 
+        rc=0
         if [[ "$skip" != true ]]; then
-            local rc=0
             eval "${BAR_CLAUSES[$clause]}" || rc=$?
-            if [[ "$rc" != 0 || "${BAR_CLAUSE_FLAGS[$clause]}" = *c* ]]; then
-                if [[ -n "$evaluate_always" ]]; then
-                    unset "BAR_RULES_RESULT[$rule_id]"
-                else
-                    BAR_RULES_RESULT["$rule_id"]="$rc"
+
+            if [[ "${BAR_RULE_FLAGS[$RULE_NAME]}" = *d* ]]; then
+                [[ "$rc" == 0 ]] && break
+            else
+                if [[ "$rc" != 0 || "${BAR_CLAUSE_FLAGS[$clause]}" = *c* ]]; then
+                    if [[ -n "$evaluate_always" ]]; then
+                        unset "BAR_RULES_RESULT[$rule_id]"
+                    else
+                        BAR_RULES_RESULT["$rule_id"]="$rc"
+                    fi
+                    return "$rc"
                 fi
-                return "$rc"
             fi
         fi
     done
@@ -293,9 +302,9 @@ function rule_eval ## <name> [args..]
     if [[ -n "$evaluate_always" ]]; then
         unset "BAR_RULES_RESULT[$rule_id]"
     else
-        BAR_RULES_RESULT["$rule_id"]=0
+        BAR_RULES_RESULT["$rule_id"]="$rc"
     fi
-    return 0
+    return "$rc"
 }
 
 function rule_exists ## <name> - checks if a rule is defined

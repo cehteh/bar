@@ -64,6 +64,13 @@ rule test_background_schedule: -- '
      memodb_schedule sleep 3
 '
 
+# then this
+rule test_background_result: -- '
+     require memodb
+     memodb_result ls
+     memodb_result sleep 3
+'
+
 # These two must panic
 rule recursive: recursive
 rule --always always_recursive: always_recursive
@@ -75,9 +82,6 @@ rule test_hooks: succeeding_hook??? - echo "success"
 rule failing_hook: -- false
 rule succeeding_hook: -- true
 
-# then this
-rule test_background_result: -- '
-     require memodb
-     memodb_result ls
-     memodb_result sleep 3
-'
+rule --disjunct test_disjunct: -- false
+rule test_disjunct: -- echo "true"
+rule test_disjunct: -- false
