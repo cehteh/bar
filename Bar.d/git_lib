@@ -55,3 +55,14 @@ function git_tree_hash ## [git-ls-files-opts].. - Returns a hash over the curren
 
 memofn git_tree_hash
 
+function git_add_ignore
+{
+    [[ -f "$(git_toplevel)/.gitignore" ]] || touch "$(git_toplevel)/.gitignore"
+
+    local pattern
+    for pattern in "$@"; do
+        if ! grep -F "$pattern" "$(git_toplevel)/.gitignore" >/dev/null; then
+            echo "$pattern" >>"$(git_toplevel)/.gitignore"
+        fi
+    done
+}
