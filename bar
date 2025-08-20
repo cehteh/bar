@@ -184,7 +184,7 @@ function DBG ## [message..] - for print-style debugging, should not be present i
 
 function die ## [message..] - prints 'message' to stderr and exits with failure
 {
-    if [[ "${BAR_VERBOSITY_LEVEL:-5}" -gt 0 ]]; then
+    if (( BAR_VERBOSITY_LEVEL > 0 )); then
         echo -e "\033[1;91mPANIC:\033[0m $(source_info 1) $*" >&2
     fi
     exit 1
@@ -192,47 +192,44 @@ function die ## [message..] - prints 'message' to stderr and exits with failure
 
 function error ## [message..] - may print a error message to stderr and return failure
 {
-    # TODO: (( ))
-    if [[ "${BAR_VERBOSITY_LEVEL:-5}" -gt 0 ]]; then
+    if (( BAR_VERBOSITY_LEVEL > 0 )); then
         echo -e "\033[1;31mERROR:\033[0m $(source_info 1) $*" >&2
     fi
 }
 
 function warn ## [message..] - may print an warning to stderr
 {
-    if [[ "${BAR_VERBOSITY_LEVEL:-5}" -gt 1 ]]; then
+    if (( BAR_VERBOSITY_LEVEL > 1 )); then
         echo -e "\033[1;35m WARN:\033[0m $*" >&2
     fi
 }
 
 function note ## [message..] - may print an important notice to stderr
 {
-    if [[ "${BAR_VERBOSITY_LEVEL:-5}" -gt 2 ]]; then
+    if (( BAR_VERBOSITY_LEVEL > 2 )); then
         echo -e "\033[1;35m NOTE:\033[0m $*" >&2
     fi
 }
 
 function info ## [message..] - may print an informal message to stderr
 {
-    if [[ "${BAR_VERBOSITY_LEVEL:-5}" -gt 3 ]]; then
+    if (( BAR_VERBOSITY_LEVEL > 3 )); then
         echo -e "\033[1;34m INFO:\033[0m $*" >&2
     fi
 }
 
 function debug ## [message..] - may print a debug message to stderr
 {
-    if [[ "${BAR_VERBOSITY_LEVEL:-5}" -gt 4 ]]; then
+    if (( BAR_VERBOSITY_LEVEL > 4 )); then
         echo -e "\033[1;36mDEBUG:\033[0m $(source_info 1) $*" >&2
     fi
 }
 
 function trace ## [message] - may prints a trace message to stderr
 {
-    if [[ "${BAR_VERBOSITY_LEVEL:-5}" -gt 5 ]]; then
+    if (( BAR_VERBOSITY_LEVEL > 5 )); then
         echo -e "\033[1;96mTRACE:\033[0m $(source_info 1) $*" >&2
     fi
 }
 
 bar_main "$@"
-
-
