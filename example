@@ -44,14 +44,19 @@ rule test_conclusive: --conclusive example_fail? -- echo "This is skipped"
 rule test_conclusive: --conclusive !example_fail -- echo "This is conclusive"
 rule test_conclusive: -- echo "This is not reached"
 
+rule test_conclusive
+
 # flags add up
 rule --always always: -- echo "always called second"
 rule --reverse always: -- echo "always called first"
 
 rule test_always: always always always
+rule test_always
 
 rule test_memodb: memodb_init -- debug "Memo test begin"
 rule test_memodb: memotest1 memotest2 memotest3
+
+rule test_memodb
 
 rule memotest1: -- memodb_eval echo "memotest"
 rule memotest2: -- memodb_eval echo "memotest"
@@ -64,7 +69,10 @@ rule test_background_schedule: -- '
      memodb_schedule sleep 3
 '
 
-# then this
+rule test_background_schedule
+
+
+# then this (manually)
 rule test_background_result: -- '
      require memodb
      memodb_result ls
@@ -82,6 +90,11 @@ rule test_hooks: succeeding_hook??? - echo "success"
 rule failing_hook: -- false
 rule succeeding_hook: -- true
 
+rule test_hooks
+
+# clauses in a rule can be disjunctive
 rule --disjunct test_disjunct: -- false
 rule test_disjunct: -- echo "true"
 rule test_disjunct: -- false
+
+rule test_disjunct
