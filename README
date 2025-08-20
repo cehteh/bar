@@ -9,8 +9,10 @@ ABOUT
 
   The notable differences to other similar tools are:
 
-  * Rules in bar can have multiple clauses. When any clause of a rule fails then the rule is
-    considerd failed as well and not further evaluated.
+  * Rules in bar can have multiple clauses.
+  * Normally rules are conjunctive, when a clause of a rule fails then the rule fails and not
+    further evaluated.
+  * Rules can made disjunctive, then a rule succeeds on the first succeeding clause.
   * Clauses can be conditionally skipped.
   * The results of rules are cached. Normally rules are evaluated only once, although there is
     a form to define rules that always evaluate.
