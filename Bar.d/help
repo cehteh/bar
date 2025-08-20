@@ -342,7 +342,8 @@ STANDARD RULES
   Bar ships with a module that defines a set of standard rules where other modules can add
   clauses to. Check 'Bar.d/std_rules' for details.
 
-  Aside from 'MAIN' and 'CLEANUP' there are no other special rule names.
+  Aside from 'SETUP', 'PREPROCESS', 'MAIN', 'POSTPROCESS' and 'CLEANUP' there are no other
+  special rule names.
 
 
 INITIAL INSTALLATION
