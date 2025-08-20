@@ -171,7 +171,7 @@ function memodb_eval # [--tag <tag>] cmd [args..]
 
     debug "eval: $*"
     local rc=0
-    ( "$@" ) 1> >(tee "$MEMODB_DIR/$cmdhash.stdout") 2> >(tee "$MEMODB_DIR/$cmdhash.stderr" 1>&2 ) || rc=$?
+    rule_eval "$@"  1> >(tee "$MEMODB_DIR/$cmdhash.stdout") 2> >(tee "$MEMODB_DIR/$cmdhash.stderr" 1>&2 ) || rc=$?
     memodb_log "$rc" "$cmdhash" "$*"
     return $rc
 }
@@ -186,6 +186,29 @@ function memodb_schedule # TODO: --tag <tag>
     if [[ "$MEMODB_BACKGROUNDING" = true ]]; then
         # shellcheck disable=SC2155
         local cmdhash="$(memodb_cmdhash "$*")"
+
+        # shellcheck disable=SC2155
+        local cached_state="$(memodb_cached "$*")"
+        case "$cached_state" in
+        [[:alpha:]]*)
+            # already scheduled in the background, just return
+            debug "bg scheduled $*"
+            return 0
+            ;;
+        0)
+            # already cached successfully, just return
+            debug "cached success: $*"
+            memodb_replay_stdio "$cmdhash"
+            return 0
+            ;;
+        ?*)
+            # already cached with failure
+            debug "cached failed: $*"
+            memodb_replay_stdio "$cmdhash"
+            return "$cached_state"
+            ;;
+        esac
+
         memodb_log "bg" "$cmdhash" "$@"
         # TODO: should become "$tag $cmdhash $PWD//#$*"
         MEMODB_SCHEDULED+=("$cmdhash $PWD//#$*")
@@ -264,9 +287,8 @@ function memodb_start_background_processing
             local cached_state="$(memodb_cached "$cmd")"
             if [[ "$cached_state" = [[:alpha:]]* ]]; then
                 debug "bgeval: $cmd"
-                if (
-                    $cmd
-                ) 1>"$MEMODB_DIR/$cmdhash.stdout" 2>"$MEMODB_DIR/$cmdhash.stderr" ; then
+                # shellcheck disable=2086
+                if rule_eval $cmd 1>"$MEMODB_DIR/$cmdhash.stdout" 2>"$MEMODB_DIR/$cmdhash.stderr" ; then
                     debug "success: $cmd"
                     memodb_log 0 "$cmdhash" "$cmd"
                 else
@@ -287,14 +309,16 @@ function memodb_clean # - cleanup/delete the memodb state
 {
     local memodb
     lock_wait "$BAR_TOPLEVEL/.bar"
-    find "$BAR_TOPLEVEL/.bar.db" -name "*-*" -type d -print0 |
-        while IFS= read -r -d '' memodb; do
-            if lock_try_norec "$memodb/.memodb"; then
-                rm -rf "$memodb"
-            fi
-        done
+    if [[ -d "$BAR_TOPLEVEL/.bar.db" ]]; then
+        find "$BAR_TOPLEVEL/.bar.db" -name "*-*" -type d -print0 |
+            while IFS= read -r -d '' memodb; do
+                if lock_try_norec "$memodb/.memodb"; then
+                    rm -rf "$memodb"
+                fi
+            done
 
-    rm --ignore-fail-on-non-empty "$BAR_TOPLEVEL/.bar.db"
+        rm -d "$BAR_TOPLEVEL/.bar.db" 2>/dev/null || true
+    fi
     lock_remove "$BAR_TOPLEVEL/.bar"
 }
 

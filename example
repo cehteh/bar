@@ -63,21 +63,16 @@ rule memotest2: -- memodb_eval echo "memotest"
 rule memotest3: -- memodb_eval echo "memotest"
 
 # run this first
-rule test_background_schedule: -- '
-     require memodb
-     memodb_schedule ls
+rule test_background_schedule: 'memodb_schedule echo "run in background"' -- '
+     # memodb_schedule/result can be called as function or evaluated as rule
+     # wait here to simulate some longer work
      memodb_schedule sleep 3
 '
 
 rule test_background_schedule
 
-
 # then this (manually)
-rule test_background_result: -- '
-     require memodb
-     memodb_result ls
-     memodb_result sleep 3
-'
+rule test_background_result: 'memodb_result echo "run in background"'
 
 # These two must panic
 rule recursive: recursive
