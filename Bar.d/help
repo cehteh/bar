@@ -132,9 +132,9 @@ RULE SEMANTICS
 
 RULE DEFINITION SYNTAX
 
-  rule [[--rule-flag].. <name>:] [--clause-flag].. [[!]deps[?|~] args..]..
-  rule [[--rule-flag].. <name>:] [--clause-flag].. [[!]deps[?|~] args..].. -
-  rule [[--rule-flag].. <name>:] [--clause-flag].. [[!]deps[?|~] args..].. -- [body..]
+  rule [[--rule-flag].. <name>:] [--clause-flag].. [[!]deps[?|~][??] args..]..
+  rule [[--rule-flag].. <name>:] [--clause-flag].. [[!]deps[?|~][??] args..].. -
+  rule [[--rule-flag].. <name>:] [--clause-flag].. [[!]deps[?|~][??] args..].. -- [body..]
 
   Adds a clause to 'name' or 'MAIN'.
 
@@ -162,22 +162,25 @@ RULE DEFINITION SYNTAX
     --conclusive
       Makes a clause result conclusive, if not skipped no more clauses will be tried.
 
-  * [[!]deps[?|~] args..]..
+  * [[!]deps[?|~][??] args..]..
 
     Dependencies, are a list of other rules that this rule depends on. These will be executed
     in order. If any of the dependencies fails then this rule is considered failed as well, no
     further dependencies, bodies or clauses are executed unless this dependency is a checking
     or unconditional one.
 
-    A dependency can be either prefixed with an exclamation mark or suffixed with a question
-    mark or tilde. The exclamation mark prefix expects the dependency to fail and will
+    A dependency can be either prefixed with an exclamation mark or suffixed with question
+    marks or a tilde. The exclamation mark prefix expects the dependency to fail and will
     continue then, if the dependency succeeds then the remaining dependencies and the rule
     body are skipped. With a question mark as suffix the dependency is expected to succeed,
     when it fails then the rest of the dependencies and the rule body is skipped. With a tilde
     as suffix outcome of the dependencny is ignored and the rest of the dependencies and the
     rule body is executed.  The difference here is that these checking dependencies decide if
     a clause should be skipped or succeed while a failure on a normal dependency will fail a
-    rule instantly.
+    rule instantly. When a rule is suffixed with two question marks then this behaves like
+    "'rule_exists? dep' dep". Making this dependency optional. This can be combined with the
+    another question mark, a tilde, or explamation mark prefix. This is commonly used to
+    define optional rule hooks.
 
     Dependencies can have arguments. When provided then the dependency and its arguments must
     be quoted. These arguments are passed in the 'RULE_ARGS' array to the body of the rule.
@@ -208,35 +211,38 @@ RULE DEFINITION SYNTAX
 
   Examples:
 
-    # Add a clause to 'MAIN'
-    rule -- echo hello
+   # Add a clause to 'MAIN'
+   rule -- echo hello
 
-    # Different ways to define rule bodies
-    rule foo_ok: -- echo inline
-    rule foo_ok: -- '
-        echo inline quoted
-    '
-    rule foo_ok: -- <<<"echo herestring"
-    rule foo_ok: -- <<EOR
+   # Different ways to define rule bodies
+   rule foo_ok: -- echo inline
+   rule foo_ok: -- '
+       echo inline quoted
+   '
+   rule foo_ok: -- <<<"echo herestring"
+   rule foo_ok: -- <<EOR
       echo heredoc
-    EOR
+   EOR
 
-    # Make a rule that fails
-    rule foo_fail: -- false
+   # Make a rule that fails
+   rule foo_fail: -- false
 
-    # functions and commands can be used as rules, this should be preferred
-    function example
-    {
-        echo "i am example called with \$*"
-    }
+   # functions and commands can be used as rules, this should be preferred
+   function example
+   {
+       echo "i am example called with \$*"
+   }
 
-    # add a tests rule with 3 clauses
-    rule tests: foo_ok? 'example "argument"' -- echo "foo_ok success"
-    rule tests: !foo_ok -- echo "This is never called, but MAIN still passes"
-    rule tests: foo_fail? -- echo "This is also never called"
+   # add a tests rule with 3 clauses
+   rule tests: foo_ok? 'example "argument"' -- echo "foo_ok success"
+   rule tests: !foo_ok -- echo "This is never called, but MAIN still passes"
+   rule tests: foo_fail? -- echo "This is also never called"
 
-    # add tests to MAIN
-    rule tests
+   # add tests to MAIN
+   rule tests
+
+  For some more examples see the 'example' file that ships with bar.
+
 
   Special Rules and Names
 

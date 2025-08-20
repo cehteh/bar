@@ -64,6 +64,13 @@ rule test_background_schedule: -- '
      memodb_schedule sleep 3
 '
 
+# the ?? prefix is a implied 'rule_exists? <dep>' it can be combined with other operators
+rule test_hooks: !failing_hook??? - echo "failing hook exists failed"
+rule test_hooks: nonexist_hook?? - echo "unreached: no_failing_hook does not exist"
+rule test_hooks: succeeding_hook??? - echo "success"
+rule failing_hook: -- false
+rule succeeding_hook: -- true
+
 # then this
 rule test_background_result: -- '
      require memodb

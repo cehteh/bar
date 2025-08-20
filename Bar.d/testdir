@@ -11,7 +11,7 @@ declare -gx TESTDIR_PREV
 # create and change into testdir
 rule testdir_enter: is_git_toplevel -
 # other modules can hook into here
-rule testdir_enter: testdir_enter_hook~
+rule testdir_enter: testdir_enter_hook??
 
 function testdir_enter # treeish - Sets up a test directory change dir into it.
 {
