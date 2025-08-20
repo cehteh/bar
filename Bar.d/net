@@ -15,6 +15,10 @@ function net_host_reachable # <host> [timeout [tries]]
 
 function net_wakeonlan # <host>
 {
+    is_command_installed wakeonlan || {
+        error "wakeonlan is not installed"
+        return 1
+    }
     local host
     host="$(canon_hostname "$1")"
     if [[ -n "$host" ]]; then
@@ -25,4 +29,3 @@ function net_wakeonlan # <host>
     return 1
 }
 
-rule net_wakeonlan: 'is_command_installed wakeonlan' -
