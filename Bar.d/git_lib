@@ -33,13 +33,12 @@ rule is_git_toplevel: -- '[[ "$(git_toplevel)" = "$PWD" ]]'
 function git_ls_files # [git-ls-files-opts].. - sorted list of all non ignored files
 {
     local zero_terminated=
+    local z
     for z in "$@"; do
         [[ "$z" = "-z" ]] && { zero_terminated=true; break; }
     done
     git ls-files -c --exclude-standard "$@" | sort -u ${zero_terminated:+-z}
 }
-
-memofn git_ls_files
 
 function git_branch_name ## - Returns the branch name that is checked out, dies when not in a git branch
 {
