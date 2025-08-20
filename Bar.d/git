@@ -30,3 +30,14 @@ function git_branch_matches ## [branchpattern..] - Checks that the current git b
 
 rule git_branch_matches: is_git_repository -
 
+# A set of common branch matchers
+rule is_git_main_branch: 'git_branch_matches main master'
+rule is_git_release_branch: 'git_branch_matches release-* release/*'
+rule is_git_devel_branch: 'git_branch_matches devel-* devel/*'
+rule is_git_feature_branch: 'git_branch_matches feature-* feature/*'
+rule is_git_bugfix_branch: 'git_branch_matches bugfix-* bugfix/* fix-* fix/*'
+rule is_git_hotfix_branch: 'git_branch_matches hotfix-* hotfix/*'
+rule is_git_improvment_branch: 'git_branch_matches improvement-* improvement/*'
+rule is_git_doc_branch: 'git_branch_matches doc-* doc/*'
+rule is_git_wip_branch: 'git_branch_matches wip-* wip/*'
+rule is_git_experimental_branch: 'git_branch_matches experiment-* experiment/*'
