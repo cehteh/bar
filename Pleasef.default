@@ -5,7 +5,7 @@ require ssh
 
 function suspend
 {
-    net_host_reachable "$1" && ssh_bg_cmd "root@$1" systemctl suspend
+    net_host_reachable "$1" && ssh_bg_cmd -o ControlMaster=no "root@$1" systemctl suspend
 }
 
 function wake

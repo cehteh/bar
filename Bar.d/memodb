@@ -267,11 +267,11 @@ function memodb_start_background_processing
                 if (
                     $cmd
                 ) 1>"$MEMODB_DIR/$cmdhash.stdout" 2>"$MEMODB_DIR/$cmdhash.stderr" ; then
-                    trace "success: $cmd"
+                    debug "success: $cmd"
                     memodb_log 0 "$cmdhash" "$cmd"
                 else
                     local rc=$?
-                    trace "fail: $cmd"
+                    debug "fail: $cmd"
                     memodb_log "$rc" "$cmdhash" "$*"
                 fi
             fi
