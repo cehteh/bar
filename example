@@ -64,6 +64,10 @@ rule test_background_schedule: -- '
      memodb_schedule sleep 3
 '
 
+# These two must panic
+rule recursive: recursive
+rule --always always_recursive: always_recursive
+
 # the ?? prefix is a implied 'rule_exists? <dep>' it can be combined with other operators
 rule test_hooks: !failing_hook??? - echo "failing hook exists failed"
 rule test_hooks: nonexist_hook?? - echo "unreached: no_failing_hook does not exist"
