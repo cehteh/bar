@@ -176,7 +176,8 @@ function rule_eval ## <name> [args..]
         fi
     }
 
-    local evaluate_always="${BAR_RULE_FLAGS[$RULE_NAME]:-}"
+    local evaluate_always=
+    [[ "${BAR_RULE_FLAGS[$RULE_NAME]}" == *a* ]] && evaluate_always=true
     BAR_RULES_RESULT["$rule_id"]="pending"
 
     local clauses="${BAR_RULES[$RULE_NAME]}"
