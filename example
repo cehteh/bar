@@ -93,3 +93,38 @@ rule test_disjunct: -- echo "true"
 rule test_disjunct: -- false
 
 rule test_disjunct
+
+# Scalar variables can be clause-local
+
+# shellcheck disable=2034
+variable=outer
+
+# shellcheck disable=2016
+rule test_clause_local: -- '
+     variable=global
+     echo "1.1: $variable"
+'
+# shellcheck disable=2016
+rule test_clause_local: -- '
+     # still global
+     echo "1.2: $variable"
+'
+# shellcheck disable=2016
+rule test_clause_local: 'clause_local variable' -- '
+     variable=as_dep
+     echo "2: $variable"
+'
+# shellcheck disable=2016
+rule test_clause_local: -- '
+     clause_local variable
+     variable=local
+     echo "3: $variable"
+'
+# shellcheck disable=2016
+rule test_clause_local: -- '
+     # back to global
+     echo "4: $variable"
+'
+
+rule test_clause_local
+

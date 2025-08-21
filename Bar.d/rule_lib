@@ -5,8 +5,9 @@
 declare -g   BAR_CHECK_LEVEL=0         ## less alerting for check dependencies
 declare -gAx BAR_RULES                 ## discovered rules as name:"clauseidx.."
 declare -gAx BAR_RULES_RESULT          ## result "name args..":rc
-declare -gA  BAR_RULE_FLAGS=(          ## [r]everse [u]nsealed [a]lways
+declare -gA  BAR_RULE_FLAGS=(          ## [r]everse [a]lways [m]eta
     [CLEANUP]="r"
+    [clause_local]="am"
 )
 declare -gax BAR_CLAUSES=()            ## clause bodies enumerated
 declare -gax BAR_CLAUSE_DEPS=()        ## dependencies for each clause
@@ -159,6 +160,40 @@ function rule_rename ## <oldname> <newname> - renames a rule
     unset "BAR_RULES[$oldname]"
 }
 
+function is_scalar
+{
+    [[ "$(declare -p "$1")" == 'declare --'* ]]
+}
+
+function clause_local
+{
+    local var
+    for var in "$@"; do
+        if [[ -v "$var" ]]; then
+            is_scalar "$var" || die "only scalar variables can be clause_local"
+            CLAUSE_LOCAL[$var]="${!var}"
+        else
+            # using some magic here
+            CLAUSE_LOCAL[$var]="<<unset_clause_local_variable>>"
+        fi
+    done
+}
+
+function clause_local_restore
+{
+    local key
+    for key in "${!CLAUSE_LOCAL[@]}"; do
+        declare -n var="$key"
+        local value="${CLAUSE_LOCAL[$key]}"
+        if [[ "${value}" = "<<unset_clause_local_variable>>" ]]; then
+            unset "$key"
+        else
+            var="$value"
+        fi
+    done
+    unset CLAUSE_LOCAL
+}
+
 function rule_eval ## <name> [args..]
 {
     trace "$*"
@@ -196,6 +231,9 @@ function rule_eval ## <name> [args..]
 
     local clause
     for clause in $clauses; do
+        [[ "${BAR_RULE_FLAGS[$RULE_NAME]}" != *m* ]] && {
+            declare -A CLAUSE_LOCAL=()
+        }
         local skip=
         local dep
         local deps=()
@@ -273,6 +311,7 @@ function rule_eval ## <name> [args..]
                     else
                         BAR_RULES_RESULT["$rule_id"]="$dep_rc"
                     fi
+                    [[ "${BAR_RULE_FLAGS[$RULE_NAME]}" != *m* ]] && clause_local_restore
                     return "$dep_rc"
                 else
                     success "$RULE_NAME: $dep"
@@ -294,10 +333,12 @@ function rule_eval ## <name> [args..]
                     else
                         BAR_RULES_RESULT["$rule_id"]="$rc"
                     fi
+                    [[ "${BAR_RULE_FLAGS[$RULE_NAME]}" != *m* ]] && clause_local_restore
                     return "$rc"
                 fi
             fi
         fi
+        [[ "${BAR_RULE_FLAGS[$RULE_NAME]}" != *m* ]] && clause_local_restore
     done
 
     if [[ -n "$evaluate_always" ]]; then
