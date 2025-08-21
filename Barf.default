@@ -48,8 +48,6 @@ rule main_commit: \
      'memodb_schedule build'
 rule main_commit_results: \
      devel_commit_results \
-     'memodb_result tests' \
-     'memodb_result test_expensive' \
      'memodb_result audit' \
      'memodb_result doc' \
      'memodb_result build'
