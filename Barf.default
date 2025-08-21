@@ -9,8 +9,21 @@
 # the rules here ideally compose from std_rules and your custom rules.
 #
 
-# default
+# default/MAIN
 rule lints tests doc build
+
+# faster checking, can be used standalone or with 'watch'
+rule fastchk: --conclusive is_git_release_branch? lints tests doc
+rule fastchk: --conclusive is_git_main_branch? lints tests doc
+rule fastchk: --conclusive is_git_devel_branch? lints
+rule fastchk: --conclusive is_git_feature_branch? lint_sources
+rule fastchk: --conclusive is_git_bugfix_branch? lint_sources
+rule fastchk: --conclusive is_git_hotfix_branch? lint_sources tests
+rule fastchk: --conclusive is_git_improvement_branch? lint_sources
+rule fastchk: --conclusive is_git_doc_branch? lint_docs
+rule fastchk: --conclusive is_git_wip_branch? lint_sources
+rule fastchk: --conclusive is_git_experimental_branch? lint_sources
+rule fastchk: lints tests doc
 
 # rules using this should be responsible to do only work that is necessary.
 rule PREPROCESS: fetch_resources build_assets
