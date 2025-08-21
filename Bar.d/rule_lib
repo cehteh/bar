@@ -235,6 +235,7 @@ function rule_eval ## <name> [args..]
                 skip=true
                 break
             else
+                progress "$RULE_NAME: $dep"
                 # shellcheck disable=2155
                 local dep_id="$(hash_args "$PWD $depname ${depargs[*]}")"
                 local dep_rc="${BAR_RULES_RESULT[$dep_id]:-}"

@@ -64,6 +64,15 @@ function called_as
     return 1
 }
 
+function progress ## [message..] -
+{
+    if (( BAR_CHECK_LEVEL > 0 )); then
+        (( "${BAR_VERBOSITY_LEVEL:-5}" > 2 )) && echo -en "\033[1;90m  RUN: $*\033[0m\r" >&2
+    else
+        (( "${BAR_VERBOSITY_LEVEL:-5}" > 1 )) && echo -en "\033[1;90m  RUN: $*\033[0m\r" >&2
+    fi
+}
+
 function success ## [message..] -
 {
     if (( BAR_CHECK_LEVEL > 0 )); then
