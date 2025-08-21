@@ -1,8 +1,8 @@
 #!/bash
 
-declare -gx NICE_LEVEL=1                             #G The nice level 'run_test' uses
-declare -gx TIMEOUT_SECS=10                          #G Timeout for tests
-declare -gx MEMORY_KB=16777216                       #G Memory limit for tests
+declare -gx NICE_LEVEL="${NICE_LEVEL:-1}"            #G The nice level 'run_test' uses
+declare -gx TIMEOUT_SECS="${TIMEOUT_SECS:-300}"      #G Timeout for tests
+declare -gx MEMORY_KB="${MEMORY_KB:-33554432}"       #G Memory limit for tests
 
 function run_test # [-n|--nice LEVEL] [-m|--memory KB] [-t|--timeout SECS] [program] [args..] - runs a test in a resource limited subshell
 {
