@@ -76,18 +76,18 @@ function progress ## [message..] -
 function success ## [message..] -
 {
     if (( BAR_CHECK_LEVEL > 0 )); then
-        (( "${BAR_VERBOSITY_LEVEL:-5}" > 2 )) && echo -e "\033[1;32mCHECK:\033[0m $*" >&2
+        (( "${BAR_VERBOSITY_LEVEL:-5}" > 2 )) && echo -e "\033[2K\033[1;32mCHECK:\033[0m $*" >&2
     else
-        (( "${BAR_VERBOSITY_LEVEL:-5}" > 1 )) && echo -e "\033[1;32m   OK:\033[0m $*" >&2
+        (( "${BAR_VERBOSITY_LEVEL:-5}" > 1 )) && echo -e "\033[2K\033[1;32m   OK:\033[0m $*" >&2
     fi
 }
 
 function failure ## [message..] -
 {
     if (( BAR_CHECK_LEVEL > 0 )); then
-        (( "${BAR_VERBOSITY_LEVEL:-5}" > 2 )) && echo -e "\033[1;90mCHECK: \033[9m$*\033[0m" >&2
+        (( "${BAR_VERBOSITY_LEVEL:-5}" > 2 )) && echo -e "\033[2K\033[1;90mCHECK: \033[9m$*\033[0m" >&2
     else
-        (( "${BAR_VERBOSITY_LEVEL:-5}" > 1 )) && echo -e "\033[1;31m FAIL:\033[0m $*" >&2
+        (( "${BAR_VERBOSITY_LEVEL:-5}" > 1 )) && echo -e "\033[2K\033[1;31m FAIL:\033[0m $*" >&2
     fi
 }
 
