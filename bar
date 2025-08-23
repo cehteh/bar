@@ -74,6 +74,8 @@ function bar_main ## [Rulefile] [Rule [Arguments]] - loads a Barf file and execu
     }
 
     if rule_exists "$initial_rule"; then
+        trap 'rule_exists CLEANUP && { rule_eval CLEANUP || error "CLEANUP failed" ; }' EXIT
+
         rule_exists SETUP && {
             rule_eval SETUP || die "SETUP failed" ;
         }
@@ -89,7 +91,6 @@ function bar_main ## [Rulefile] [Rule [Arguments]] - loads a Barf file and execu
             failure "$initial_rule" "$@"
         fi
 
-        rule_exists CLEANUP && { rule_eval CLEANUP || error "CLEANUP failed" ; }
         return $rc
     else
         die "No Barf/Pleasef file found in current directory and no rule defined.
