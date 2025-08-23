@@ -26,10 +26,11 @@ function bar_main ## [Rulefile] [Rule [Arguments]] - loads a Barf file and execu
     declare -gxr BAR_PWD="$PWD"            ## initial working directory
     declare -gxi BAR_VERBOSITY_LEVEL="${BAR_VERBOSITY_LEVEL:-2}"
     declare -gA  BAR_REQUIRE_LOADED
+    # empty arrays here in case the tty_lib is not loaded, the tty_lib will replace these
     # shellcheck disable=2034
     declare -gA TTYCTL TTYNIL
     # shellcheck disable=2034
-    declare -g TTYOUT TTYERR
+    declare -gA TTYOUT TTYERR
 
     # bootstrap/load std_lib (which defines 'require')
     # shellcheck disable=SC1091
