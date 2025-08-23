@@ -52,11 +52,12 @@ tty_init_maps() {
     TTYCTL[ce]=$'\033[K'        TTYNIL[ce]=''
     TTYCTL[cl]=$'\r\033[K'      TTYNIL[cl]=''
     TTYCTL[cs]=$'\033[2J\033[H' TTYNIL[cs]=''
-    TTYCTL[cr]=$'\033[K\r'      TTYNIL[cr]=''
+    TTYCTL[cr]=$'\r'            TTYNIL[cr]='\r'
     TTYCTL[n]=$'\033[0m'        TTYNIL[n]=''
 
     # assign TTYOUT/TTYERR
     unset TTYOUT TTYERR
+    [[ "${TERM:-dumb}" = "dumb" ]] && COLOR=never
     case "${COLOR:-auto}" in
         always) declare -gn TTYOUT=TTYCTL; declare -gn TTYERR=TTYCTL ;;
         never)  declare -gn TTYOUT=TTYNIL; declare -gn TTYERR=TTYNIL ;;
@@ -75,12 +76,19 @@ tty_init_maps() {
 tty_init_maps
 unset -f tty_init_maps
 
-function tty_echo
+function tty_echo # echos only when the output is a tty
 {
     [[ -t 1 ]] && echo "$@"
 }
 
-#DBG test
+[[ "${TERM:-dumb}" = "dumb" ]] || function tty_newline # prints a newline when we are not at column 1
+{
+    local col
+    IFS=';' read -srdR -p $'\033[6n' _ col
+    col="${col%R}"
+    [[ "$col" != 1 ]] && echo
+}
+
 # we now have:
 #  TTYCTL mapping styles to ansi control sequences
 #  TTYNIL mapping styles to empty strings

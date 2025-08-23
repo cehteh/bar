@@ -183,59 +183,72 @@ function require
     return $rc
 }
 
+# placeholder, overwritten by tty_lib when present
+tty_newline() { :; }
+
 function DBG ## [message..] - for print-style debugging, should not be present in production code
 {
-    echo "${TTYERR[r_R]:-}${TTYERR[__B]:-}  DBG:${TTYERR[n]:-} $(source_info 1) $*" >&2
+    {
+        tty_newline
+        echo "${TTYERR[r_R]:-}${TTYERR[__B]:-}  DBG:${TTYERR[n]:-} $(source_info 1) $*"
+    } >&2
 }
 
 function die ## [message..] - prints 'message' to stderr and exits with failure
 {
     if (( BAR_VERBOSITY_LEVEL > 0 )); then
-        echo "${TTYERR[R_B]:-}PANIC:${TTYERR[n]:-} $(source_info 1) $*" >&2
-    fi
+        tty_newline
+        echo "${TTYERR[R_B]:-}PANIC:${TTYERR[n]:-} $(source_info 1) $*"
+    fi >&2
     exit 1
 }
 
 function error ## [message..] - may print a error message to stderr and return failure
 {
     if (( BAR_VERBOSITY_LEVEL > 0 )); then
-        echo "${TTYERR[r_B]:-}ERROR:${TTYERR[n]:-} $(source_info 1) $*" >&2
-    fi
+        tty_newline
+        echo "${TTYERR[r_B]:-}ERROR:${TTYERR[n]:-} $(source_info 1) $*"
+    fi >&2
 }
 
 function warn ## [message..] - may print an warning to stderr
 {
     if (( BAR_VERBOSITY_LEVEL > 1 )); then
+        tty_newline
         echo "${TTYERR[m_B]:-} WARN:${TTYERR[n]:-} $*" >&2
-    fi
+    fi >&2
 }
 
 function note ## [message..] - may print an important notice to stderr
 {
     if (( BAR_VERBOSITY_LEVEL > 2 )); then
-        echo "${TTYERR[m_B]:-} NOTE:${TTYERR[n]:-} $*" >&2
-    fi
+        tty_newline
+        echo "${TTYERR[m_B]:-} NOTE:${TTYERR[n]:-} $*"
+    fi >&2
 }
 
 function info ## [message..] - may print an informal message to stderr
 {
     if (( BAR_VERBOSITY_LEVEL > 3 )); then
-        echo "${TTYERR[b_B]:-} INFO:${TTYERR[n]:-} $*" >&2
-    fi
+        tty_newline
+        echo "${TTYERR[b_B]:-} INFO:${TTYERR[n]:-} $*"
+    fi >&2
 }
 
 function debug ## [message..] - may print a debug message to stderr
 {
     if (( BAR_VERBOSITY_LEVEL > 4 )); then
-        echo "${TTYERR[c_B]:-}DEBUG:${TTYERR[n]:-} $(source_info 1) $*" >&2
-    fi
+        tty_newline
+        echo "${TTYERR[c_B]:-}DEBUG:${TTYERR[n]:-} $(source_info 1) $*"
+    fi >&2
 }
 
 function trace ## [message] - may prints a trace message to stderr
 {
     if (( BAR_VERBOSITY_LEVEL > 5 )); then
-        echo "${TTYERR[C_B]:-}TRACE:${TTYERR[n]:-} $(source_info 1) $*" >&2
-    fi
+        tty_newline
+        echo "${TTYERR[C_B]:-}TRACE:${TTYERR[n]:-} $(source_info 1) $*"
+    fi >&2
 }
 
 bar_main "$@"

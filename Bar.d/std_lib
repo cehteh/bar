@@ -69,29 +69,48 @@ function called_as
 # elusive progress notice
 function progress ## [message..] -
 {
+    [[ "${TERM:-dumb}" = "dumb" ]] && return 0
     if (( BAR_CHECK_LEVEL > 0 )); then
-        (( "${BAR_VERBOSITY_LEVEL:-5}" > 2 )) && tty_echo -n "${TTYERR[K_B]:-}  RUN: $*${TTYERR[cr]:-}" >&2
+        (( "${BAR_VERBOSITY_LEVEL:-5}" > 2 )) && {
+            tty_newline
+            tty_echo -n "${TTYERR[K_B]:-}  RUN: $*${TTYERR[cr]:-}${TTYERR[n]:-}"
+        }
     else
-        (( "${BAR_VERBOSITY_LEVEL:-5}" > 1 )) && tty_echo -n "${TTYERR[K_B]:-}  RUN: $*${TTYERR[cr]:-}" >&2
-    fi
+        (( "${BAR_VERBOSITY_LEVEL:-5}" > 1 )) && {
+            tty_newline
+            tty_echo -n "${TTYERR[K_B]:-}  RUN: $*${TTYERR[cr]:-}${TTYERR[n]:-}"
+        }
+    fi >&2
 }
 
 function success ## [message..] -
 {
     if (( BAR_CHECK_LEVEL > 0 )); then
-        (( "${BAR_VERBOSITY_LEVEL:-5}" > 2 )) && echo -e "${TTYERR[ce]:-}${TTYERR[g_B]:-}CHECK:${TTYERR[n]:-} $*" >&2
+        (( "${BAR_VERBOSITY_LEVEL:-5}" > 2 )) && {
+            tty_newline
+            echo -e "${TTYERR[ce]:-}${TTYERR[g_B]:-}CHECK:${TTYERR[n]:-} $*"
+        }
     else
-        (( "${BAR_VERBOSITY_LEVEL:-5}" > 1 )) && echo -e "${TTYERR[ce]:-}${TTYERR[g_B]:-}   OK:${TTYERR[n]:-} $*" >&2
-    fi
+        (( "${BAR_VERBOSITY_LEVEL:-5}" > 1 )) && {
+            tty_newline
+            echo -e "${TTYERR[ce]:-}${TTYERR[g_B]:-}   OK:${TTYERR[n]:-} $*"
+        }
+    fi >&2
 }
 
 function failure ## [message..] -
 {
     if (( BAR_CHECK_LEVEL > 0 )); then
-        (( "${BAR_VERBOSITY_LEVEL:-5}" > 2 )) && echo -e "${TTYERR[ce]:-}${TTYERR[K_B]:-}CHECK: ${TTYERR[__S]:-}$*${TTYERR[n]:-}" >&2
+        (( "${BAR_VERBOSITY_LEVEL:-5}" > 2 )) && {
+            tty_newline
+            echo -e "${TTYERR[ce]:-}${TTYERR[K_B]:-}CHECK: ${TTYERR[__S]:-}$*${TTYERR[n]:-}"
+        }
     else
-        (( "${BAR_VERBOSITY_LEVEL:-5}" > 1 )) && echo -e "${TTYERR[ce]:-}${TTYERR[r_B]:-} FAIL:${TTYERR[n]:-} $*" >&2
-    fi
+        (( "${BAR_VERBOSITY_LEVEL:-5}" > 1 )) && {
+            tty_newline
+            echo -e "${TTYERR[ce]:-}${TTYERR[r_B]:-} FAIL:${TTYERR[n]:-} $*"
+        }
+    fi >&2
 }
 
 function uncond_call ## <rc> [message..] -
@@ -99,12 +118,13 @@ function uncond_call ## <rc> [message..] -
     declare -i rc="$1"
     shift
     if (( "${BAR_VERBOSITY_LEVEL:-5}" > 2 )); then
+        tty_newline
         if (( rc == 0 )); then
-            echo -e "${TTYERR[ce]:-}${TTYERR[g_B]:-} EVAL:${TTYERR[n]:-} $*" >&2
+            echo -e "${TTYERR[ce]:-}${TTYERR[g_B]:-} EVAL:${TTYERR[n]:-} $*"
         else
-            echo -e "${TTYERR[ce]:-}${TTYERR[K_B]:-} EVAL:${TTYERR[n]:-} $*" >&2
+            echo -e "${TTYERR[ce]:-}${TTYERR[K_B]:-} EVAL:${TTYERR[n]:-} $*"
         fi
-    fi
+    fi >&2
 }
 
 function rule_autoload ## <name>
