@@ -1,0 +1,89 @@
+#!/bash
+
+#
+# this module adds some support for terminal color codes and a fancy progress spinner
+#
+
+# compute lookup table for styles once
+tty_init_maps() {
+    [[ -v TTYCTL ]] && return 0
+
+    # fg / bg / style maps
+    declare -A fg_colors=(
+        [k]=30 [r]=31 [g]=32 [y]=33 [b]=34 [m]=35 [c]=36 [w]=37
+        [K]=90 [R]=91 [G]=92 [Y]=93 [B]=94 [M]=95 [C]=96 [W]=97
+        [_]=''
+    )
+    declare -A bg_colors=(
+        [k]=40 [r]=41 [g]=42 [y]=43 [b]=44 [m]=45 [c]=46 [w]=47
+        [K]=100 [R]=101 [G]=102 [Y]=103 [B]=104 [M]=105 [C]=106 [W]=107
+        [_]=''
+    )
+    declare -A styles=(
+        [B]=1  [D]=2  [U]=4  [I]=3  [R]=7  [S]=9
+        [b]=22 [d]=22 [u]=24 [i]=23 [r]=27 [s]=29
+        [n]=0  [_]=''
+    )
+
+    # build maps
+    declare -gxA TTYCTL=() TTYNIL=()
+    for fg in "${!fg_colors[@]}"; do
+        for bg in "${!bg_colors[@]}"; do
+            [[ $fg == "$bg" && $fg != _ ]] && continue
+            for st in "${!styles[@]}"; do
+                code=()
+                [[ -n ${fg_colors[$fg]} ]] && code+=("${fg_colors[$fg]}")
+                [[ -n ${bg_colors[$bg]} ]] && code+=("${bg_colors[$bg]}")
+                [[ -n ${styles[$st]}   ]] && code+=("${styles[$st]}")
+                key="${fg}${bg}${st}"
+                if ((${#code[@]})); then
+                    local IFS=";"
+                    val=$'\033['"${code[*]}"'m'
+                else
+                    val=''
+                fi
+                TTYCTL[$key]="$val"
+                TTYNIL[$key]=''
+            done
+        done
+    done
+
+    # specials
+    TTYCTL[ce]=$'\033[K'        TTYNIL[ce]=''
+    TTYCTL[cl]=$'\r\033[K'      TTYNIL[cl]=''
+    TTYCTL[cs]=$'\033[2J\033[H' TTYNIL[cs]=''
+    TTYCTL[cr]=$'\033[K\r'      TTYNIL[cr]=''
+    TTYCTL[n]=$'\033[0m'        TTYNIL[n]=''
+
+    # assign TTYOUT/TTYERR
+    case "${COLOR:-auto}" in
+        always) declare -gn TTYOUT=TTYCTL; declare -gn TTYERR=TTYCTL ;;
+        never)  declare -gn TTYOUT=TTYNIL; declare -gn TTYERR=TTYNIL ;;
+        auto|*)
+            # shellcheck disable=2015
+            [[ -t 1 ]] && declare -gn TTYOUT=TTYCTL || declare -gn TTYOUT=TTYNIL
+            # shellcheck disable=2015
+            [[ -t 2 ]] && declare -gn TTYERR=TTYCTL || declare -gn TTYERR=TTYNIL
+            ;;
+    esac
+
+    declare -gxrA TTYCTL TTYNIL
+    declare -gxrn TTYOUT TTYERR
+}
+
+tty_init_maps
+unset -f tty_init_maps
+
+function tty_echo
+{
+    [[ -t 1 ]] && echo "$@"
+}
+
+#DBG test
+# we now have:
+#  TTYCTL mapping styles to ansi control sequences
+#  TTYNIL mapping styles to empty strings
+#  TTYOUT points to TTYCTL when stdout is a tty, else to TTYNIL
+#  TTYERR points to TTYCTL when stderr is a tty, else to TTYNIL
+
+

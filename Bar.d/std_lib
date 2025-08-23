@@ -66,30 +66,31 @@ function called_as
     return 1
 }
 
+# elusive progress notice
 function progress ## [message..] -
 {
     if (( BAR_CHECK_LEVEL > 0 )); then
-        (( "${BAR_VERBOSITY_LEVEL:-5}" > 2 )) && echo -en "\033[1;90m  RUN: $*\033[0m\r" >&2
+        (( "${BAR_VERBOSITY_LEVEL:-5}" > 2 )) && tty_echo -n "${TTYERR[K_B]:-}  RUN: $*${TTYERR[cr]:-}" >&2
     else
-        (( "${BAR_VERBOSITY_LEVEL:-5}" > 1 )) && echo -en "\033[1;90m  RUN: $*\033[0m\r" >&2
+        (( "${BAR_VERBOSITY_LEVEL:-5}" > 1 )) && tty_echo -n "${TTYERR[K_B]:-}  RUN: $*${TTYERR[cr]:-}" >&2
     fi
 }
 
 function success ## [message..] -
 {
     if (( BAR_CHECK_LEVEL > 0 )); then
-        (( "${BAR_VERBOSITY_LEVEL:-5}" > 2 )) && echo -e "\033[2K\033[1;32mCHECK:\033[0m $*" >&2
+        (( "${BAR_VERBOSITY_LEVEL:-5}" > 2 )) && echo -e "${TTYERR[ce]:-}${TTYERR[g_B]:-}CHECK:${TTYERR[n]:-} $*" >&2
     else
-        (( "${BAR_VERBOSITY_LEVEL:-5}" > 1 )) && echo -e "\033[2K\033[1;32m   OK:\033[0m $*" >&2
+        (( "${BAR_VERBOSITY_LEVEL:-5}" > 1 )) && echo -e "${TTYERR[ce]:-}${TTYERR[g_B]:-}   OK:${TTYERR[n]:-} $*" >&2
     fi
 }
 
 function failure ## [message..] -
 {
     if (( BAR_CHECK_LEVEL > 0 )); then
-        (( "${BAR_VERBOSITY_LEVEL:-5}" > 2 )) && echo -e "\033[2K\033[1;90mCHECK: \033[9m$*\033[0m" >&2
+        (( "${BAR_VERBOSITY_LEVEL:-5}" > 2 )) && echo -e "${TTYERR[ce]:-}${TTYERR[K_B]:-}CHECK: ${TTYERR[__S]:-}$*${TTYERR[n]:-}" >&2
     else
-        (( "${BAR_VERBOSITY_LEVEL:-5}" > 1 )) && echo -e "\033[2K\033[1;31m FAIL:\033[0m $*" >&2
+        (( "${BAR_VERBOSITY_LEVEL:-5}" > 1 )) && echo -e "${TTYERR[ce]:-}${TTYERR[r_B]:-} FAIL:${TTYERR[n]:-} $*" >&2
     fi
 }
 
@@ -99,13 +100,12 @@ function uncond_call ## <rc> [message..] -
     shift
     if (( "${BAR_VERBOSITY_LEVEL:-5}" > 2 )); then
         if (( rc == 0 )); then
-            echo -e "\033[1;32m EVAL:\033[0m $*" >&2
+            echo -e "${TTYERR[ce]:-}${TTYERR[g_B]:-} EVAL:${TTYERR[n]:-} $*" >&2
         else
-            echo -e "\033[1;90m EVAL:\033[0m $*" >&2
+            echo -e "${TTYERR[ce]:-}${TTYERR[K_B]:-} EVAL:${TTYERR[n]:-} $*" >&2
         fi
     fi
 }
-
 
 function rule_autoload ## <name>
 {
@@ -115,7 +115,7 @@ function rule_autoload ## <name>
     modname="${modname#has_}"
     modname="${modname#try_}"
     modname="${modname%%_*}"
-    require --try "$modname"
+    require --opt "$modname"
 
     # when $name exists as command or function then create a rule for that
     if ! rule_exists "$1" && command -v "$1" >/dev/null ; then
@@ -123,11 +123,6 @@ function rule_autoload ## <name>
     fi
     rule_exists "$1" || die "no rule, command or function '$1' defined"
 }
-
-
-
-
-
 
 # checks whenever a shell command is in PATH
 function is_command_installed
