@@ -1,5 +1,7 @@
 #!/bash
 
+require --opt tty_lib
+
 # library of general functions
 
 # TODO: add [-s|--state "extrastate"]

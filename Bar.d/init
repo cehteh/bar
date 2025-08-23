@@ -50,7 +50,7 @@ function init # --hidden|--update
 
 # shellcheck disable=2016
 rule init_update_gitignore: is_git_toplevel? -- '
-     require --try testdir
+     require --opt testdir
      git_add_ignore .bar\* \*.lock
      [[ -v TESTDIR_PREFIX ]] && git_add_ignore "$TESTDIR_PREFIX"\*
 '

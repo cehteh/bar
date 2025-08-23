@@ -147,7 +147,7 @@ function require
     trace "$*"
     declare -i rc=0
     local try_load=""
-    if [[ "$1" = "--try" ]]; then
+    if [[ "$1" = "--opt" ]]; then
         try_load=true
         shift
     fi
