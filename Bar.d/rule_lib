@@ -162,7 +162,9 @@ function rule_rename ## <oldname> <newname> - renames a rule
 
 function is_scalar
 {
-    [[ "$(declare -p "$1")" == 'declare --'* ]]
+    # shellcheck disable=2155
+    local type="$(declare -p "$1")"
+    [[ $type == 'declare --'* || $type == 'declare -i'* ]]
 }
 
 function clause_local
