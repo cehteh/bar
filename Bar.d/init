@@ -121,7 +121,7 @@ function init_install # [prefix]
     fi
 
     # link .config/please
-    if [[ ! -d "$HOME/.config/please" || -L "$HOME/.config/please/rules_lib" ]]; then
+    if [[ -L "$HOME/.config/please/std_lib" || ! -d "$HOME/.config/please" ]]; then
         mkdir -p "$HOME/.config/please"
         ln -s "${origin%/*}/Bar.d/"* "$HOME/.config/please/" || true   # TODO: better update handling
         info "linked ${origin%/*}/Bar.d/* to $HOME/.config/please/"
