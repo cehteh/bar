@@ -105,39 +105,39 @@ require run
 #rule cargo_build: -- cargo build "${RULE_ARGS[@]}"
 function cargo_build
 {
-    run_test cargo build --workspace "$@"
+    run_test cargo --color "${COLOR:-auto}" build --workspace "$@"
 }
 
 function cargo_test
 {
-    run_test cargo test --workspace "$@"
+    run_test cargo --color "${COLOR:-auto}" test --workspace "$@"
 }
 
 function cargo_check
 {
-    run_test cargo check --workspace
+    run_test cargo --color "${COLOR:-auto}" check --workspace
 }
 
 function cargo_clippy_errors ## - Tests with 'cargo clippy' for errors only
 {
-    cargo clippy 2>&1 | tee /dev/stderr | awk '/error.*: /{exit 1}'
+    cargo --color "${COLOR:-auto}" clippy 2>&1 | tee /dev/stderr | awk '/error.*: /{exit 1}'
 }
 
 function cargo_clippy_strict ## - Test with 'cargo clippy' for warnings and errors
 {
-    cargo clippy 2>&1 | tee /dev/stderr | awk '/(warning|error).*: /{exit 1}'
+    cargo --color "${COLOR:-auto}" clippy 2>&1 | tee /dev/stderr | awk '/(warning|error).*: /{exit 1}'
 }
 
 function cargo_doc ## - builds docs, backgrounds, optional.
 {
     export RUSTDOCFLAGS="-D rustdoc::broken_intra_doc_links"
-    run_test cargo doc --workspace "$@"
+    run_test cargo --color "${COLOR:-auto}" doc --workspace "$@"
 }
 
 #rule cargo_doc: 'cargo_tool_installed doc --help' -
 
 
-rule cargo_audit: is_rust_project 'cargo_tool_installed? audit' -- cargo audit --color never -D warnings --stale --quiet
+rule cargo_audit: is_rust_project 'cargo_tool_installed? audit' -- cargo --color "${COLOR:-auto}" audit --color never -D warnings --stale --quiet
 rule cargo_audit: is_rust_project '!cargo_tool_installed audit' -- warn "cargo audit is not installed"
 
 
