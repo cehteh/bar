@@ -24,11 +24,14 @@ function init # --hidden|--update
     fi
 
     if [[ -n "$update" ]]; then
-        if [[ -f bar ]]; then
-            cp -Lu "$origin" "bar"
+        if [[ -f bar && "$origin" -nt "bar" ]]; then
+            # prevent writing into the running script
+            cp -L "$origin" "bar.new"
+            mv  "bar.new" "bar"
             cp -Lru "$prefix/share/bar/Bar.d/"* "Bar.d"
-        elif [[ -f .bar ]]; then
-            cp -Lu "$origin" ".bar"
+        elif [[ -f .bar && "$origin" -nt ".bar" ]]; then
+            cp -L "$origin" ".bar.new"
+            mv  ".bar.new" ".bar"
             cp -Lru "$prefix/share/bar/Bar.d/"* ".Bar.d"
         else
             die "bar not initialized"
