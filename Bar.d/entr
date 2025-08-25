@@ -7,7 +7,7 @@ rule is_entr_installed: 'is_command_installed entr'
 # shellcheck disable=2016
 function entr_watch
 {
-    git_ls_files --other | entr -c -s "$BAR_SELF $BARF_FILE $*"
+    git_ls_files --other | entr -c -s "sleep 0.25 ; $BAR_SELF $BARF_FILE $*"
 }
 
 rule entr_watch: is_entr_installed -
