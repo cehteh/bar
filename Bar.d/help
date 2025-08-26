@@ -293,8 +293,7 @@ RULE ENVIRONMENT
   Rules implicitly depend on the arguments passed and the current directory they run in. Any
   other state or environment variable is not considered. When the result of a rule would
   depend on such external state then the rule is impure and may lead to wrong
-  results. Currently such can be mitigated by using 'always_*' rules. Future versions of bar
-  may improve this in other ways.
+  results.
 
 
 MODULES
@@ -329,14 +328,10 @@ AUTOMATIC MODULE LOADING
 
   - 'is_', 'has_' and 'try_' are reserved for check rules they don't have any special
     semantic except for being stripped at auto loading.
-  - The result of rules which start with 'always_' will no be cached and if used as
-    dependency it will always be evaluated.  This is useful for stateful rules like
-    counters. Can be combined in front of 'is_' or 'has_'. Is also stripped for auto
-    loading.
 
   When a rule is not found then a module name is derived from the rule name by removing the
-  'always_', 'is_', 'has_' prefixes and cutting off anything behind the first
-  underscore. Eg. 'always_if_module_check' results in 'module'. This is then searched as
+  'try_', 'is_', 'has_' prefixes and cutting off anything behind the first
+  underscore. Eg. 'try_module_check' results in 'module'. This is then searched as
   'Bar.d/module', 'bar.d/module', '.Bar.d/module' or '.bar.d/module' (or respective please
   variants) and loaded if present. Thus modules that are automatically loaded must be named by
   single word without underscores.
