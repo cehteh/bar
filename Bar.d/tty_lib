@@ -84,9 +84,11 @@ function tty_echo # echos only when the output is a tty
 [[ "${TERM:-dumb}" = "dumb" ]] || function tty_newline # prints a newline when we are not at column 1
 {
     local col
-    IFS=';' read -srdR -p $'\033[6n' _ col
+    IFS=';' read -srdR -p $'\033[6n' _ col || true
     col="${col%R}"
-    [[ "$col" != 1 ]] && echo
+    if [[ "$col" != 1 ]]; then
+        echo
+    fi
 }
 
 # we now have:

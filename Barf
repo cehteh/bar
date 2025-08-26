@@ -30,10 +30,6 @@ rule pre-commit: MAIN
 
 # TODO: test Barf.default
 
-rule SETUP: -- '
-declare -gx COLOR=never
-     error "$TERM"
-'
 rule SETUP: 'called_as? pre-commit' testdir_enter
 rule SETUP: 'called_as? pre-merge-commit' testdir_enter
 rule SETUP: 'called_as? prepare-commit-msg' testdir_enter
