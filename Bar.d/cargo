@@ -144,6 +144,6 @@ rule cargo_audit: is_rust_project '!cargo_tool_installed audit' -- warn "cargo a
 # only allows cargo options (+toolchain etc) as argument
 function cargo_fmt_check
 {
-    run_subcommand cargo fmt "$@" -- --all -- --check
+    cargo "$@" fmt  -- --all -- --check
 }
 
