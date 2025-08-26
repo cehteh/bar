@@ -1,8 +1,8 @@
 #!/bash
 #shellcheck disable=SC2016
 
-## standard rule targets where other modules can hook in Undesired std_rules can be renamed or
-## deleted in Barf. this is preferred to editing the std_rules file because it allows for
+## standard rule targets where other modules can hook in. Undesired std_rules can be renamed or
+## deleted in Barf, this is preferred to editing the std_rules file because it allows for
 ## easier updates of the std_rules file. All these std rules just structure the targets and
 ## give debug output on the leafs. Actual actions are hooked in by other modules.
 
@@ -25,7 +25,9 @@ rule doc: lint_docs build_docs
 
 rule bench: build_benches benchmark
 
+## code actions, should be non breaking changes
 rule fmt: -- debug "Running source formatting tools..."
+rule update: -- debug "Updating dependencies..."
 rule fix: -- debug "Apply trivial fixes..."
 
 ## run already depends on 'build' but the actual run action has to be defined by the user in Barf
