@@ -347,8 +347,12 @@ STANDARD RULES
   Bar ships with a module that defines a set of standard rules where other modules can add
   clauses to. Check 'Bar.d/std_rules' for details.
 
-  Aside from 'SETUP', 'PREPROCESS', 'MAIN', 'POSTPROCESS' and 'CLEANUP' there are no other
-  special rule names.
+  'SETUP', 'PREPROCESS', 'MAIN', 'POSTPROCESS' and 'CLEANUP' are special rule names called
+  approbiately.
+
+  The 'clause_local [var[=value]]' is for defining variables that are local to a clause.  Only
+  scalars can be clause local. Ideally this should be used as dependency and setting a a
+  variable to a value. It can be used in a function as well esp when creating other metarules.
 
 
 INITIAL INSTALLATION

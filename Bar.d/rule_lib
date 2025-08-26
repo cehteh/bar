@@ -167,19 +167,25 @@ function is_scalar
 {
     # shellcheck disable=2155
     local type="$(declare -p "$1")"
-    [[ $type == 'declare --'* || $type == 'declare -i'* ]]
+    [[ $type == 'declare --'* || $type == 'declare -i'* || $type == 'declare -x'* ]]
 }
 
 function clause_local
 {
     local var
+    local value
     for var in "$@"; do
+        value="${var#*=}"
+        var="${var%%=*}"
         if [[ -v "$var" ]]; then
             is_scalar "$var" || die "only scalar variables can be clause_local"
             CLAUSE_LOCAL[$var]="${!var}"
         else
             # using some magic here
             CLAUSE_LOCAL[$var]="<<unset_clause_local_variable>>"
+        fi
+        if [[ -n "$value" ]]; then
+            eval "$var='$value'"
         fi
     done
 }

@@ -117,9 +117,12 @@ rule test_clause_local: -- '
      variable=local
      echo "3: $variable"
 '
+rule test_clause_local: 'clause_local variable=assigned' -- '
+     echo "4: $variable"
+'
 rule test_clause_local: -- '
      # back to global
-     echo "4: $variable"
+     echo "5: $variable"
 '
 
 rule test_clause_local
