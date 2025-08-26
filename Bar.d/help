@@ -155,6 +155,11 @@ RULE DEFINITION SYNTAX
       successful clause. Normally clauses are conjunctive and fail with the first failing
       clause.
 
+    --meta
+      Metarules do not have their own clause local variable. This allow them to modify
+      the clause locals of the calling rule. 'clause_local' for example is a metarule.
+      User defined rules that want to modify clause locals will need to be meta too.
+      See 'try_cargo_toolchain' for an example.
 
   * [<name>:]
 

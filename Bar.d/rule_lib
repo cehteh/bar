@@ -5,7 +5,7 @@
 declare -g   BAR_CHECK_LEVEL=0         ## less alerting for check dependencies
 declare -gAx BAR_RULES                 ## discovered rules as name:"clauseidx.."
 declare -gAx BAR_RULES_RESULT          ## result "name args..":rc
-declare -gA  BAR_RULE_FLAGS=(          ## [r]everse [a]lways [m]eta
+declare -gA  BAR_RULE_FLAGS=(          ## [r]everse [a]lways [m]eta [d]isjunct [m]meta
     [CLEANUP]="r"
     [clause_local]="am"
 )
@@ -28,6 +28,9 @@ function rule () ## [[--rule-flag].. <name>:] [--clause-flag].. [[!]dep[?] [arg]
             ;;
         --disjunct)
             ruleflags+="d"
+            ;;
+        --meta)
+            ruleflags+="m"
             ;;
         *)
             break;;
