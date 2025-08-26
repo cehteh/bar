@@ -10,9 +10,13 @@ function init # --hidden|--update
         die "bar not properly installed, run './bar init_install <prefix>' from its git repository first"
 
     local update=
+    local update_existing=
     local hidden=
     if [[ "${1:-}" == --update ]]; then
         update=true
+        shift
+    elif [[ "${1:-}" == --update-existing ]]; then
+        update_existing=true
         shift
     elif [[ "${1:-}" == --hidden ]]; then
         hidden=true
@@ -23,16 +27,34 @@ function init # --hidden|--update
         die "bar already initialized"
     fi
 
-    if [[ -n "$update" ]]; then
-        if [[ -f bar && "$origin" -nt "bar" ]]; then
-            # prevent writing into the running script
-            cp -L "$origin" "bar.new"
-            mv  "bar.new" "bar"
-            cp -Lru "$prefix/share/bar/Bar.d/"* "Bar.d"
-        elif [[ -f .bar && "$origin" -nt ".bar" ]]; then
-            cp -L "$origin" ".bar.new"
-            mv  ".bar.new" ".bar"
-            cp -Lru "$prefix/share/bar/Bar.d/"* ".Bar.d"
+    if [[ -n "$update" || -n "$update_existing" ]]; then
+        if [[ -f bar ]]; then
+            if [[ "$origin" -nt "bar" ]]; then
+                debug "updating 'bar'"
+                # prevent writing into the running script
+                cp -L "$origin" "bar.new"
+                mv  "bar.new" "bar"
+            fi
+            if [[ -n "$update" ]]; then
+                debug "updating 'Bar.d'"
+                cp -Lru "$prefix/share/bar/Bar.d/"* "Bar.d"
+            else
+                debug "updating existing 'Bar.d'"
+                rsync -rtuL --existing "$prefix/share/bar/Bar.d/" "Bar.d/"
+            fi
+        elif [[ -f .bar ]]; then
+            if [[ "$origin" -nt ".bar" ]]; then
+                debug "updating '.bar'"
+                cp -L "$origin" ".bar.new"
+                mv  ".bar.new" ".bar"
+            fi
+            if [[ -n "$update" ]]; then
+                debug "updating '.Bar.d'"
+                cp -Lru "$prefix/share/bar/Bar.d/"* ".Bar.d"
+            else
+                debug "updating existing '.Bar.d'"
+                rsync -rtuL --existing "$prefix/share/bar/Bar.d/" "Bar.d/"
+            fi
         else
             die "bar not initialized"
         fi
@@ -40,10 +62,13 @@ function init # --hidden|--update
     fi
 
     if [[ -z "$hidden" ]]; then
-        cp -L "$origin" "bar"
+        debug "installing bar"
+        cp -L "$origin" "bar.new"
+        mv  "bar.new" "bar"
         cp -L "$prefix/share/bar/Barf" "Barf"
         cp -Lr "$prefix/share/bar/Bar.d" "Bar.d"
     else
+        debug "installing .bar"
         cp -L "$origin" ".bar"
         cp -L "$prefix/share/bar/Barf" ".Barf"
         cp -Lr "$prefix/share/bar/Bar.d" ".Bar.d"
@@ -65,6 +90,10 @@ rule init: '!called_as bar' -- error "not called as installed bar"
 rule init_update: 'called_as? bar' -- init --update
 rule init_update: 'called_as? bar' init_update_gitignore
 rule init_update: '!called_as bar' -- error "not called as installed bar"
+
+rule init_update_existing: 'called_as? bar' -- init --update-existing
+rule init_update_existing: 'called_as? bar' init_update_gitignore
+rule init_update_existing: '!called_as bar' -- error "not called as installed bar"
 
 # since the Barf is the users configuration we cant just update it
 # this 'a bit mouthful' rule will do a merge with the shipped Barf.default
