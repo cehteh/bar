@@ -1,5 +1,9 @@
 #!/bash
-# shellcheck disable=2016
+# shellcheck disable=2016,2086
+
+require run
+
+export CARGO_TOOLCHAIN="${CARGO_TOOLCHAIN:-}"
 
 function is_cargo_tool_installed ## [+toolchain] <tool> [args..] - Checks if 'cargo <tool>' is installed
 {
@@ -30,6 +34,19 @@ function is_cargo_tool_installed ## [+toolchain] <tool> [args..] - Checks if 'ca
 
 memofn is_cargo_tool_installed
 
+function is_cargo_toolchain_available ## [+toolchain] - Check if a toolchain is available
+{
+    if cargo "$1" --version &>/dev/null; then
+        debug "toolchain $1 is installed"
+        return 0
+    else
+        note "toolchain $1 is not installed"
+        return 1
+    fi
+}
+
+memofn is_cargo_toolchain_available
+
 function cargo_cache_artifacts
 {
     if [[ -n "${TESTDIR_PREV:-}" ]] && lock_wait "$TESTDIR_PREV/.bar" ; then
@@ -46,7 +63,24 @@ function cargo_cache_artifacts
     fi
 }
 
-rule cargo_lint: cargo_check cargo_clippy_strict cargo_fmt_check
+rule cargo_lint: cargo_fmt_check cargo_check cargo_clippy_strict
+
+function cargo_toolchain
+{
+    is_cargo_toolchain_available "$1" || return 1
+    clause_local "CARGO_TOOLCHAIN='$1'"
+}
+
+rule --meta cargo_toolchain:
+
+function cargo_fmt_check
+{
+    # shellcheck disable=2153
+    run_test cargo $CARGO_TOOLCHAIN fmt --all --check
+}
+
+rule cargo_fmt_check: --conclusive 'cargo_toolchain? +nightly' -
+rule cargo_fmt_check: --conclusive -
 
 rule cargo_build_unit_tests: \
      'cargo_test --lib --no-run --quiet' \
@@ -62,88 +96,109 @@ rule cargo_test_integrations: cargo_build_integration_tests \
      'cargo_test --tests --quiet' \
      'cargo_test --doc --quiet'
 
-# --examples          Test all examples
-# --benches           Test all targets that have `bench = true` set
+function cargo_fmt
+{
+    # shellcheck disable=2153
+    run_test cargo $CARGO_TOOLCHAIN fmt --all
+}
 
+rule cargo_fmt: --conclusive 'cargo_toolchain? +nightly' -
+rule cargo_fmt: --conclusive -
 
+function cargo_fix
+{
+    # shellcheck disable=2153
+    run_test cargo $CARGO_TOOLCHAIN fix --all --allow-dirty
+}
 
-# TODO: split into
-# --lib               Test only this package's library
-# --bins              Test all binaries
-# --bin [<NAME>]      Test only the specified binary
-# --examples          Test all examples
-# --example [<NAME>]  Test only the specified example
-# --tests             Test all targets that have `test = true` set
-# --test [<NAME>]     Test only the specified test target
-# --benches           Test all targets that have `bench = true` set
-# --bench [<NAME>]    Test only the specified bench target
-# --all-targets       Test all targets (does not include doctests)
-# --doc               Test only this library's documentation
-
-
-
-
-# rule test_doc: -- info "Testing documentation..."
-
-
-# rule build_benches: is_cargo_project? 'cargo_build --benches'
-# rule build_examples: is_cargo_project? 'cargo_build --examples'
-# rule build_lib: is_cargo_project? 'cargo_build --lib'
-# rule build_bin: is_cargo_project? 'cargo build --bins'
-# rule build_doc: is_cargo_project? cargo_doc
-
-
-# function cargo_test
-# {
-#     run_test cargo test "$@"
-# }
-# 
-# rule cargo_test: is_cargo_project? -
-
-require run
-
-#rule cargo_build: -- cargo build "${RULE_ARGS[@]}"
 function cargo_build
 {
-    run_test cargo --color "${COLOR:-auto}" build --workspace "$@"
+    run_test cargo $CARGO_TOOLCHAIN --color "${COLOR:-auto}" build --workspace "$@"
 }
 
 function cargo_test
 {
-    run_test cargo --color "${COLOR:-auto}" test --workspace "$@"
+    run_test cargo $CARGO_TOOLCHAIN --color "${COLOR:-auto}" test --workspace "$@"
 }
 
 function cargo_check
 {
-    run_test cargo --color "${COLOR:-auto}" check --workspace
+    run_test cargo $CARGO_TOOLCHAIN --color "${COLOR:-auto}" check --workspace
 }
 
 function cargo_clippy_errors ## - Tests with 'cargo clippy' for errors only
 {
-    cargo --color "${COLOR:-auto}" clippy 2>&1 | tee /dev/stderr | awk '/error.*: /{exit 1}'
+    cargo $CARGO_TOOLCHAIN --color "${COLOR:-auto}" clippy 2>&1 | tee /dev/stderr | awk '/error.*: /{exit 1}'
 }
 
 function cargo_clippy_strict ## - Test with 'cargo clippy' for warnings and errors
 {
-    cargo --color "${COLOR:-auto}" clippy 2>&1 | tee /dev/stderr | awk '/(warning|error).*: /{exit 1}'
+    cargo $CARGO_TOOLCHAIN --color "${COLOR:-auto}" clippy 2>&1 | tee /dev/stderr | awk '/(warning|error).*: /{exit 1}'
 }
 
-function cargo_doc ## - builds docs, backgrounds, optional.
+function cargo_doc
 {
     export RUSTDOCFLAGS="-D rustdoc::broken_intra_doc_links"
-    run_test cargo --color "${COLOR:-auto}" doc --workspace "$@"
+    run_test cargo $CARGO_TOOLCHAIN --color "${COLOR:-auto}" doc --workspace "$@"
 }
 
-#rule cargo_doc: 'cargo_tool_installed doc --help' -
-
-
-rule cargo_audit: is_rust_project 'cargo_tool_installed? audit' -- cargo --color "${COLOR:-auto}" audit --color never -D warnings --stale --quiet
-rule cargo_audit: is_rust_project '!cargo_tool_installed audit' -- warn "cargo audit is not installed"
-
-
-# only allows cargo options (+toolchain etc) as argument
-function cargo_fmt_check
+function cargo_update
 {
-    cargo "$@" fmt  -- --all -- --check
+    run_test cargo $CARGO_TOOLCHAIN --color "${COLOR:-auto}" update --recursive
 }
 
+function cargo_has_unsafe_code ## - Checks if the source use 'unsafe'
+{
+    # this does only a coarse check, but depends not on external tools
+    if cargo rustc -- --emit=metadata -Funsafe-code &>/dev/null; then
+        debug "no unsafe used"
+        return 1
+    else
+        debug "unsafe used"
+        return 0
+    fi
+}
+
+function cargo_miri
+{
+    run_test cargo +nightly miri test
+}
+
+rule cargo_miri: cargo_has_unsafe_code? 'cargo_toolchain +nightly' -
+
+function cargo_check_msrv
+{
+    run_test --timeout 300 cargo msrv --bisect --ignore-lockfile verify
+}
+
+rule cargo_check_msrv: --conclusive 'is_cargo_tool_installed? msrv' -
+rule cargo_check_msrv: --conclusive '!is_cargo_tool_installed msrv' -- warn "cargo msrv is not installed"
+
+function cargo_mutants
+{
+    cargo mutants --colors "${COLOR:-auto}" -j $(( $( nproc || echo 8 ) / 4 )) -t 300 --baseline skip
+}
+
+rule cargo_mutants: --conclusive 'is_cargo_tool_installed? mutants' cargo_test_units cargo_test_integrations -
+rule cargo_mutants: --conclusive '!is_cargo_tool_installed mutants' -- warn "cargo mutants is not installed"
+
+function cargo_outdated
+{
+    cargo outdated --color "${COLOR:-auto}" --quiet --exit-code 1
+}
+
+rule cargo_outdated: --conclusive 'is_cargo_tool_installed? outdated' -
+rule cargo_outdated: --conclusive '!is_cargo_tool_installed outdated' -- warn "cargo outdated is not installed"
+
+function cargo_audit
+{
+    cargo audit --color "${COLOR:-auto}" -D warnings --stale --quiet
+}
+
+rule cargo_audit: --conclusive 'is_cargo_tool_installed? audit' -
+rule cargo_audit: --conclusive '!is_cargo_tool_installed audit' -- warn "cargo audit is not installed"
+
+function cargo_bench
+{
+    cargo --color "${COLOR:-auto}" bench
+}
