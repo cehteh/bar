@@ -25,6 +25,12 @@ rule doc: lint_docs build_docs
 
 rule bench: build_benches benchmark
 
+rule fmt: -- debug "Running source formatting tools..."
+rule fix: -- debug "Apply trivial fixes..."
+
+## run already depends on 'build' but the actual run action has to be defined by the user in Barf
+rule run: build
+
 ### Second tier targets: this is where other modules should hook in
 
 # audit for security issues before building
