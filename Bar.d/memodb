@@ -303,6 +303,7 @@ function memodb_start_background_processing
     } 1>"$MEMODB_DIR/.bg.stdout" 2>"$MEMODB_DIR/.bg.stderr" &
     lock_send "$MEMODB_DIR/.memodb" $!
     disown $!
+    note "Background processing started!"
 }
 
 function memodb_clean # - cleanup/delete the memodb state
