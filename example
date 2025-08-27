@@ -75,9 +75,12 @@ rule test_background_schedule
 # then this (manually)
 rule test_background_result: 'memodb_result echo "run in background"'
 
-# These two must panic
+# The following must panic
 rule recursive: recursive
 rule --always always_recursive: always_recursive
+rule self_modifying: -- '
+     rule self_modifying: -- DBG "can not add clause to executing rule"
+'
 
 # the ?? prefix is a implied 'rule_exists? <dep>' it can be combined with other operators
 rule test_hooks: !failing_hook??? - echo "failing hook exists failed"

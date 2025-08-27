@@ -4,8 +4,8 @@
 # library for the rule functions
 declare -g   BAR_CHECK_LEVEL=0         ## less alerting for check dependencies
 declare -gAx BAR_RULES                 ## discovered rules as name:"clauseidx.."
-declare -gAx BAR_RULES_RESULT          ## result "name args..":rc
-declare -gA  BAR_RULE_FLAGS=(          ## [r]everse [a]lways [m]eta [d]isjunct [m]meta
+declare -gAx BAR_RULES_RESULT          ## results "name":"hashes .." and "#hash":rc
+declare -gA  BAR_RULE_FLAGS=(          ## [r]everse [a]lways [m]eta [d]isjunct [m]meta [D]isabled
     [CLEANUP]="r"
     [clause_local]="am"
 )
@@ -91,7 +91,7 @@ function rule () ## [[--rule-flag].. <name>:] [--clause-flag].. [[!]dep[?] [arg]
     fi
 
     if [[ -v BAR_RULES_RESULT[$name] ]]; then
-        die "Can not add clause '$name: ${deps[*]}' after rule got evaluated"
+        die "Can not add clause '$name:${deps[*]:+ ${deps[*]}}' after rule got evaluated"
     fi
 
     local ifs="$IFS"
@@ -135,7 +135,7 @@ function rule_delete
     fi
 
     unset "BAR_RULES[$name]"
-    unset "BAR_RULES_RESULT[$name]"
+    unset "BAR_RULE_FLAGS[$name]"
 }
 
 function rule_rename ## <oldname> <newname> - renames a rule
@@ -154,13 +154,15 @@ function rule_rename ## <oldname> <newname> - renames a rule
         return 1
     fi
 
-    if [[ -v BAR_RULES_RESULT[$name] ]]; then
-        error "Can not delete rule '$name' after rule got evaluated"
+    if [[ -v BAR_RULES_RESULT[$oldname] ]]; then
+        error "Can not rename rule '$oldname' after it got evaluated"
         return 1
     fi
 
     BAR_RULES["$newname"]="${BAR_RULES[$oldname]}"
     unset "BAR_RULES[$oldname]"
+    BAR_RULE_FLAGS["$newname"]="${BAR_RULE_FLAGS[$oldname]}"
+    unset "BAR_RULE_FLAGS[$oldname]"
 }
 
 function is_scalar
@@ -217,8 +219,8 @@ function rule_eval ## <name> [args..]
     local RULE_ARGS=("$@")
     rule_exists "$RULE_NAME" || rule_autoload "$RULE_NAME"
 
-    [[ -v BAR_RULES_RESULT["$rule_id"] ]] && {
-        rc="${BAR_RULES_RESULT[$rule_id]}"
+    [[ -v BAR_RULES_RESULT["#$rule_id"] ]] && {
+        rc="${BAR_RULES_RESULT[#$rule_id]}"
         if [[ "$rc" == pending ]]; then
             die "recursive rule $RULE_NAME"
         else
@@ -227,8 +229,9 @@ function rule_eval ## <name> [args..]
     }
 
     local evaluate_always=
+    BAR_RULES_RESULT["#$rule_id"]="pending"
+    BAR_RULES_RESULT["$RULE_NAME"]+="$rule_id "
     [[ "${BAR_RULE_FLAGS[$RULE_NAME]}" == *a* ]] && evaluate_always=true
-    BAR_RULES_RESULT["$rule_id"]="pending"
 
     local clauses="${BAR_RULES[$RULE_NAME]}"
 
@@ -318,9 +321,9 @@ function rule_eval ## <name> [args..]
                     failure "$RULE_NAME: $dep"
                     [[ -n "$check" ]] && BAR_CHECK_LEVEL=$((BAR_CHECK_LEVEL-1))
                     if [[ -n "$evaluate_always" ]]; then
-                        unset "BAR_RULES_RESULT[$rule_id]"
+                        unset "BAR_RULES_RESULT[#$rule_id]"
                     else
-                        BAR_RULES_RESULT["$rule_id"]="$dep_rc"
+                        BAR_RULES_RESULT["#$rule_id"]="$dep_rc"
                     fi
                     [[ "${BAR_RULE_FLAGS[$RULE_NAME]}" != *m* ]] && clause_local_restore
                     return "$dep_rc"
@@ -340,9 +343,9 @@ function rule_eval ## <name> [args..]
             else
                 if [[ "$rc" != 0 || "${BAR_CLAUSE_FLAGS[$clause]}" = *c* ]]; then
                     if [[ -n "$evaluate_always" ]]; then
-                        unset "BAR_RULES_RESULT[$rule_id]"
+                        unset "BAR_RULES_RESULT[#$rule_id]"
                     else
-                        BAR_RULES_RESULT["$rule_id"]="$rc"
+                        BAR_RULES_RESULT["#$rule_id"]="$rc"
                     fi
                     [[ "${BAR_RULE_FLAGS[$RULE_NAME]}" != *m* ]] && clause_local_restore
                     return "$rc"
@@ -353,9 +356,9 @@ function rule_eval ## <name> [args..]
     done
 
     if [[ -n "$evaluate_always" ]]; then
-        unset "BAR_RULES_RESULT[$rule_id]"
+        unset "BAR_RULES_RESULT[#$rule_id]"
     else
-        BAR_RULES_RESULT["$rule_id"]="$rc"
+        BAR_RULES_RESULT["#$rule_id"]="$rc"
     fi
     return "$rc"
 }
