@@ -87,6 +87,7 @@ function tty_echo # echos only when the output is a tty
     IFS=';' read -srdR -p $'\033[6n' _ col || true
     col="${col%R}"
     [[ "$col" != 1 ]] && echo
+    return 0
 }
 
 # we now have:
