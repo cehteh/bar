@@ -32,6 +32,9 @@ function rule () ## [[--rule-flag].. <name>:] [--clause-flag].. [[!]dep[?] [arg]
         --meta)
             ruleflags+="m"
             ;;
+        --disable)
+            ruleflags+="D"
+            ;;
         *)
             break;;
         esac
@@ -214,6 +217,11 @@ function rule_eval ## <name> [args..]
     local rule_id="$(hash_args "$PWD $*")"
     local RULE_NAME="$1"
     shift
+
+    [[ "${BAR_RULE_FLAGS[$RULE_NAME]:-}" == *D* ]] && {
+        debug "skipping disabled rule $RULE_NAME"
+        return 0
+    }
 
     # shellcheck disable=2034
     local RULE_ARGS=("$@")

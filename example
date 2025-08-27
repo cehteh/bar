@@ -152,3 +152,9 @@ rule test_ttylib: 'clause_local BAR_VERBOSITY_LEVEL BAR_CHECK_LEVEL' -- '
      success check_success
      failure check_failure
 '
+
+# rules can be permanently disabled
+rule disabled_rule: -- die "must not happen"
+rule --disable disabled_rule:
+
+rule disabled_rule
