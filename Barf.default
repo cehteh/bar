@@ -25,6 +25,9 @@ rule fastchk: --conclusive is_git_wip_branch? lint_sources
 rule fastchk: --conclusive is_git_experimental_branch? lint_sources
 rule fastchk: lints tests doc
 
+# automatically format fix code as much as possible and do a check
+rule dwim: fmt fix fastchk
+
 # rules using this should be responsible to do only work that is necessary.
 rule PREPROCESS: fetch_resources build_assets
 
