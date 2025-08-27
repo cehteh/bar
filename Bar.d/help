@@ -8,9 +8,10 @@ function help
 
 ABOUT
 
-  Bar allows to define rules that dependently and conditionally evaluate shell statements.
-  This is similar to other tools such as 'make' or 'just' but adds some opinionated
-  differences. There is support for using bar as driver for githooks for automating workflows.
+  Bar is a command runner that decides the order and which commands to run by rules. It to
+  define rules that dependently and conditionally evaluate shell statements.  This is similar
+  to other tools such as 'make' or 'just' but adds some opinionated differences. There is
+  support for using bar as driver for githooks for automating workflows.
 
   The notable differences to other similar tools are:
 
