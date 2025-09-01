@@ -63,7 +63,7 @@ function cargo_cache_artifacts
     fi
 }
 
-rule cargo_lint: cargo_fmt_check cargo_check cargo_clippy_strict
+rule cargo_lint: cargo_check cargo_clippy_strict cargo_fmt_check
 
 function cargo_toolchain
 {

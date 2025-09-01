@@ -10,4 +10,7 @@ function search_for
 
 rule search_for: 'is_command_installed less' 'is_command_installed rg' -
 
-
+rule search_issues: -- search_for -B1 -A2 '" (FIXME|TODO|PLANNED): "'
+rule search_fixmes: -- search_for " FIXME: "
+rule search_todos: -- search_for " TODO: "
+rule search_planned: -- search_for " PLANNED: "

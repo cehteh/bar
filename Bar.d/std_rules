@@ -27,8 +27,8 @@ rule bench: build_benches benchmark
 
 ## code actions, should be non breaking changes
 rule fmt: -- debug "Running source formatting tools..."
-rule update: -- debug "Updating dependencies..."
 rule fix: -- debug "Apply trivial fixes..."
+rule update: -- debug "Updating dependencies..."
 
 ## run already depends on 'build' but the actual run action has to be defined by the user in Barf
 rule run: build
