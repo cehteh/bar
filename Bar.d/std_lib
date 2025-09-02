@@ -2,12 +2,14 @@
 
 require --opt tty_lib
 
-# library of general functions
+## Library of general functions which are always present
 
 # TODO: add [-s|--state "extrastate"]
 
 function memo ## [-c|-d] [cmd args..].. - memoize the result/stdout/stderr of commands, will always return the same result again
 {
+    ## Memoizes for the current run only. See memodb for persistent memoization.
+    ## Can not handle null bytes in stdout/stderr, use memodb when that is required.
     if [[ $1 == "-c" ]]; then
         unset MEMO_RC MEMO_STDOUT MEMO_STDERR
         shift
@@ -38,7 +40,6 @@ function memo ## [-c|-d] [cmd args..].. - memoize the result/stdout/stderr of co
         local rc=0
         eval "$*" > >(tee "/tmp/$key.stdout") 2> >(tee "/tmp/$key.stderr" 1>&2) || rc=$?
         MEMO_RC["$key"]=$rc
-        # we can not store null bytes in variables, use memodb when that is required
         MEMO_STDOUT["$key"]=$(<"/tmp/$key.stdout")
         MEMO_STDERR["$key"]=$(<"/tmp/$key.stderr")
         rm "/tmp/$key.stdout" "/tmp/$key.stderr"
@@ -48,6 +49,8 @@ function memo ## [-c|-d] [cmd args..].. - memoize the result/stdout/stderr of co
 
 function memofn ## <functionnames..> - rewrites a function into a function that uses 'memo'
 {
+    ## This renames the given functions to 'nomemo_<functionname>' and creates a wrapper
+    ## function with the original name that memoizes the result.
     for fn in "$@"; do
         # rename the original function as nomemo_*
         eval "nomemo_$(declare -f "$fn")"
@@ -56,8 +59,9 @@ function memofn ## <functionnames..> - rewrites a function into a function that 
     done
 }
 
-function called_as
+function called_as ## [pattern..] - Checks whenever bar is called as a symlink matching the given patterns.
 {
+    ## This is usable as a rule dependency.
     local pat
     for pat in "$@"; do
         # shellcheck disable=2053
@@ -66,8 +70,7 @@ function called_as
     return 1
 }
 
-# elusive progress notice
-function progress ## [message..] -
+function progress # [message..] - elusive progress notice, will be overwritten by the next output.
 {
     [[ "${TERM:-dumb}" = "dumb" ]] && return 0
     if (( BAR_CHECK_LEVEL > 0 )); then
@@ -83,7 +86,7 @@ function progress ## [message..] -
     fi >&2
 }
 
-function success ## [message..] -
+function success # [message..] - Message for success.
 {
     if (( BAR_CHECK_LEVEL > 0 )); then
         (( "${BAR_VERBOSITY_LEVEL:-5}" > 2 )) && {
@@ -98,7 +101,7 @@ function success ## [message..] -
     fi >&2
 }
 
-function failure ## [message..] -
+function failure # [message..] - Message for failure.
 {
     if (( BAR_CHECK_LEVEL > 0 )); then
         (( "${BAR_VERBOSITY_LEVEL:-5}" > 2 )) && {
@@ -113,7 +116,7 @@ function failure ## [message..] -
     fi >&2
 }
 
-function uncond_call ## <rc> [message..] -
+function uncond_call # <rc> [message..] - Message for unconditional dependency calls
 {
     declare -i rc="$1"
     shift
@@ -127,7 +130,7 @@ function uncond_call ## <rc> [message..] -
     fi >&2
 }
 
-function rule_autoload ## <name>
+function rule_autoload # <name> - module autoloader
 {
     trace "$*"
     local modname="${1#always_}"
@@ -144,8 +147,7 @@ function rule_autoload ## <name>
     rule_exists "$1" || die "no rule, command or function '$1' defined"
 }
 
-# checks whenever a shell command is in PATH
-function is_command_installed
+function is_command_installed ## <command> - Checks whenever a function exists or a shell command is in PATH.
 {
     if command -v "$1" >/dev/null; then
         return 0
@@ -156,12 +158,12 @@ function is_command_installed
 }
 memofn is_command_installed
 
-function bar_now() ## - returns the current timestamp in microseconds since epoch
+function bar_now ## Returns the current timestamp in microseconds since epoch.
 {
     echo "${EPOCHREALTIME//[^0-9]/}"
 }
 
-function hash_args # - returns the sha1hash of all supplied args
+function hash_args ## <arguments..> - returns the sha1hash of all supplied arguments
 {
     # shellcheck disable=SC2155
     local hash="$(sha1sum <<<"$*")"

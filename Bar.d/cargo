@@ -1,12 +1,16 @@
 #!/bash
 # shellcheck disable=2016,2086
 
+### Rust/cargo support.
+
 require run
 
-export CARGO_TOOLCHAIN="${CARGO_TOOLCHAIN:-}"
+declare -xg CARGO_TOOLCHAIN="${CARGO_TOOLCHAIN:-}" ## The rust toolchain that is used for most operations.
 
 function is_cargo_tool_installed ## [+toolchain] <tool> [args..] - Checks if 'cargo <tool>' is installed
 {
+    ## When [args..] is not present then '--version' is used. Tools that do not handle
+    ## '--version' need 'args..' to give some sensible result.
     declare -a toolpart
     # may be prefixed with a '+toolchain'
     if [[ "${1:0:1}" = "+" ]]; then
@@ -63,6 +67,7 @@ function cargo_cache_artifacts
     fi
 }
 
+## Runs all linters
 rule cargo_lint: cargo_check cargo_clippy_strict cargo_fmt_check
 
 function cargo_toolchain
@@ -71,6 +76,7 @@ function cargo_toolchain
     clause_local "CARGO_TOOLCHAIN='$1'"
 }
 
+## <+toolchain> - Clause local change of the toochain used by cargo.
 rule --meta cargo_toolchain:
 
 function cargo_fmt_check
@@ -79,19 +85,25 @@ function cargo_fmt_check
     run_test cargo $CARGO_TOOLCHAIN fmt --all --check
 }
 
+## Checks whenever the source code is well formatted.
+## If available the '+nightly' toolchain is used.
 rule cargo_fmt_check: --conclusive 'cargo_toolchain? +nightly' -
 rule cargo_fmt_check: --conclusive -
 
+## Builds unit tests.
 rule cargo_build_unit_tests: \
      'cargo_test --lib --no-run --quiet' \
      'cargo_test --bins --no-run --quiet'
+## Runs unit tests.
 rule cargo_test_units: cargo_build_unit_tests \
      'cargo_test --lib --quiet' \
      'cargo_test --bins --quiet'
 
+## Build integration tests
 rule cargo_build_integration_tests: \
      'cargo_test --tests --no-run --quiet'
 
+## Run integration tests. This includes the doctests.
 rule cargo_test_integrations: cargo_build_integration_tests \
      'cargo_test --tests --quiet' \
      'cargo_test --doc --quiet'
@@ -102,11 +114,14 @@ function cargo_fmt
     run_test cargo $CARGO_TOOLCHAIN fmt --all
 }
 
+## Run 'cargo fmt'. When available the '+nightly' toolchain is used.
+## Note that this will modify the source in place.
 rule cargo_fmt: --conclusive 'cargo_toolchain? +nightly' -
 rule cargo_fmt: --conclusive -
 
-function cargo_fix
+function cargo_fix ## Run 'cargo fix'.
 {
+    ## Note that this will modify the source in place.
     # shellcheck disable=2153
     run_test cargo $CARGO_TOOLCHAIN fix --all --allow-dirty
 }
@@ -121,17 +136,17 @@ function cargo_test
     run_test cargo $CARGO_TOOLCHAIN --color "${COLOR:-auto}" test --workspace "$@"
 }
 
-function cargo_check
+function cargo_check ## Run 'cargo check'. Testing whenever the source can be compiled.
 {
     run_test cargo $CARGO_TOOLCHAIN --color "${COLOR:-auto}" check --workspace
 }
 
-function cargo_clippy_errors ## - Tests with 'cargo clippy' for errors only
+function cargo_clippy_errors ## Tests with 'cargo clippy' for errors only
 {
     cargo $CARGO_TOOLCHAIN --color "${COLOR:-auto}" clippy 2>&1 | tee /dev/stderr | awk '/error.*: /{exit 1}'
 }
 
-function cargo_clippy_strict ## - Test with 'cargo clippy' for warnings and errors
+function cargo_clippy_strict ## Test with 'cargo clippy' for warnings and errors
 {
     cargo $CARGO_TOOLCHAIN --color "${COLOR:-auto}" clippy 2>&1 | tee /dev/stderr | awk '/(warning|error).*: /{exit 1}'
 }
@@ -142,14 +157,14 @@ function cargo_doc
     run_test cargo $CARGO_TOOLCHAIN --color "${COLOR:-auto}" doc --workspace "$@"
 }
 
-function cargo_update
+function cargo_update ## Run 'cargo update'
 {
     run_test cargo $CARGO_TOOLCHAIN --color "${COLOR:-auto}" update --recursive
 }
 
-function cargo_has_unsafe_code ## - Checks if the source use 'unsafe'
+function cargo_has_unsafe_code ## Checks if the source use 'unsafe' code.
 {
-    # this does only a coarse check, but depends not on external tools
+    ## This does only a coarse '-Funsafe-code' check, but does not depend on external tools.
     if cargo rustc -- --emit=metadata -Funsafe-code &>/dev/null; then
         debug "no unsafe used"
         return 1
@@ -164,6 +179,8 @@ function cargo_miri
     run_test cargo +nightly miri test
 }
 
+## When there is unsafe code then run a test under miri supervision.
+## Requires the '+nightly' toolchain.
 rule cargo_miri: cargo_has_unsafe_code? 'cargo_toolchain +nightly' -
 
 function cargo_check_msrv
@@ -171,6 +188,8 @@ function cargo_check_msrv
     run_test --timeout 300 cargo msrv --bisect --ignore-lockfile verify
 }
 
+## Checks whenever the 'rust_version' in the manifest is sufficient.
+## This check only happens when 'cargo-msrv' is installed, otherwise a warning is printed.
 rule cargo_check_msrv: --conclusive 'is_cargo_tool_installed? msrv' -
 rule cargo_check_msrv: --conclusive '!is_cargo_tool_installed msrv' -- warn "cargo msrv is not installed"
 
@@ -179,6 +198,8 @@ function cargo_mutants
     cargo mutants --colors "${COLOR:-auto}" -j $(( $( nproc || echo 8 ) / 4 )) -t 300 --baseline skip
 }
 
+## Run 'cargo mutants' when it is available.
+## When 'cargo-mutants' is not installed a warning is printed.
 rule cargo_mutants: --conclusive 'is_cargo_tool_installed? mutants' cargo_test_units cargo_test_integrations -
 rule cargo_mutants: --conclusive '!is_cargo_tool_installed mutants' -- warn "cargo mutants is not installed"
 
@@ -187,6 +208,8 @@ function cargo_outdated
     cargo outdated --color "${COLOR:-auto}" --quiet --exit-code 1
 }
 
+## Run 'cargo outedated' when it is available.
+## When 'cargo-outdated' is not installed a warning is printed.
 rule cargo_outdated: --conclusive 'is_cargo_tool_installed? outdated' -
 rule cargo_outdated: --conclusive '!is_cargo_tool_installed outdated' -- warn "cargo outdated is not installed"
 
@@ -195,10 +218,12 @@ function cargo_audit
     cargo audit --color "${COLOR:-auto}" -D warnings --stale --quiet
 }
 
+## Run 'cargo audit' when it is available.
+## When 'cargo-audit' is not installed a warning is printed.
 rule cargo_audit: --conclusive 'is_cargo_tool_installed? audit' -
 rule cargo_audit: --conclusive '!is_cargo_tool_installed audit' -- warn "cargo audit is not installed"
 
-function cargo_bench
+function cargo_bench ## Run 'cargo bench'
 {
     cargo --color "${COLOR:-auto}" bench
 }

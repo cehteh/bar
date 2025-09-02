@@ -1,8 +1,31 @@
-#!/bash
+#!/bin/bash
+
+### Provides help, extracts documentation from modules
+###
+### Inline documentation uses two or three hash characters. Three '###' is used for file level
+### documentation to describe a file entirely. Two '##' are used in different contexts:
+###
+### Variable definitions that use the 'declare' keyword can use '##' at the end of the same
+### line to document the variable.
+###
+### Functions can be documented in the form 'function name ## arguments - description'.
+### Any lines following that start with optional white spaces followed by '##' and then
+### documentation text will append to the functions documentation.
+###
+### Rules are documented by lines starting with '##' followed by documentation text,
+### eventually followed by a rule/clause definition.
+###
+### Only variables, functions and rules that have doc comments are included in the output.
 
 function help
 {
-    less -R <<EOF
+    if is_command_installed less; then
+        less -R
+    elif is_command_installed more; then
+        more
+    else
+        cat
+    fi <<EOF
 
   bar -- BAshRulez the bash rule evaluator
 
@@ -91,6 +114,63 @@ INVOCATION AND SEMANTICS
 
   When called by a symlink then the standard rulefile (as above) is loaded and instead 'MAIN'
   a rule with the same name as the symlink is called with all arguments passed.
+
+
+INITIAL INSTALLATION
+
+  Bar can be invoked in different ways:
+
+  1. Installed in \$PATH:
+     To make this work it is best to clone bar locally and symlink the checked out files
+     to your '.local/' tree. This allows easy upgrades via git:
+
+     When you have radicle (https://radicle.xyz/) installed you can clone it with:
+
+       rad clone rad:z3WhBdHt1VVNyeQ61zpY66pNzuSrP
+
+     Otherwise it can be cloned by git with:
+
+       git clone https://seed.pipapo.org/z3WhBdHt1VVNyeQ61zpY66pNzuSrP.git bar
+
+     Then you can install it in your ~/.local tree with:
+
+       cd bar
+       ./bar init_install ~/.local/
+
+     This creates symlinks to 'bar', 'please', 'Bar.d', 'Barf.default', 'Please.default' in ~/.local
+     and symlinks 'Bar.d/*' to '~/.config/please/'.
+
+     Now 'bar' is installed, check it with 'bar help'
+
+  2. The local './.bar' initialized from above:
+     Since bar is a bash script its easy to version and ship it with other software.
+     To initialize it in a current directory use either of:
+
+       bar init          # creates bar, Barf, Bar.d/
+       bar init --hidden # creates .bar, .Barf, .Bar.d/
+
+     After that Barf can be customized, unnecessary modules in Bar.d/ may be deleted.
+     Once that is done these files should be put under version control.
+
+     When the installed bar from 1. becomes updated then a local version can be updated by:
+
+       bar init --update
+
+     This only updates 'bar' and any existing modules in 'Bar.d/' but will not touch the
+     'Barf' file since that is meant for local customszation.
+
+       bar init_update_merge_barf
+
+     Will do a merge of the installed 'Barf' file with the local one. This *will* leave 3-way
+     conflict markers behind when there are changes. These must be manually resolved!
+
+     The updated files should then be committed to version control.
+
+  3. githooks symlinked from './.git/hooks/*' -> '../../bar'
+     'bar' has support to be used as githooks. This needs manual enabling. Individual hooks can be
+     enabled or disabled with 'bar githook_enable <hook>' and 'bar githook_disable <hook>'.
+     For exiting projects using 'bar' a maintainer can setup rules to activate all necessary hooks.
+     This then can be activated by './bar activate'.
 
 
 GIT HOOK ACTIVATION
@@ -305,7 +385,7 @@ MODULES
   a underscore in their name are loaded at startup. Modules with alphabetic names without
   underscores are lazy loaded on demand.
 
-  The first variant for modules that are iniitially loaded is used for modules that define
+  The first variant for modules that are initially loaded is used for modules that define
   helper functions that don't have associated rules or rules that are primarly used for
   checking conditions before delegating to the actual rules which do the work.
 
@@ -320,6 +400,11 @@ MODULES
   The module loader derives the module name from the rule name by removing any prefixes and
   suffixes. Thus the rules which shall trigger loading must follow the naming schema with the
   module name after the prefixes in the rule name.
+
+  Per convention 'name_rules' is a module that contains the rules (and few functions) that
+  that add clauses to other rules to make 'name' accessible. 'name_lib' contains support
+  functions other modules may use (with 'require name_lib') and 'name' are the autoloaded
+  functions and rules that implement the actual functionality of 'name'.
 
 
 AUTOMATIC MODULE LOADING
@@ -352,61 +437,14 @@ STANDARD RULES
   variable to a value. It can be used in a function as well esp when creating other metarules.
 
 
-INITIAL INSTALLATION
+MAIN API
 
-  Bar can be invoked in different ways:
+$(help_describe_files "$BAR_SELF")
 
-  1. Installed in \$PATH:
-     To make this work it is best to clone bar locally and symlink the checked out files
-     to your '.local/' tree. This allows easy upgrades via git:
 
-     When you have radicle (https://radicle.xyz/) installed you can clone it with:
+MODULE API/RULES
 
-       rad clone rad:z3WhBdHt1VVNyeQ61zpY66pNzuSrP
-
-     Otherwise it can be cloned by git with:
-
-       git clone https://seed.pipapo.org/z3WhBdHt1VVNyeQ61zpY66pNzuSrP.git bar
-
-     Then you can install it in your ~/.local tree with:
-
-       cd bar
-       ./bar init_install ~/.local/
-
-     This creates symlinks to 'bar', 'please', 'Bar.d', 'Barf.default', 'Please.default' in ~/.local
-     and symlinks 'Bar.d/*' to '~/.config/please/'.
-
-     Now 'bar' is installed, check it with 'bar help'
-
-  2. The local './.bar' initialized from above:
-     Since bar is a bash script its easy to version and ship it with other software.
-     To initialize it in a current directory use either of:
-
-       bar init          # creates bar, Barf, Bar.d/
-       bar init --hidden # creates .bar, .Barf, .Bar.d/
-
-     After that Barf can be customized, unnecessary modules in Bar.d/ may be deleted.
-     Once that is done these files should be put under version control.
-
-     When the installed bar from 1. becomes updated then a local version can be updated by:
-
-       bar init --update
-
-     This only updates 'bar' and any existing modules in 'Bar.d/' but will not touch the
-     'Barf' file since that is meant for local customszation.
-
-       bar init_update_merge_barf
-
-     Will do a merge of the installed 'Barf' file with the local one. This *will* leave 3-way
-     conflict markers behind when there are changes. These must be manually resolved!
-
-     The updated files should then be committed to version control.
-
-  3. githooks symlinked from './.git/hooks/*' -> '../../bar'
-     'bar' has support to be used as githooks. This needs manual enabling. Individual hooks can be
-     enabled or disabled with 'bar githook_enable <hook>' and 'bar githook_disable <hook>'.
-     For exiting projects using 'bar' a maintainer can setup rules to activate all necessary hooks.
-     This then can be activated by './bar activate'.
+$(help_describe_files "$BAR_DIR"/* )
 
 
 LICENSE
@@ -427,4 +465,147 @@ LICENSE
     You should have received a copy of the GNU Affero General Public License
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 EOF
+}
+
+
+function help_describe_files
+{
+    local file
+    for file in "$@"; do
+        if help_describe_file "$file"; then
+            help_describe_variables "$file"
+            help_describe_functions "$file"
+            help_describe_rules "$file"
+        else
+            warn "$file has no top level doc"
+        fi
+    done
+}
+
+
+function help_describe_file
+{
+    awk '
+    function printout(text) {
+             out = out text "\n"
+    }
+
+    /^###/{
+        if (match($0, /^###( )?(.*)/, m)) {
+           printout( indent m[2])
+           indent="    "
+        }
+        next
+    }
+
+    END{
+        name = FILENAME
+        gsub(/^.*\//, "", name)
+        if (out != "") {
+           print "  " name " - " out
+        } else {
+           exit 1
+        }
+    }
+    ' "$1"
+}
+
+function help_describe_functions
+{
+    awk '
+    function printout(text) {
+             out = out text "\n"
+    }
+
+    /^function[ \t]+[A-Za-z_][A-Za-z0-9_]*[ \t]*##/ {
+      if (match($0, /^function[ \t]+([A-Za-z_][A-Za-z0-9_]*)[ \t]*## (((.*) )?- )?(.*)$/, m)) {
+        printout()
+        printout("      " m[1] " " m[4])
+        printout("        " m[5])
+        next
+      }
+    }
+
+    /^[ \t]+##.*/ {
+      sub(/^.*##[ ]?/, "")
+      printout("        " $0)
+      next
+    }
+
+    END{
+        if (out != "") {
+           print "    Functions:"
+           print out
+        }
+    }
+    ' "$1"
+}
+
+function help_describe_rules
+{
+    awk '
+
+    function printout(text) {
+             out = out text "\n"
+    }
+
+    /^rule([ \t]+[A-Za-z_-][A-Za-z0-9_-]*)+:/ {
+      if (descr != "" ) {
+         if (match($0, /^rule([ \t](--[a-z_-]*)?)+([A-Za-z_][A-Za-z0-9_]*:)/, m)) {
+            printout("      " m[3])
+            printout(descr)
+            descr=""
+         }
+      }
+      next
+    }
+
+    /^##/ {
+      sub(/^##[ ]?/, "")
+      descr = descr "        " $0 "\n"
+      next
+    }
+
+    {
+      descr = ""
+      next
+    }
+
+    END{
+        if (out != "") {
+           print "    Rules:"
+           print ""
+           print out
+        }
+    }
+    ' "$1"
+}
+
+
+
+function help_describe_variables
+{
+    awk '
+    function printout(text) {
+             out = out text "\n"
+    }
+
+    /declare[ \t]+.*##/ {
+      if (match($0, /declare[ \t]+(-([a-zA-Z]+))? ([A-Za-z_][A-Za-z0-9_]*)="(.*)"[ \t]*## (.*)$/, m)) {
+        printout("")
+        printout("      " m[3] " (" m[2] ")")
+        printout("        " m[5])
+        printout("        Default: " m[4])
+        next
+      }
+    }
+
+    END{
+        if (out != "") {
+           #print ""
+           print "    Variables:"
+           print out
+        }
+    }
+    ' "$1"
 }

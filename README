@@ -88,6 +88,63 @@ INVOCATION AND SEMANTICS
   a rule with the same name as the symlink is called with all arguments passed.
 
 
+INITIAL INSTALLATION
+
+  Bar can be invoked in different ways:
+
+  1. Installed in $PATH:
+     To make this work it is best to clone bar locally and symlink the checked out files
+     to your '.local/' tree. This allows easy upgrades via git:
+
+     When you have radicle (https://radicle.xyz/) installed you can clone it with:
+
+       rad clone rad:z3WhBdHt1VVNyeQ61zpY66pNzuSrP
+
+     Otherwise it can be cloned by git with:
+
+       git clone https://seed.pipapo.org/z3WhBdHt1VVNyeQ61zpY66pNzuSrP.git bar
+
+     Then you can install it in your ~/.local tree with:
+
+       cd bar
+       ./bar init_install ~/.local/
+
+     This creates symlinks to 'bar', 'please', 'Bar.d', 'Barf.default', 'Please.default' in ~/.local
+     and symlinks 'Bar.d/*' to '~/.config/please/'.
+
+     Now 'bar' is installed, check it with 'bar help'
+
+  2. The local './.bar' initialized from above:
+     Since bar is a bash script its easy to version and ship it with other software.
+     To initialize it in a current directory use either of:
+
+       bar init          # creates bar, Barf, Bar.d/
+       bar init --hidden # creates .bar, .Barf, .Bar.d/
+
+     After that Barf can be customized, unnecessary modules in Bar.d/ may be deleted.
+     Once that is done these files should be put under version control.
+
+     When the installed bar from 1. becomes updated then a local version can be updated by:
+
+       bar init --update
+
+     This only updates 'bar' and any existing modules in 'Bar.d/' but will not touch the
+     'Barf' file since that is meant for local customszation.
+
+       bar init_update_merge_barf
+
+     Will do a merge of the installed 'Barf' file with the local one. This *will* leave 3-way
+     conflict markers behind when there are changes. These must be manually resolved!
+
+     The updated files should then be committed to version control.
+
+  3. githooks symlinked from './.git/hooks/*' -> '../../bar'
+     'bar' has support to be used as githooks. This needs manual enabling. Individual hooks can be
+     enabled or disabled with 'bar githook_enable <hook>' and 'bar githook_disable <hook>'.
+     For exiting projects using 'bar' a maintainer can setup rules to activate all necessary hooks.
+     This then can be activated by './bar activate'.
+
+
 GIT HOOK ACTIVATION
 
   Bar will be inert in a project that ships with bar initialized. One can call it manually by
@@ -300,7 +357,7 @@ MODULES
   a underscore in their name are loaded at startup. Modules with alphabetic names without
   underscores are lazy loaded on demand.
 
-  The first variant for modules that are iniitially loaded is used for modules that define
+  The first variant for modules that are initially loaded is used for modules that define
   helper functions that don't have associated rules or rules that are primarly used for
   checking conditions before delegating to the actual rules which do the work.
 
@@ -315,6 +372,11 @@ MODULES
   The module loader derives the module name from the rule name by removing any prefixes and
   suffixes. Thus the rules which shall trigger loading must follow the naming schema with the
   module name after the prefixes in the rule name.
+
+  Per convention 'name_rules' is a module that contains the rules (and few functions) that
+  that add clauses to other rules to make 'name' accessible. 'name_lib' contains support
+  functions other modules may use (with 'require name_lib') and 'name' are the autoloaded
+  functions and rules that implement the actual functionality of 'name'.
 
 
 AUTOMATIC MODULE LOADING
@@ -347,61 +409,349 @@ STANDARD RULES
   variable to a value. It can be used in a function as well esp when creating other metarules.
 
 
-INITIAL INSTALLATION
+MAIN API
 
-  Bar can be invoked in different ways:
+  bar - The main BAsh Rulez script
+    
+    Provides only basic functionality for module loading and debugging and starting rule
+    evaluation. Loads the 'std_lib' and 'rule_lib' to make them omnipresent.
 
-  1. Installed in $PATH:
-     To make this work it is best to clone bar locally and symlink the checked out files
-     to your '.local/' tree. This allows easy upgrades via git:
+    Variables:
 
-     When you have radicle (https://radicle.xyz/) installed you can clone it with:
+      BAR_SELF (grx)
+        Path to bar itself.
+        Default: $(realpath "$BASH_ARGV0")
 
-       rad clone rad:z3WhBdHt1VVNyeQ61zpY66pNzuSrP
+      BAR_CALLED_AS (grx)
+        Name of bar when called by symlink.
+        Default: ${BASH_ARGV0##*/}
 
-     Otherwise it can be cloned by git with:
+      BAR_PWD (gxr)
+        Initial working directory.
+        Default: $PWD
 
-       git clone https://seed.pipapo.org/z3WhBdHt1VVNyeQ61zpY66pNzuSrP.git bar
+      BAR_VERBOSITY_LEVEL (gxi)
+        Verbosity level from 0 (silent) to 6 (trace).
+        Default: ${BAR_VERBOSITY_LEVEL:-2}
 
-     Then you can install it in your ~/.local tree with:
+      BAR_TIMESTAMP (grix)
+        Timestamp in microseconds since epoch of this invocation
+        Default: $(bar_now)
 
-       cd bar
-       ./bar init_install ~/.local/
+    Functions:
 
-     This creates symlinks to 'bar', 'please', 'Bar.d', 'Barf.default', 'Please.default' in ~/.local
-     and symlinks 'Bar.d/*' to '~/.config/please/'.
+      bar_main [rulefile] [rule [arguments..]]
+        Loads a rulefile and executes rule with optional arguments
+        [rulefile]           - File to load the user rules from.
+                               Default: Barf|barf|.Barf|.barf when called as bar or symlink.
+                                        Pleasef|pleasef|.Pleasef|.pleasef|\$HOME/.Pleasef when called as please.
+        [rule [arguments..]] - Target rule with arguments.
+                               Default: MAIN
 
-     Now 'bar' is installed, check it with 'bar help'
+      require [--opt] [modules..]
+        Loads modules.
+        [--opt]     - Make the modules optional, when they do not exist then no warning is emitted
+                      and no failure returned.
+        [modules..] - List of module names to be loaded. Modules are loaded only once, further
+                      attempts to load it will be a no-op.
 
-  2. The local './.bar' initialized from above:
-     Since bar is a bash script its easy to version and ship it with other software.
-     To initialize it in a current directory use either of:
+      DBG [message..]
+        For print-style debugging, should not be present in production code.
 
-       bar init          # creates bar, Barf, Bar.d/
-       bar init --hidden # creates .bar, .Barf, .Bar.d/
+      die [message..]
+        Prints 'message' to stderr and exits with failure
+        Unexpected fatal problem. Will terminate execution, CLEANUP rules will be called.
 
-     After that Barf can be customized, unnecessary modules in Bar.d/ may be deleted.
-     Once that is done these files should be put under version control.
+      error [message..]
+        Print a error message to stderr.
+        Unexpected but not fatal.
 
-     When the installed bar from 1. becomes updated then a local version can be updated by:
+      warn [message..]
+        Print an warning to stderr.
+        Expected, non fatal problem.
 
-       bar init --update
+      note [message..]
+        Print an important notice to stderr.
+        Important message the user should be notified about.
 
-     This only updates 'bar' and any existing modules in 'Bar.d/' but will not touch the
-     'Barf' file since that is meant for local customszation.
+      info [message..]
+        Print an informal message to stderr.
+        Broader message about non rule related progress.
 
-       bar init_update_merge_barf
+      debug [message..]
+        Print a debug message to stderr.
+        Finer grained progress messages.
 
-     Will do a merge of the installed 'Barf' file with the local one. This *will* leave 3-way
-     conflict markers behind when there are changes. These must be manually resolved!
+      trace [message]
+        Prints a trace message to stderr.
+        Very verbose function call or finer messages.
 
-     The updated files should then be committed to version control.
 
-  3. githooks symlinked from './.git/hooks/*' -> '../../bar'
-     'bar' has support to be used as githooks. This needs manual enabling. Individual hooks can be
-     enabled or disabled with 'bar githook_enable <hook>' and 'bar githook_disable <hook>'.
-     For exiting projects using 'bar' a maintainer can setup rules to activate all necessary hooks.
-     This then can be activated by './bar activate'.
+MODULE API/RULES
+
+  cargo - Rust/cargo support.
+
+    Variables:
+
+      CARGO_TOOLCHAIN (xg)
+        The rust toolchain that is used for most operations.
+        Default: ${CARGO_TOOLCHAIN:-}
+
+    Functions:
+
+      is_cargo_tool_installed [+toolchain] <tool> [args..]
+        Checks if 'cargo <tool>' is installed
+        When [args..] is not present then '--version' is used. Tools that do not handle
+        '--version' need 'args..' to give some sensible result.
+
+      is_cargo_toolchain_available [+toolchain]
+        Check if a toolchain is available
+
+      cargo_fix 
+        Run 'cargo fix'.
+        Note that this will modify the source in place.
+
+      cargo_check 
+        Run 'cargo check'. Testing whenever the source can be compiled.
+
+      cargo_clippy_errors 
+        Tests with 'cargo clippy' for errors only
+
+      cargo_clippy_strict 
+        Test with 'cargo clippy' for warnings and errors
+
+      cargo_update 
+        Run 'cargo update'
+
+      cargo_has_unsafe_code 
+        Checks if the source use 'unsafe' code.
+        This does only a coarse '-Funsafe-code' check, but does not depend on external tools.
+
+      cargo_bench 
+        Run 'cargo bench'
+
+    Rules:
+
+      cargo_lint:
+        Runs all linters
+
+      cargo_toolchain:
+        <+toolchain> - Clause local change of the toochain used by cargo.
+
+      cargo_fmt_check:
+        Checks whenever the source code is well formatted.
+        If available the '+nightly' toolchain is used.
+
+      cargo_build_unit_tests:
+        Builds unit tests.
+
+      cargo_test_units:
+        Runs unit tests.
+
+      cargo_build_integration_tests:
+        Build integration tests
+
+      cargo_test_integrations:
+        Run integration tests. This includes the doctests.
+
+      cargo_fmt:
+        Run 'cargo fmt'. When available the '+nightly' toolchain is used.
+        Note that this will modify the source in place.
+
+      cargo_miri:
+        When there is unsafe code then run a test under miri supervision.
+        Requires the '+nightly' toolchain.
+
+      cargo_check_msrv:
+        Checks whenever the 'rust_version' in the manifest is sufficient.
+        This check only happens when 'cargo-msrv' is installed, otherwise a warning is printed.
+
+      cargo_mutants:
+        Run 'cargo mutants' when it is available.
+        When 'cargo-mutants' is not installed a warning is printed.
+
+      cargo_outdated:
+        Run 'cargo outedated' when it is available.
+        When 'cargo-outdated' is not installed a warning is printed.
+
+      cargo_audit:
+        Run 'cargo audit' when it is available.
+        When 'cargo-audit' is not installed a warning is printed.
+
+
+  cargo_rules - General support rules for Rust/Cargo projects
+    
+    Checks whenever we are in a cargo project.
+    Hooks cargo support into the 'std_rules'
+
+    Functions:
+
+      has_cargo_manifest 
+        Checks if 'Cargo.toml' exists.
+
+    Rules:
+
+      is_cargo_installed:
+        Successful when 'cargo' is available.
+
+      is_cargo_project:
+        Check whenever we are ready to use cargo here.
+
+
+  help - Provides help, extracts documentation from modules
+    
+    Inline documentation uses two or three hash characters. Three '###' is used for file level
+    documentation to describe a file entirely. Two '##' are used in different contexts:
+    
+    Variable definitions that use the 'declare' keyword can use '##' at the end of the same
+    line to document the variable.
+    
+    Functions can be documented in the form 'function name ## arguments - description'.
+    Any lines following that start with optional white spaces followed by '##' and then
+    documentation text will append to the functions documentation.
+    
+    Rules are documented by lines starting with '##' followed by documentation text,
+    eventually followed by a rule/clause definition.
+    
+    Only variables, functions and rules that have doc comments are included in the output.
+
+  std_rules - Standard rule targets where other modules can hook in
+    
+    Here we define targets which can be universally used. Other modules will hook their more
+    specific rules into these. Usually projects support only a subset of these standard targets.
+    This is fine. Any not hooked rule will only print a debug message and being a no-op otherwise.
+    
+    Undesired std_rules can be renamed or deleted in the rulefile, this is preferred to
+    editing the std_rules file because it allows for easier updates of the std_rules file. All
+    these std rules just structure the targets and give debug output on the leafs. Actual
+    actions are hooked in by other modules.
+
+    Rules:
+
+      all:
+        Rule that builds the software, documentation and necessary artifacts but will not do any testing.
+
+      lints:
+        Run all linters.
+
+      build:
+        Build libraries and executables, but not tests, docs and other non mandatory things.
+
+      tests:
+        Run tests, first unit tests then integration tests.
+
+      doc:
+        Build the documentation. When supported the documentation is linted as well.
+
+      bench:
+        Build and run benchmarks.
+
+      fmt:
+        Reformat the source code in place.
+
+      fix:
+        Apply trivial fixes, should be non breaking changes.
+
+      update:
+        Update dependencies.
+
+      run:
+        Run the main binary if any. This already depends on 'build' but the actual run action has
+        to be hooked into 'run' by the user in the rulefile.
+
+      audit:
+        Audit for security issues.
+
+      lint_sources:
+        Run a static analyzer over the source code.
+
+      lint_docs:
+        Checks the documentation.
+
+      fetch_resources:
+        Whenever resources are externally managed and not part of the versioned source tree they
+        should be added to this rule.
+
+      build_assets:
+        Whenever assets that are not part of the normal build process have to be build, this should
+        be added to this rule.
+
+      build_libs:
+        Build libraries.
+
+      build_bins:
+        Build executables.
+
+      build_tests:
+        Build all tests
+
+      build_unit_tests:
+        Build unit tests.
+
+      build_integration_tests:
+        Build integration tests.
+
+      build_docs:
+        Build the documentation
+
+      build_benches:
+        Build benchmarks.
+
+      build_examples:
+        Build examples.
+
+      build_versioned_artifacts:
+        Usually versioned files should be source and not generated by any rule. Sometimes one wants
+        exceptions from this rule. Like generating a README or CHANGELOG. This can be hooked into
+        this rule. This can be run before committing or as part of the commit check where one checks
+        for git_is_clean after running generate_versioned. When this failed then the user forgotten
+        to update the versioned files.
+
+      test_units:
+        Run unit tests.
+
+      test_integrations:
+        Run integration tests.
+
+      test_expensive:
+        Some tests are very expensive. Since building and running makes no much difference then
+        this is accumulated in this single rule. This allows to exclude expensive tests from the
+        normal workflow rules and include them on demand.
+
+      benchmark:
+        Running benchmarks. This does not include building benchmarks, see the 'bench' rule.
+
+      release_patch:
+        Make a patch release.
+
+      release_minor:
+        Make a minor release.
+
+      release_major:
+        Make a major release.
+
+      deploy:
+        Deploy the project to some server or similar.
+
+      clean:
+        Clean all build artifacts, but keep assets and user configuration.
+
+      force_reset:
+        Danger-Zone: reset the project into a pristine state with all non versioned data deleted or
+        reset to the original state.
+
+      activate:
+        Activates maintainer curated githooks and other setup to use bar in a checked out
+        repository.
+
+
+  watch - Continious supervision by a file watcher
+
+    Rules:
+
+      watch:
+        Run bar in a file watcher ('entr'), whenever a file
+        changed it will be run again.
 
 
 LICENSE

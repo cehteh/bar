@@ -1,9 +1,15 @@
 #!/bash
 # shellcheck disable=2016
 
+### General support rules for Rust/Cargo projects
+###
+### Checks whenever we are in a cargo project.
+### Hooks cargo support into the 'std_rules'
+
+## Successful when 'cargo' is available.
 rule is_cargo_installed: 'is_command_installed cargo'
 
-function is_cargo_project ## - Checks if 'Cargo.toml' exists
+function has_cargo_manifest ## Checks if 'Cargo.toml' exists.
 {
     if [[ -f "Cargo.toml" ]]; then
         debug "is cargo project"
@@ -14,7 +20,17 @@ function is_cargo_project ## - Checks if 'Cargo.toml' exists
     fi
 }
 
-memofn is_cargo_project
+memofn has_cargo_manifest
+
+## Check whenever we are ready to use cargo here.
+rule is_cargo_project: --conclusive !has_cargo_manifest -- '
+     false
+'
+rule is_cargo_project: --conclusive !is_cargo_installed -- '
+     warn "cargo not available on this system"
+     false
+'
+rule is_cargo_project: -- true
 
 rule lint_sources: is_cargo_project? cargo_lint??
 rule build_unit_tests: is_cargo_project? cargo_build_unit_tests

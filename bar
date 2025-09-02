@@ -2,16 +2,22 @@
 # bar -- BAsh Rulez
 #shellcheck disable=SC2016
 
-## BAsh Rules
-##
-## Adds a rule engine to bash.
+### The main BAsh Rulez script
+###
+### Provides only basic functionality for module loading and debugging and starting rule
+### evaluation. Loads the 'std_lib' and 'rule_lib' to make them omnipresent.
 
 # PLANNED: Autoinstall rules from global dir to local Barf.d
 # PLANNED: parallel dependencies dep+
 # PLANNED: load make style rules from a file?
 
-function bar_main ## [Rulefile] [Rule [Arguments]] - loads a Barf file and executes a rule [MAIN] with optional arguments
+function bar_main ## [rulefile] [rule [arguments..]] - Loads a rulefile and executes rule with optional arguments
 {
+    ## [rulefile]           - File to load the user rules from.
+    ##                        Default: Barf|barf|.Barf|.barf when called as bar or symlink.
+    ##                                 Pleasef|pleasef|.Pleasef|.pleasef|\$HOME/.Pleasef when called as please.
+    ## [rule [arguments..]] - Target rule with arguments.
+    ##                        Default: MAIN
     trace "$*"
     # shell sanity options
     set -euo pipefail
@@ -19,12 +25,12 @@ function bar_main ## [Rulefile] [Rule [Arguments]] - loads a Barf file and execu
     export LC_ALL=$(locale -a | grep -i 'C.utf.*8' || echo C)
 
     # shellcheck disable=SC2155
-    declare -grx BAR_SELF="$(realpath "$BASH_ARGV0")"  ## bar itself
-    declare -grx BAR_CALLED_AS="${BASH_ARGV0##*/}"     ## called as name
-    declare -gx  BAR_DIR                   ## directory to load rules from
-    declare -gx  BARF_FILE                 ## the Barf file used
-    declare -gxr BAR_PWD="$PWD"            ## initial working directory
-    declare -gxi BAR_VERBOSITY_LEVEL="${BAR_VERBOSITY_LEVEL:-2}"
+    declare -grx BAR_SELF="$(realpath "$BASH_ARGV0")"  ## Path to bar itself.
+    declare -grx BAR_CALLED_AS="${BASH_ARGV0##*/}"     ## Name of bar when called by symlink.
+    declare -gx  BAR_DIR                               ## Directory to load rules from.
+    declare -gx  BARF_FILE                             ## The Barf file used.
+    declare -gxr BAR_PWD="$PWD"                        ## Initial working directory.
+    declare -gxi BAR_VERBOSITY_LEVEL="${BAR_VERBOSITY_LEVEL:-2}" ## Verbosity level from 0 (silent) to 6 (trace).
     declare -gA  BAR_REQUIRE_LOADED
     # empty arrays here in case the tty_lib is not loaded, the tty_lib will replace these
     # shellcheck disable=2034
@@ -143,13 +149,14 @@ function find_toplevel
     fi
 }
 
-function source_info # [N] - returns file:line N (or 0) up the bash call stack
+function require ## [--opt] [modules..] - Loads modules.
 {
-    echo "${BASH_SOURCE[$((${1:-0}+1))]}:${BASH_LINENO[$((${1:-0}))]}:${FUNCNAME[$((${1:-0}+1))]:+${FUNCNAME[$((${1:-0}+1))]}:}"
-}
+    ## [--opt]     - Make the modules optional, when they do not exist then no warning is emitted
+    ##               and no failure returned.
+    ## [modules..] - List of module names to be loaded. Modules are loaded only once, further
+    ##               attempts to load it will be a no-op.
 
-function require
-{
+    # TODO: support modules by explicit path
     trace "$*"
     declare -i rc=0
     local try_load=""
@@ -186,7 +193,12 @@ function require
 # placeholder, overwritten by tty_lib when present
 function tty_newline { :; }
 
-function DBG ## [message..] - for print-style debugging, should not be present in production code
+function source_info # [N] - returns file:line N (or 0) up the bash call stack
+{
+    echo "${BASH_SOURCE[$((${1:-0}+1))]}:${BASH_LINENO[$((${1:-0}))]}:${FUNCNAME[$((${1:-0}+1))]:+${FUNCNAME[$((${1:-0}+1))]}:}"
+}
+
+function DBG ## [message..] - For print-style debugging, should not be present in production code.
 {
     {
         tty_newline
@@ -194,8 +206,9 @@ function DBG ## [message..] - for print-style debugging, should not be present i
     } >&2
 }
 
-function die ## [message..] - prints 'message' to stderr and exits with failure
+function die ## [message..] - Prints 'message' to stderr and exits with failure
 {
+    ## Unexpected fatal problem. Will terminate execution, CLEANUP rules will be called.
     if (( BAR_VERBOSITY_LEVEL > 0 )); then
         tty_newline
         echo "${TTYERR[ce]:-}${TTYERR[R_B]:-}PANIC:${TTYERR[n]:-} $(source_info 1) $*"
@@ -203,48 +216,54 @@ function die ## [message..] - prints 'message' to stderr and exits with failure
     exit 1
 }
 
-function error ## [message..] - may print a error message to stderr and return failure
+function error ## [message..] - Print a error message to stderr.
 {
+    ## Unexpected but not fatal.
     if (( BAR_VERBOSITY_LEVEL > 0 )); then
         tty_newline
         echo "${TTYERR[ce]:-}${TTYERR[r_B]:-}ERROR:${TTYERR[n]:-} $(source_info 1) $*"
     fi >&2
 }
 
-function warn ## [message..] - may print an warning to stderr
+function warn ## [message..] - Print an warning to stderr.
 {
+    ## Expected, non fatal problem.
     if (( BAR_VERBOSITY_LEVEL > 1 )); then
         tty_newline
         echo "${TTYERR[ce]:-}${TTYERR[m_B]:-} WARN:${TTYERR[n]:-} $*" >&2
     fi >&2
 }
 
-function note ## [message..] - may print an important notice to stderr
+function note ## [message..] - Print an important notice to stderr.
 {
+    ## Important message the user should be notified about.
     if (( BAR_VERBOSITY_LEVEL > 2 )); then
         tty_newline
         echo "${TTYERR[ce]:-}${TTYERR[m_B]:-} NOTE:${TTYERR[n]:-} $*"
     fi >&2
 }
 
-function info ## [message..] - may print an informal message to stderr
+function info ## [message..] - Print an informal message to stderr.
 {
+    ## Broader message about non rule related progress.
     if (( BAR_VERBOSITY_LEVEL > 3 )); then
         tty_newline
         echo "${TTYERR[ce]:-}${TTYERR[b_B]:-} INFO:${TTYERR[n]:-} $*"
     fi >&2
 }
 
-function debug ## [message..] - may print a debug message to stderr
+function debug ## [message..] - Print a debug message to stderr.
 {
+    ## Finer grained progress messages.
     if (( BAR_VERBOSITY_LEVEL > 4 )); then
         tty_newline
         echo "${TTYERR[ce]:-}${TTYERR[c_B]:-}DEBUG:${TTYERR[n]:-} $(source_info 1) $*"
     fi >&2
 }
 
-function trace ## [message] - may prints a trace message to stderr
+function trace ## [message] - Prints a trace message to stderr.
 {
+    ## Very verbose function call or finer messages.
     if (( BAR_VERBOSITY_LEVEL > 5 )); then
         tty_newline
         echo "${TTYERR[ce]:-}${TTYERR[C_B]:-}TRACE:${TTYERR[n]:-} $(source_info 1) $*"

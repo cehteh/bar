@@ -12,7 +12,7 @@ require git
 function nodbg
 {
     # shellcheck disable=2046
-    if grep -n '^[[:space:]]*DBG' $(git_ls_files -c --other); then
+    if grep -n '^[[:space:]]*DBG' $(git_ls_files -c --other -- ':!README' ); then
         return 1
     fi
 }

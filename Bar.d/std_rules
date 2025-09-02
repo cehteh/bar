@@ -1,103 +1,139 @@
 #!/bash
 #shellcheck disable=SC2016
 
-## standard rule targets where other modules can hook in. Undesired std_rules can be renamed or
-## deleted in Barf, this is preferred to editing the std_rules file because it allows for
-## easier updates of the std_rules file. All these std rules just structure the targets and
-## give debug output on the leafs. Actual actions are hooked in by other modules.
+### Standard rule targets where other modules can hook in
+###
+### Here we define targets which can be universally used. Other modules will hook their more
+### specific rules into these. Usually projects support only a subset of these standard targets.
+### This is fine. Any not hooked rule will only print a debug message and being a no-op otherwise.
+###
+### Undesired std_rules can be renamed or deleted in the rulefile, this is preferred to
+### editing the std_rules file because it allows for easier updates of the std_rules file. All
+### these std rules just structure the targets and give debug output on the leafs. Actual
+### actions are hooked in by other modules.
 
+# First tier targets: these accumulate the 2nd tier targets, one should add these to MAIN in Barf
+# The default Barf file does this already, but it is recommended to customize it.
+# Modules can add clauses to these directly but it is preferred to add to the 2nd tier targets
+# Note that not all 2nd tier targets are covered here some are meant to be called directly
 
-### First tier targets: these accumulate the 2nd tier targets, one should add these to MAIN in Barf
-### The default Barf file does this already, but it is recommended to customize it.
-### Modules can add clauses to these directly but it is preferred to add to the 2nd tier targets
-### Note that not all 2nd tier targets are covered here some are meant to be called directly
-
-# a rule that builds the software, documentation and necessary artifacts but will not do any testing.
+## Rule that builds the software, documentation and necessary artifacts but will not do any testing.
 rule all: build doc
 
+## Run all linters.
 rule lints: lint_sources lint_docs
 
+## Build libraries and executables, but not tests, docs and other non mandatory things.
 rule build: build_libs build_bins
 
+## Run tests, first unit tests then integration tests.
 rule tests: test_units test_integrations
 
+## Build the documentation. When supported the documentation is linted as well.
 rule doc: lint_docs build_docs
 
+## Build and run benchmarks.
 rule bench: build_benches benchmark
 
-## code actions, should be non breaking changes
+## Reformat the source code in place.
 rule fmt: -- debug "Running source formatting tools..."
+## Apply trivial fixes, should be non breaking changes.
 rule fix: -- debug "Apply trivial fixes..."
+## Update dependencies.
 rule update: -- debug "Updating dependencies..."
 
-## run already depends on 'build' but the actual run action has to be defined by the user in Barf
+## Run the main binary if any. This already depends on 'build' but the actual run action has
+## to be hooked into 'run' by the user in the rulefile.
 rule run: build
 
-### Second tier targets: this is where other modules should hook in
+# PLANNED: tag last good build
+# rule tag: -- info "Tagging last good build..."
 
-# audit for security issues before building
+# Second tier targets: this is where other modules should hook in
+
+## Audit for security issues.
 rule audit: -- debug "Running dependency audit..."
 
-# Linting means static analyzer w/o building anything
+# Linting means static analyzer w/o building anything.
+## Run a static analyzer over the source code.
 rule lint_sources: -- debug "Running source lint checks..."
+## Checks the documentation.
 rule lint_docs: -- debug "Running doc lint checks..."
 
 # Fetching resources means downloading or copying resources that are not part of the source tree
+## Whenever resources are externally managed and not part of the versioned source tree they
+## should be added to this rule.
 rule fetch_resources: -- debug "Fetching resources..."
 
 # Building assets means building the frontend assets
+## Whenever assets that are not part of the normal build process have to be build, this should
+## be added to this rule.
 rule build_assets: -- debug "Building assets..."
 
-# building software
+## Build libraries.
 rule build_libs: -- debug "Building library..."
+## Build executables.
 rule build_bins: -- debug "Building binaries..."
 
+## Build all tests
 rule build_tests: build_unit_tests build_integration_tests
+## Build unit tests.
 rule build_unit_tests: -- debug "Building unit tests"
+## Build integration tests.
 rule build_integration_tests: -- debug "Building Integration tests"
 
+## Build the documentation
 rule build_docs: -- debug "Building docs..."
+# TODO: build_doc_md bbuild_doc_html build_doc_pdf
+
+## Build benchmarks.
 rule build_benches: -- debug "Building benches..."
+## Build examples.
 rule build_examples: -- debug "Building examples..."
 
-# run in a loop with a file watcher
-rule watch: --conclusive is_entr_installed? -- '
-     require entr
-     entr_watch "${RULE_ARGS[*]}"
-'
-rule watch: -- warn "no supported file watcher available"
-
-# Usually versioned files should be source and not generated by any rule. Sometimes one wants
-# exceptions from this rule. Like generating a README or CHANGELOG. This can be hooked into
-# this rule. This can be run before committing or as part of the commit check where one checks
-# for git_is_clean after running generate_versioned. When this failed then the user forgotten
-# to update the versioned files.
+## Usually versioned files should be source and not generated by any rule. Sometimes one wants
+## exceptions from this rule. Like generating a README or CHANGELOG. This can be hooked into
+## this rule. This can be run before committing or as part of the commit check where one checks
+## for git_is_clean after running generate_versioned. When this failed then the user forgotten
+## to update the versioned files.
 rule build_versioned_artifacts: -- debug "Generating versioned files..."
 
-# running normal tests
+## Run unit tests.
 rule test_units: build_unit_tests -- debug "Running unit tests..."
+## Run integration tests.
 rule test_integrations: build_integration_tests -- debug "Running integration tests..."
 
-# building and running expensive tests
+## Some tests are very expensive. Since building and running makes no much difference then
+## this is accumulated in this single rule. This allows to exclude expensive tests from the
+## normal workflow rules and include them on demand.
 rule test_expensive: -- debug "Running expensive tests..."
 
-# running benchmarks
+## Running benchmarks. This does not include building benchmarks, see the 'bench' rule.
 rule benchmark: -- debug "Running benchmarks..."
 
-### Maintenance and Configuration targets
+# Maintenance and Configuration targets
+# The actual interpretation what these rules do is up to the rulefile author.
+## Make a patch release.
 rule release_patch: -- debug "Making patch release"
+## Make a minor release.
 rule release_minor: -- debug "Making minor release"
+## Make a major release.
 rule release_major: -- debug "Making major release"
+## Deploy the project to some server or similar.
 rule deploy: -- debug "Deploying project"
+# TODO: rule deploy_staging: -- debug "Deploying project"
+# TODO: rule deploy_live: -- debug "Deploying project"
 
+## Clean all build artifacts, but keep assets and user configuration.
 rule clean: -- debug "Cleaning build artifacts"
-rule reset: -- debug "Resetting into pristine state"
+## Danger-Zone: reset the project into a pristine state with all non versioned data deleted or
+## reset to the original state.
+rule force_reset: -- debug "Resetting into pristine state"
 
-# Activate maintainer curated hooks and other setup to use bar in this repository
+## Activates maintainer curated githooks and other setup to use bar in a checked out
+## repository.
 rule activate: -- debug "Activating bar..."
 
-### API extensions
-### Some other modules may depend on these for other operations
 
 # create a hash over all source files (non ignored, non generated) in the project.
-rule hash_sources: -- debug "Hashing sources"
+# TODO: rule hash_sources: -- debug "Hashing sources"
