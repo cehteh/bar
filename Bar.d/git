@@ -1,7 +1,9 @@
 #!/bash
 # shellcheck disable=2016
 
-function git_is_clean ## - Checks if there are modified files, fails if there are any.
+### Git support rules
+
+function git_is_clean
 {
     if git diff --exit-code; then
         debug "nothing modified"
@@ -12,9 +14,10 @@ function git_is_clean ## - Checks if there are modified files, fails if there ar
     fi
 }
 
+## Checks if there are modified files, fails if there are any.
 rule git_is_clean: is_git_repository -
 
-function git_branch_matches ## [branchpattern..] - Checks that the current git branch matches any of the patterns
+function git_branch_matches
 {
     # shellcheck disable=SC2155
     local branch=$(git_branch_name)
@@ -28,42 +31,77 @@ function git_branch_matches ## [branchpattern..] - Checks that the current git b
     return 1
 }
 
+## [branchpattern..] - Checks that the current git branch matches any of the given patterns.
 rule git_branch_matches: is_git_repository -
 
 # A set of git hook matchers
+## Checks if called as githook.
 rule is_git_pre_commit_hook: 'called_as pre-commit'
+## Checks if called as githook.
 rule is_git_pre_merge_commit_hook: 'called_as pre-merge-commit'
+## Checks if called as githook.
 rule is_git_prepare_commit_msg_hook: 'called_as prepare-commit-msg'
+## Checks if called as githook.
 rule is_git_commit_msg_hook: 'called_as commit-msg'
+## Checks if called as githook.
 rule is_git_applypatch_msg_hook: 'called_as applypatch-msg'
+## Checks if called as githook.
 rule is_git_pre_applypatch_hook: 'called_as pre-applypatch'
+## Checks if called as githook.
 rule is_git_post_applypatch_hook: 'called_as post-applypatch'
+## Checks if called as githook.
 rule is_git_post_commit_hook: 'called_as post-commit'
+## Checks if called as githook.
 rule is_git_pre_rebase_hook: 'called_as pre-rebase'
+## Checks if called as githook.
 rule is_git_post_checkout_hook: 'called_as post-checkout'
+## Checks if called as githook.
 rule is_git_post_merge_hook: 'called_as post-merge'
+## Checks if called as githook.
 rule is_git_pre_push_hook: 'called_as pre-push'
+## Checks if called as githook.
 rule is_git_pre_receive_hook: 'called_as pre-receive'
+## Checks if called as githook.
 rule is_git_update_hook: 'called_as update'
+## Checks if called as githook.
 rule is_git_proc_receive_hook: 'called_as proc-receive'
+## Checks if called as githook.
 rule is_git_post_receive_hook: 'called_as post-receive'
+## Checks if called as githook.
 rule is_git_post_update_hook: 'called_as post-update'
+## Checks if called as githook.
 rule is_git_reference_transaction_hook: 'called_as reference-transaction'
+## Checks if called as githook.
 rule is_git_push_to_checkout_hook: 'called_as push-to-checkout'
+## Checks if called as githook.
 rule is_git_pre_auto_gc_hook: 'called_as pre-auto-gc'
+## Checks if called as githook.
 rule is_git_post_rewrite_hook: 'called_as post-rewrite'
+## Checks if called as githook.
 rule is_git_sendemail_validate_hook: 'called_as sendemail-validate'
+## Checks if called as githook.
 rule is_git_fsmonitor_watchman_hook: 'called_as fsmonitor-watchman'
+## Checks if called as githook.
 rule is_git_post_index_change_hook: 'called_as post-index-change'
 
 # A set of common branch matchers
+## Checks if the current branch matches 'main master'.
 rule is_git_main_branch: 'git_branch_matches main master'
+## Checks if the current branch matches 'release-* release/*'.
 rule is_git_release_branch: 'git_branch_matches release-* release/*'
+## Checks if the current branch matches 'devel-* devel/*'.
 rule is_git_devel_branch: 'git_branch_matches devel-* devel/*'
+## Checks if the current branch matches 'feature-* feature/*'.
 rule is_git_feature_branch: 'git_branch_matches feature-* feature/*'
+## Checks if the current branch matches 'bugfix-* bugfix/* fix-* fix/*'.
 rule is_git_bugfix_branch: 'git_branch_matches bugfix-* bugfix/* fix-* fix/*'
+## Checks if the current branch matches 'hotfix-* hotfix/*'.
 rule is_git_hotfix_branch: 'git_branch_matches hotfix-* hotfix/*'
+## Checks if the current branch matches 'improvement-* improvement/*'.
 rule is_git_improvement_branch: 'git_branch_matches improvement-* improvement/*'
+## Checks if the current branch matches 'doc-* doc/*'.
 rule is_git_doc_branch: 'git_branch_matches doc-* doc/*'
+## Checks if the current branch matches 'wip-* wip/*'.
 rule is_git_wip_branch: 'git_branch_matches wip-* wip/*'
+## Checks if the current branch matches 'experiment-* experiment/*'.
 rule is_git_experimental_branch: 'git_branch_matches experiment-* experiment/*'

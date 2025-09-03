@@ -1,3 +1,30 @@
 #!/bash
 
-rule lints: shellcheck_lint
+### Hooks shellcheck_lint into the std lint rule.
+
+## Checks if shellcheck is installed and the project has any shell scripts.
+## 'rule_delete' this rule in 'PREPROCESS' to disable shellcheck linting.
+rule is_shellcheck_available: 'is_command_installed shellcheck' has_shellcheck_shscripts
+
+rule lints: is_shellcheck_available??? shellcheck_lint
+
+function shellcheck_is_shscript ## <file> - Check if <file> is a shell script
+{
+    [[ -f "$1" ]] && { head -1 "$1" | grep -q "^#!.*sh" ; }
+}
+
+function has_shellcheck_shscripts ## Checks whenever any shell scripts are versioned in git
+{
+    local file
+    for file in $(git_ls_files --other); do
+        if shellcheck_is_shscript "$file"; then
+            trace "Shell scripts found"
+            return 0
+        fi
+    done
+    debug "No shell scripts found in the repository"
+    return 1
+}
+
+## Checks if the project has any shell scripts. Must be called from a git toplevel.
+rule has_shellcheck_shscripts: is_git_toplevel -

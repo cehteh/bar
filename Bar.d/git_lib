@@ -1,11 +1,16 @@
 #!/bash
 # shellcheck disable=2016
 
+### Git support library
+
+## Returns the path to the toplevel git repository.
 function git_toplevel
 {
     memo git rev-parse --show-toplevel
 }
 
+## Returns the path to the bar that is initialized in the git toplevel.
+## Fails when there is no bar initialized.
 function git_bar
 {
     # shellcheck disable=SC2155
@@ -20,33 +25,41 @@ function git_bar
 }
 memofn git_bar
 
-    #git rev-parse --is-inside-work-tree
+#git rev-parse --is-inside-work-tree
 
-function git_dir
+function git_dir ## Returns the absolute path to the 'GIT_DIR' (.git/).
 {
+    ## Note that this may be distinct from '$(git_toplevel)/.git/' when worktrees or other git
+    ## features are used.
     memo git rev-parse --absolute-git-dir
 }
 
+## Succeeds when we are in inside (at or below) a git repository.
 rule is_git_repository: -- 'git_toplevel &>/dev/null'
+## Succeeds when we are at the top level of a git repository.
 rule is_git_toplevel: -- '[[ "$(git_toplevel)" = "$PWD" ]]'
 
-function git_ls_files # [git-ls-files-opts].. - sorted list of all non ignored files
+function git_ls_files # [git-ls-files-opts].. - Sorted list of files in the git repository.
 {
+    ## git-ls-files '--cached' and '--exclude-standard' are always implied.  Notable options
+    ## are '-z' for zero terminated output and '--others' to show untracked files.
     local zero_terminated=
     local z
     for z in "$@"; do
         [[ "$z" = "-z" ]] && { zero_terminated=true; break; }
     done
-    git ls-files -c --exclude-standard "$@" | sort -u ${zero_terminated:+-z}
+    git ls-files --cached --exclude-standard "$@" | sort -u ${zero_terminated:+-z}
 }
 
-function git_branch_name ## - Returns the branch name that is checked out, dies when not in a git branch
+function git_branch_name ## Returns the branch name that is checked out, dies when not in a git branch.
 {
     memo git branch --show-current
 }
 
-function git_tree_hash ## [git-ls-files-opts].. - Returns a hash over the current directory
+# TODO: rename git_dir_hash or similar
+function git_tree_hash ## [git-ls-files-opts].. - Returns a sha1 hash over the current directory
 {
+    ## This hash is a identifier used by bar. It is not the same hash git using for storing trees.
     local hash
     # needs || true here to suppress errors on directories
     hash="$(git_ls_files -z "$@" | { xargs -0 sha1sum 2>/dev/null || true ; } | sha1sum)"
@@ -55,8 +68,9 @@ function git_tree_hash ## [git-ls-files-opts].. - Returns a hash over the curren
 
 memofn git_tree_hash
 
-function git_add_ignore
+function git_add_ignore ## [patterns..] - Adds new ignore patterns to '.gitignore'.
 {
+    ## Patterns that are already present are skipped.
     [[ -f "$(git_toplevel)/.gitignore" ]] || touch "$(git_toplevel)/.gitignore"
 
     local pattern

@@ -1,21 +1,25 @@
 #!/bash
 # shellcheck disable=2016
 
-## git cliff changelog generation
+### git cliff changelog generation
 
-export GIT_CLIFF_OUTPUT="${GIT_CLIFF_OUTPUT:-CHANGELOG.md}"
+declare -gx GIT_CLIFF_OUTPUT="${GIT_CLIFF_OUTPUT:-CHANGELOG.md}" ## Output where to write the changelog
 
-function cliff_changelog
+function cliff_changelog # [cliff_args..] - Runs git-cliff.
 {
+    ## The generated changelog and cliff.toml (when there where changes) are implicitly staged.
+    ## This does not git-commit though.
     git cliff "$@"
     [[ -f "cliff.toml" ]] && git add "cliff.toml"
     git add "$GIT_CLIFF_OUTPUT"
 }
 
+## Regenerates the changelog up to the previous commit and amends the current commit with the new changelog
 rule cliff_changelog_amend: 'cliff_changelog -- "$(git rev-list --max-parents=0 HEAD)"..HEAD~1' -- '
      git commit --amend --no-edit
 '
 
+## Runs cliff_changelog and then commits the changes.
 rule cliff_changelog_commit: cliff_changelog -- '
      git commit -m "CHORE: update $GIT_CLIFF_OUTPUT"
 '

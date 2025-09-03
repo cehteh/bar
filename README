@@ -3,25 +3,26 @@
 
 ABOUT
 
-  Bar is a command runner that decides the order and which commands to run by rules. It to
-  define rules that dependently and conditionally evaluate shell statements.  This is similar
-  to other tools such as 'make' or 'just' but adds some opinionated differences. There is
-  support for using bar as driver for githooks for automating workflows.
+  Bar is a command runner that determines the order of commands and which ones to run, based
+  on rules. It lets the user define rules that dependently and conditionally evaluate shell
+  statements.  This is similar to other tools such as 'make' or 'just' but adds some
+  opinionated differences. There is support for using bar as driver for githooks for
+  automating workflows.
 
   The notable differences to other similar tools are:
 
   * Rules in bar can have multiple clauses.
   * Normally rules are conjunctive, when a clause of a rule fails then the rule fails and not
     further evaluated.
-  * Rules can made disjunctive, then a rule succeeds on the first succeeding clause.
+  * Rules can be made disjunctive, then a rule succeeds on the first succeeding clause.
   * Clauses can be conditionally skipped.
   * The results of rules are cached. Normally rules are evaluated only once, although there is
     a form to define rules that always evaluate.
   * We have a module that can memorize commands persistently and schedule evaluation to the
     background. A later instance can pick up the results from this background evaluation.
 
-  When you read this because you seen 'bar' or '.bar' used in a repository then you may look
-  at INITIAL INSTALLATION below.
+  When you read this because you have seen 'bar' or '.bar' used in a repository then you may
+  look at INITIAL INSTALLATION below.
 
 
 QUICKSTART
@@ -30,7 +31,7 @@ QUICKSTART
 
    ./bar                # just runs whatever the maintainer decided as default
    ./bar watch          # watches the project for changes and runs the default
-   ./bar watch fastchk  # watches the project for changes and run fast checks
+   ./bar watch fastchk  # watches the project for changes and runs fast checks
    ./bar activate       # installs githooks and other local prep work
 
   When you want to install and use it in your own projects
@@ -61,7 +62,7 @@ INVOCATION AND SEMANTICS
     ./bar [rulefile] [rule [arguments..]]
     <symlink> [arguments..]
 
-  Starts by loading all initial modules (those which have underscores in their name) and the a
+  Starts by loading all initial modules (those which have underscores in their name) and the
   rulefile, which is either "Barf", "barf", ".Barf", ".barf" when called as 'bar' or "Pleasef"
   "pleasef" ".Pleasef" ".pleasef" "$HOME/.Pleasef" when called as 'please' and when the first
   argument is not a file.
@@ -75,8 +76,8 @@ INVOCATION AND SEMANTICS
   located in different paths. This is a opinionated choice to make the module system
   self-contained and not depend on secondary locations.
 
-  Then the given rule (or MAIN) with the supplied arguments becomes evaluated. Finally if
-  exists a 'CLEANUP' rule is evaluated.
+  Then the given rule (or MAIN) with the supplied arguments becomes evaluated. Finally, if
+  a 'CLEANUP' rule exists, it is evaluated.
 
   The exit code of the invocation is the exit code of the main rule.
 
@@ -84,8 +85,8 @@ INVOCATION AND SEMANTICS
   people expect by default. Other useful rules like 'help' for this documentation are defined
   by modules.
 
-  When called by a symlink then the standard rulefile (as above) is loaded and instead 'MAIN'
-  a rule with the same name as the symlink is called with all arguments passed.
+  When called by a symlink, the standard rulefile is loaded and instead of ‘MAIN’, a rule with
+  the same name as the symlink is called with all arguments passed.
 
 
 INITIAL INSTALLATION
@@ -115,7 +116,7 @@ INITIAL INSTALLATION
      Now 'bar' is installed, check it with 'bar help'
 
   2. The local './.bar' initialized from above:
-     Since bar is a bash script its easy to version and ship it with other software.
+     Since bar is a bash script, it’s easy to version and ship it with other software.
      To initialize it in a current directory use either of:
 
        bar init          # creates bar, Barf, Bar.d/
@@ -141,7 +142,7 @@ INITIAL INSTALLATION
   3. githooks symlinked from './.git/hooks/*' -> '../../bar'
      'bar' has support to be used as githooks. This needs manual enabling. Individual hooks can be
      enabled or disabled with 'bar githook_enable <hook>' and 'bar githook_disable <hook>'.
-     For exiting projects using 'bar' a maintainer can setup rules to activate all necessary hooks.
+     For existing projects using 'bar' a maintainer can setup rules to activate all necessary hooks.
      This then can be activated by './bar activate'.
 
 
@@ -158,12 +159,11 @@ GIT HOOK ACTIVATION
 RULE SEMANTICS
 
   Rules are a named, ordered collection of clauses. They are considered pure with inputs being
-  the current directory name and the rules arguments. Note that the content of files is *not*
-  considered and the outcome of the rule should not depend on external variables. By being
-  pure rules are evaluated lazily, only once, the result of a rule is cached. This means that
-  rules, esp. the actions within the body must have deterministic sematics. For performance
-  reasons this is not enforced but one may observe surprising behavior when this requirement
-  is violated.
+  the current directory name and the rule's arguments. Note that the content of files is *not*
+  considered and the outcome of the rule should not depend on external variables. Rules are
+  evaluated lazily, only once; the result of a rule is cached. This means that rules, esp. the
+  actions within the body must have deterministic sematics. For performance reasons this is
+  not enforced but one may observe surprising behavior when this requirement is violated.
 
   Rules will be autoloaded on demand from modules in 'Bar.d/' (see below AUTOMATIC MODULE
   LOADING). For rules where this fails a fallback exits that creates an implicit rule for any
@@ -318,7 +318,7 @@ RULE DEFINITION SYNTAX
 
     If exist 'SETUP', 'PREPROCESS', 'POSTPROCESS' and 'CLEANUP' will be called.
      * SETUP
-       Should set up the environment for all subsequent evaluation. Setup rules
+       Should set up the environment for all subsequent evaluation. Rules in 'SETUP'
        should be self-sufficient and not expect a working environment yet.
        A failure here will abort bar.
      * PREPROCESS
@@ -598,6 +598,274 @@ MODULE API/RULES
         Check whenever we are ready to use cargo here.
 
 
+  cliff - git cliff changelog generation
+
+    Variables:
+
+      GIT_CLIFF_OUTPUT (gx)
+        Output where to write the changelog
+        Default: ${GIT_CLIFF_OUTPUT:-CHANGELOG.md}
+
+    Functions:
+        The generated changelog and cliff.toml (when there where changes) are implicitly staged.
+        This does not git-commit though.
+
+    Rules:
+
+      cliff_changelog_amend:
+        Regenerates the changelog up to the previous commit and amends the current commit with the new changelog
+
+      cliff_changelog_commit:
+        Runs cliff_changelog and then commits the changes.
+
+
+  entr - Support for the entr file watcher
+
+    Rules:
+
+      is_entr_installed:
+        Succeeds when 'entr' is available.
+
+      entr_watch:
+        Runs bar in a loop again whenever a file gets changed.
+        Takes a target rule and its parameters as argument.
+        Defaults to 'MAIN'.
+
+
+  git - Git support rules
+
+    Rules:
+
+      git_is_clean:
+        Checks if there are modified files, fails if there are any.
+
+      git_branch_matches:
+        [branchpattern..] - Checks that the current git branch matches any of the given patterns.
+
+      is_git_pre_commit_hook:
+        Checks if called as githook.
+
+      is_git_pre_merge_commit_hook:
+        Checks if called as githook.
+
+      is_git_prepare_commit_msg_hook:
+        Checks if called as githook.
+
+      is_git_commit_msg_hook:
+        Checks if called as githook.
+
+      is_git_applypatch_msg_hook:
+        Checks if called as githook.
+
+      is_git_pre_applypatch_hook:
+        Checks if called as githook.
+
+      is_git_post_applypatch_hook:
+        Checks if called as githook.
+
+      is_git_post_commit_hook:
+        Checks if called as githook.
+
+      is_git_pre_rebase_hook:
+        Checks if called as githook.
+
+      is_git_post_checkout_hook:
+        Checks if called as githook.
+
+      is_git_post_merge_hook:
+        Checks if called as githook.
+
+      is_git_pre_push_hook:
+        Checks if called as githook.
+
+      is_git_pre_receive_hook:
+        Checks if called as githook.
+
+      is_git_update_hook:
+        Checks if called as githook.
+
+      is_git_proc_receive_hook:
+        Checks if called as githook.
+
+      is_git_post_receive_hook:
+        Checks if called as githook.
+
+      is_git_post_update_hook:
+        Checks if called as githook.
+
+      is_git_reference_transaction_hook:
+        Checks if called as githook.
+
+      is_git_push_to_checkout_hook:
+        Checks if called as githook.
+
+      is_git_pre_auto_gc_hook:
+        Checks if called as githook.
+
+      is_git_post_rewrite_hook:
+        Checks if called as githook.
+
+      is_git_sendemail_validate_hook:
+        Checks if called as githook.
+
+      is_git_fsmonitor_watchman_hook:
+        Checks if called as githook.
+
+      is_git_post_index_change_hook:
+        Checks if called as githook.
+
+      is_git_main_branch:
+        Checks if the current branch matches 'main master'.
+
+      is_git_release_branch:
+        Checks if the current branch matches 'release-* release/*'.
+
+      is_git_devel_branch:
+        Checks if the current branch matches 'devel-* devel/*'.
+
+      is_git_feature_branch:
+        Checks if the current branch matches 'feature-* feature/*'.
+
+      is_git_bugfix_branch:
+        Checks if the current branch matches 'bugfix-* bugfix/* fix-* fix/*'.
+
+      is_git_hotfix_branch:
+        Checks if the current branch matches 'hotfix-* hotfix/*'.
+
+      is_git_improvement_branch:
+        Checks if the current branch matches 'improvement-* improvement/*'.
+
+      is_git_doc_branch:
+        Checks if the current branch matches 'doc-* doc/*'.
+
+      is_git_wip_branch:
+        Checks if the current branch matches 'wip-* wip/*'.
+
+      is_git_experimental_branch:
+        Checks if the current branch matches 'experiment-* experiment/*'.
+
+
+  git_lib - Git support library
+
+    Functions:
+
+      git_dir 
+        Returns the absolute path to the 'GIT_DIR' (.git/).
+        Note that this may be distinct from '$(git_toplevel)/.git/' when worktrees or other git
+        features are used.
+        git-ls-files '--cached' and '--exclude-standard' are always implied.  Notable options
+        are '-z' for zero terminated output and '--others' to show untracked files.
+
+      git_branch_name 
+        Returns the branch name that is checked out, dies when not in a git branch.
+
+      git_tree_hash [git-ls-files-opts]..
+        Returns a sha1 hash over the current directory
+        This hash is a identifier used by bar. It is not the same hash git using for storing trees.
+
+      git_add_ignore [patterns..]
+        Adds new ignore patterns to '.gitignore'.
+        Patterns that are already present are skipped.
+
+    Rules:
+
+      is_git_repository:
+        Succeeds when we are in inside (at or below) a git repository.
+
+      is_git_toplevel:
+        Succeeds when we are at the top level of a git repository.
+
+
+  git_rules - Standard rules for git support
+
+    Rules:
+
+      pre-commit:
+        Entry rule when called as githook.
+
+      pre-merge-commit:
+        Entry rule when called as githook.
+
+      prepare-commit-msg:
+        Entry rule when called as githook.
+
+      commit-msg:
+        Entry rule when called as githook.
+
+      applypatch-msg:
+        Entry rule when called as githook.
+
+      pre-applypatch:
+        Entry rule when called as githook.
+
+      post-applypatch:
+        Entry rule when called as githook.
+
+      post-commit:
+        Entry rule when called as githook.
+
+      pre-rebase:
+        Entry rule when called as githook.
+
+      post-checkout:
+        Entry rule when called as githook.
+
+      post-merge:
+        Entry rule when called as githook.
+
+      pre-push:
+        Entry rule when called as githook.
+
+      pre-receive:
+        Entry rule when called as githook.
+
+      update:
+        Entry rule when called as githook.
+
+      proc-receive:
+        Entry rule when called as githook.
+
+      post-receive:
+        Entry rule when called as githook.
+
+      post-update:
+        Entry rule when called as githook.
+
+      reference-transaction:
+        Entry rule when called as githook.
+
+      push-to-checkout:
+        Entry rule when called as githook.
+
+      pre-auto-gc:
+        Entry rule when called as githook.
+
+      post-rewrite:
+        Entry rule when called as githook.
+
+      sendemail-validate:
+        Entry rule when called as githook.
+
+      fsmonitor-watchman:
+        Entry rule when called as githook.
+
+      post-index-change:
+        Entry rule when called as githook.
+
+
+  githook - Support library for managing githooks
+
+    Rules:
+
+      githook_enable:
+        Takes a list of githooks to enable as parameters. Must be called from the git_toplevel.
+        Fails when a hook is not available.
+
+      githook_disable:
+        Takes a list of githooks to disable as parameters. Must be called from the git_toplevel.
+        Fails when a hook is not pointing to bar.
+
+
   help - Provides help, extracts documentation from modules
     
     Inline documentation uses two or three hash characters. Three '###' is used for file level
@@ -614,6 +882,281 @@ MODULE API/RULES
     eventually followed by a rule/clause definition.
     
     Only variables, functions and rules that have doc comments are included in the output.
+
+    Functions:
+
+      name arguments
+        description'.
+
+  init - Module to install, initialize and update bar itself.
+
+    Functions:
+
+      init_install [prefix]
+        install links in [prefix] or '~/.local'
+        Bar is distributed by radicle/git. Usually it will exist somewhere in a users home
+        directory where it got checked out. Bar does rolling releases, it is continuously
+        improved. To make this checked out version available for use this 'init_install' will
+        create symlinks at the given [prefix] directory or in '~/.local' by default.
+
+    Rules:
+
+      init:
+        Initialize bar in a workdir. This copies the main 'bar' script, a default 'Barf' and all
+        'Bar.d/' modules to current directory. When the workdir is a git repository then
+        '.gitignore' is updated to exclude the files and directories 'bar' will use for
+        temporary/testing storage. A user may edit the 'Barf' file to suit the project/personal
+        preference.  Unneeded modules in 'Bar.d' can be deleted. When that is done the new/changed
+        files should be committed to version control.
+
+      init_update_existing:
+        Updates a initialized working tree. That is 'bar' itself will be updated when a newer
+        version is available and any module in 'Bar.d/' that exists in the local working tree will
+        be updated as well.  Barf will be left untouched.
+
+      init_update:
+        Updates a initialized working tree. That is 'bar' itself will be updated when a newer
+        version is available and all modules including ones that are not present in 'Bar.d/' will
+        be updated as well.  Barf will be left untouched.
+
+
+  lock - Library for managing lockfiles
+
+    Functions:
+
+      lock_wait <lockname>
+        Waits until we have the lock on a lockfile.
+        '.lock' is automatically appended to the 'lockname'.
+        These locks are recursive the same process can lock_wait on the same lockfile multiple
+        times which must be paired with the same numbers of 'lock_remove' to unlock it.
+
+      lock_try_norec <lockname>
+        try to lock a lockfile non recursively.
+        Will not wait, fails when we already have the lock
+        Locks 'new' and then removes the 'old' locck.
+
+      lock_send <lock> <who>
+        Sends a 'lock' to another process with pid 'who'.
+        Locks can be send atomically to another process. 'lock_send' registers the lock to be
+        send to a process, the lock will be send at the final lock_remove in the sending
+        process when all recursive locks are freed. Note that to obtain the 'who' pid the
+        receiver has to be started first.
+
+      lock_receive <lock>
+        Wait for lock send by another process.
+        Blocks until the the sender removed all uses of 'lock',
+
+      lock_remove <lock>
+        Unlocks 'lock'.
+        'lock_remove' must be paired with the same numbers of earlier 'lock_wait'. Only the
+        last 'lock_remove' will release the lockfile.
+
+  memodb - The memodb is a persistent database which memoizes command results.
+    
+    It records the stdout, stderr and state/exitcode commands and functions.  Commands and
+    functions that are used with the memodb must be pure as their result must only depend on
+    the arguments passed and the directory they are called in. The content of the directory is
+    hashed for the database. This requires properly set up '.gitignore' rules to ignore any
+    build artifacts. Otherwise subsequent instances will not use the same memodb and re-run
+    commands.
+    
+    This is used for
+     1. Persist/cache command results throughout multiple invocations
+     2. Implement background processing where one invocation can schedule commands to be
+        executed in the background and a later invocation can collect the results
+
+    Variables:
+
+      MEMODB_KEEP (gx)
+        How many trees to keep.
+        Default: ${MEMODB_KEEP:-5}
+
+      MEMODB_BACKGROUNDING (gx)
+        Global backgrounding flag.
+        Default: ${MEMODB_BACKGROUNDING:-true}
+
+    Functions:
+
+      memodb_eval <cmd> [args..]
+        Execute a command in foreground and stores its results.
+        The command is only executed on the first time the 'memodb_eval' is called with the
+        same options in the same directory. Any subsequent call will replay the stored results.
+
+      memodb_schedule <cmd> [args..]
+        Schedules a command to be run in background.
+        Will 'memodb_eval' the command when 'MEMODB_BACKGROUNDING' is not true.
+
+      memodb_result <cmd> [args..]
+        Retrieves the background results.
+        Waits for the backgrounding to be completed. Merges the results into the current memodb.
+        Replays the result (stdout/stderr/exitcode) of the given 'cmd [args..]'.
+        'cmd [args..]' must be the same as used when scheduling it to the background.
+        Will error when the command was not previously scheduled and backgrounding is enabled.
+
+      memo_exit 
+        exits a memodb, remove the lock, but keeps the log
+
+  net - Low level networking functions
+
+    Functions:
+
+      net_canon_hostname <host>
+        Canonalize 'host' to a FQDN.
+
+      net_host_reachable <host> [timeout [tries]]
+        checks if 'host' is reachable.
+        The check uses ICMP ping to check for reachability.
+        The [timeout] defaults to 10 seconds and [tries] defaults to 3.
+
+      net_wakeonlan <host>
+        Sends a wake-on-lan signal.
+        'host' is a hostname. '/etc/ethers' must have entries to resolve hosts. See
+        'contrib/update-ethers.sh' for automatically discover and maintain '/etc/ethers'. Waits
+        for the host to become reachable. Fails when it is not reachable.
+
+  rule_lib - The library that implements rules, always loaded
+
+    Functions:
+        See RULE DEFINITION SYNTAX in help for details
+
+      newrule <name:> ...
+        Creates a new rule, deletes the existing one.
+        Used to replace already existing rules/clauses.
+
+      rule_delete <name>
+        Deletes a rule (and all it clauses).
+        Can only be used when the rule was not evaluated yet.
+
+      rule_rename <oldname> <newname>
+        renames a rule
+        Can only be used when the rule was not evaluated yet.
+
+      clause_local [var[=value]..]
+        Makes scalar variables local to a clause.
+
+      rule_eval <name> [args..]
+        Evaluates a rule
+        Normally this is used by bar itself but it can be used from function and rule bodies
+        to evaluate rules.
+
+      rule_exists <name>
+        checks if a rule is defined
+
+      rule_list [pattern]
+        lists all loaded rules or rules matching pattern
+        Because of automatic module loading this list is only a current view for diagnostics.
+
+  run - Module for running tests in resource limited environments
+
+    Variables:
+
+      NICE_LEVEL (gx)
+        The nice level 'run_test' uses
+        Default: ${NICE_LEVEL:-1}
+
+      TIMEOUT_SECS (gx)
+        Timeout for tests
+        Default: ${TIMEOUT_SECS:-300}
+
+      MEMORY_KB (gx)
+        Memory limit for tests
+        Default: ${MEMORY_KB:-33554432}
+
+  search - Rules to search text in a project
+
+    Rules:
+
+      search_for:
+        [rg_args..] - General searching for text, pretty paging the results.
+
+      search_issues:
+        Searches for 'FIXME:|TODO:|PLANNED:' with some context around.
+
+      search_fixmes:
+        Searches for 'FIXME:'.
+
+      search_todos:
+        Searches for 'TODO:'.
+
+      search_planned:
+        Searches 'PLANNED:'.
+
+
+  shellcheck - Support for the shellcheck shell linter.
+    
+    Beware: Shellcheck is surprisingly slow.
+
+    Functions:
+
+      shellcheck_list_shscripts 
+        List all shell scripts under git control
+
+      shellcheck_lint 
+        Test if all shell scripts under git control pass the linter.
+
+  shellcheck_rules - Hooks shellcheck_lint into the std lint rule.
+
+    Functions:
+
+      shellcheck_is_shscript <file>
+        Check if <file> is a shell script
+
+      has_shellcheck_shscripts 
+        Checks whenever any shell scripts are versioned in git
+
+    Rules:
+
+      is_shellcheck_available:
+        Checks if shellcheck is installed and the project has any shell scripts.
+        'rule_delete' this rule in 'PREPROCESS' to disable shellcheck linting.
+
+      has_shellcheck_shscripts:
+        Checks if the project has any shell scripts. Must be called from a git toplevel.
+
+
+  ssh - Access remote hosts
+
+    Functions:
+
+      ssh_ping [[user@]host]
+        Checks if one can connect to a remote host.
+
+      ssh_cmd [ssh_args]..
+        Executes a ssh command.
+
+      ssh_bg_cmd [ssh_args]..
+        Executes a ssh command in the background.
+
+  std_lib - Library of general functions which are always present
+
+    Functions:
+
+      memo [-c|-d] [cmd args..]..
+        memoize the result/stdout/stderr of commands, will always return the same result again
+        Memoizes for the current run only. See memodb for persistent memoization.
+        Memoized functions must be pure and only depend on their arguments and the current working directory.
+        Can not handle null bytes in stdout/stderr, use memodb when that is required.
+
+      memofn <functionnames..>
+        rewrites a function into a function that uses 'memo'
+        This renames the given functions to 'nomemo_<functionname>' and creates a wrapper
+        function with the original name that memoizes the result.
+
+      is_scalar <name>
+        Checks that a variable 'name' is a scalar (non array) variable.
+
+      called_as [pattern..]
+        Checks whenever bar is called as a symlink matching the given patterns.
+        This is usable as a rule dependency.
+
+      is_command_installed <command>
+        Checks whenever a function exists or a shell command is in PATH.
+
+      bar_now 
+        Returns the current timestamp in microseconds since epoch.
+
+      hash_args <arguments..>
+        returns the sha1hash of all supplied arguments
 
   std_rules - Standard rule targets where other modules can hook in
     
@@ -744,6 +1287,114 @@ MODULE API/RULES
         Activates maintainer curated githooks and other setup to use bar in a checked out
         repository.
 
+
+  testdir - Creating an isolated directory for testing.
+    
+    Unlike other frameworks which do 'pre-commit' processing bar will not modify, block or
+    stash the users workdir. Instead it creates and manages directories which become populated
+    with the projects files. These testdirs also act as caches for build artifacts an can be
+    seeded from previous runs to increase build/test speed. Testdirs are automatically garbage
+    collected, only a few most recent used ones are kept for inspection and seeding new build.
+    
+    Testdirs are created from git 'treeish' objects. Thus git is mandatory.
+    Testdirs are created in the git toplevel and have the name constructed from
+    '$TESTDIR_PREFIX-<timestamp>-<treehash>/'
+
+    Variables:
+
+      TESTDIR_PREFIX (gx)
+        Prefix used for testdirs.
+        Default: ${TESTDIR_PREFIX:-.test}
+
+      TESTDIR_KEEP (gx)
+        How many old testdirs.
+        Default: ${TESTDIR_KEEP:-5}
+
+      TESTDIR (gx)
+        Path to the current testdir.
+
+      TESTDIR_PREV (gx)
+        Path to the previous testdir if exits.
+
+    Functions:
+
+      testdir_gc 
+        Cleanup old testdirs.
+        Removed old unused testdirs. This is called automatically. It is only necessary to
+        manually call this when testdirs piled up because they where in use or when
+        'TESTDIR_KEEP' was decremented.
+
+      testdir_clean 
+        Cleanup all testdirs.
+        Removes all unused testdirs.
+
+      testdir_list 
+        Lists all testdirs.
+
+    Rules:
+
+      testdir_enter:
+        [treeish] - Sets up a test directory change dir into it.
+        Must be called from the git toplevel. Takes an optional treeish to construct the testdir
+        from. When no treeish is given then current index is used.  After creation the
+        'testdir_enter_hook' rule is evaluated. This rule is used to prep/populate/seed the
+        testdir. When a previous testdir exists then 'TESTDIR_PREV' point to it, the hook can use
+        that as source for populating already build artifacts.
+
+
+  tty_lib - This module adds some support for conditional terminal control codes.
+    
+    These codes are stored in the 'TTYCTL' associative array.  The 'TTYNIL' mirrors the keys
+    from 'TTYCTL' but maps them to empty strings.  Finally 'TTYOUT' and 'TTYERR' refer to
+    'TTYCTL' when the associated output stream is a non dumb terminals and refer to 'TTYNIL'
+    when it is not a terminal or a dumb terminal.
+    
+    The keys in 'TTYCTL/TTYNIL' are as following.
+    
+    Two character control sequences:
+     'ce' - Clears from cursor to the end of the line.
+     'cl' - Puts the cursor in column 1 and clears the line.
+     'cs' - Clears the entire screen.
+     'cr' - Puts the cursor in column 1.
+    
+    Three character styles:
+      The first two characters set the foreground and background color:
+       '_' - no change.
+       'k' - black
+       'r' - red.
+       'g' - green
+       'b' - blue.
+       'y' - yellow.
+       'm' - magenta.
+       'c' - cyan.
+       'K' - bright black
+       'R' - bright red.
+       'G' - bright green
+       'B' - bright blue.
+       'Y' - bright yellow.
+       'M' - bright magenta.
+       'C' - bright cyan.
+      The third character set the style uppercase enables, lowercase disables:
+       '_' - no change.
+       'B' - bold.
+       'D' - dim.
+       'U' - underline.
+       'I' - italic.
+       'R' - reverse.
+       'S' - strike-through.
+       'n' - normal (has no uppercase).
+    
+    Finally there is a the one character 'n' code that resets the style completely.
+    
+    For an example to see how this is used look at the 'std_lib' module.
+
+    Functions:
+
+      tty_echo [echo_args]
+        Echos only when the output is a tty.
+
+      tty_newline 
+        Outputs a newline when we are not at column 1.
 
   watch - Continious supervision by a file watcher
 

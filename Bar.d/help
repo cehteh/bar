@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bash
 
 ### Provides help, extracts documentation from modules
 ###
@@ -31,25 +31,26 @@ function help
 
 ABOUT
 
-  Bar is a command runner that decides the order and which commands to run by rules. It to
-  define rules that dependently and conditionally evaluate shell statements.  This is similar
-  to other tools such as 'make' or 'just' but adds some opinionated differences. There is
-  support for using bar as driver for githooks for automating workflows.
+  Bar is a command runner that determines the order of commands and which ones to run, based
+  on rules. It lets the user define rules that dependently and conditionally evaluate shell
+  statements.  This is similar to other tools such as 'make' or 'just' but adds some
+  opinionated differences. There is support for using bar as driver for githooks for
+  automating workflows.
 
   The notable differences to other similar tools are:
 
   * Rules in bar can have multiple clauses.
   * Normally rules are conjunctive, when a clause of a rule fails then the rule fails and not
     further evaluated.
-  * Rules can made disjunctive, then a rule succeeds on the first succeeding clause.
+  * Rules can be made disjunctive, then a rule succeeds on the first succeeding clause.
   * Clauses can be conditionally skipped.
   * The results of rules are cached. Normally rules are evaluated only once, although there is
     a form to define rules that always evaluate.
   * We have a module that can memorize commands persistently and schedule evaluation to the
     background. A later instance can pick up the results from this background evaluation.
 
-  When you read this because you seen 'bar' or '.bar' used in a repository then you may look
-  at INITIAL INSTALLATION below.
+  When you read this because you have seen 'bar' or '.bar' used in a repository then you may
+  look at INITIAL INSTALLATION below.
 
 
 QUICKSTART
@@ -58,7 +59,7 @@ QUICKSTART
 
    ./bar                # just runs whatever the maintainer decided as default
    ./bar watch          # watches the project for changes and runs the default
-   ./bar watch fastchk  # watches the project for changes and run fast checks
+   ./bar watch fastchk  # watches the project for changes and runs fast checks
    ./bar activate       # installs githooks and other local prep work
 
   When you want to install and use it in your own projects
@@ -89,7 +90,7 @@ INVOCATION AND SEMANTICS
     ./bar [rulefile] [rule [arguments..]]
     <symlink> [arguments..]
 
-  Starts by loading all initial modules (those which have underscores in their name) and the a
+  Starts by loading all initial modules (those which have underscores in their name) and the
   rulefile, which is either "Barf", "barf", ".Barf", ".barf" when called as 'bar' or "Pleasef"
   "pleasef" ".Pleasef" ".pleasef" "\$HOME/.Pleasef" when called as 'please' and when the first
   argument is not a file.
@@ -103,8 +104,8 @@ INVOCATION AND SEMANTICS
   located in different paths. This is a opinionated choice to make the module system
   self-contained and not depend on secondary locations.
 
-  Then the given rule (or MAIN) with the supplied arguments becomes evaluated. Finally if
-  exists a 'CLEANUP' rule is evaluated.
+  Then the given rule (or MAIN) with the supplied arguments becomes evaluated. Finally, if
+  a 'CLEANUP' rule exists, it is evaluated.
 
   The exit code of the invocation is the exit code of the main rule.
 
@@ -112,8 +113,8 @@ INVOCATION AND SEMANTICS
   people expect by default. Other useful rules like 'help' for this documentation are defined
   by modules.
 
-  When called by a symlink then the standard rulefile (as above) is loaded and instead 'MAIN'
-  a rule with the same name as the symlink is called with all arguments passed.
+  When called by a symlink, the standard rulefile is loaded and instead of ‘MAIN’, a rule with
+  the same name as the symlink is called with all arguments passed.
 
 
 INITIAL INSTALLATION
@@ -143,7 +144,7 @@ INITIAL INSTALLATION
      Now 'bar' is installed, check it with 'bar help'
 
   2. The local './.bar' initialized from above:
-     Since bar is a bash script its easy to version and ship it with other software.
+     Since bar is a bash script, it’s easy to version and ship it with other software.
      To initialize it in a current directory use either of:
 
        bar init          # creates bar, Barf, Bar.d/
@@ -169,7 +170,7 @@ INITIAL INSTALLATION
   3. githooks symlinked from './.git/hooks/*' -> '../../bar'
      'bar' has support to be used as githooks. This needs manual enabling. Individual hooks can be
      enabled or disabled with 'bar githook_enable <hook>' and 'bar githook_disable <hook>'.
-     For exiting projects using 'bar' a maintainer can setup rules to activate all necessary hooks.
+     For existing projects using 'bar' a maintainer can setup rules to activate all necessary hooks.
      This then can be activated by './bar activate'.
 
 
@@ -186,12 +187,11 @@ GIT HOOK ACTIVATION
 RULE SEMANTICS
 
   Rules are a named, ordered collection of clauses. They are considered pure with inputs being
-  the current directory name and the rules arguments. Note that the content of files is *not*
-  considered and the outcome of the rule should not depend on external variables. By being
-  pure rules are evaluated lazily, only once, the result of a rule is cached. This means that
-  rules, esp. the actions within the body must have deterministic sematics. For performance
-  reasons this is not enforced but one may observe surprising behavior when this requirement
-  is violated.
+  the current directory name and the rule's arguments. Note that the content of files is *not*
+  considered and the outcome of the rule should not depend on external variables. Rules are
+  evaluated lazily, only once; the result of a rule is cached. This means that rules, esp. the
+  actions within the body must have deterministic sematics. For performance reasons this is
+  not enforced but one may observe surprising behavior when this requirement is violated.
 
   Rules will be autoloaded on demand from modules in 'Bar.d/' (see below AUTOMATIC MODULE
   LOADING). For rules where this fails a fallback exits that creates an implicit rule for any
@@ -346,7 +346,7 @@ RULE DEFINITION SYNTAX
 
     If exist 'SETUP', 'PREPROCESS', 'POSTPROCESS' and 'CLEANUP' will be called.
      * SETUP
-       Should set up the environment for all subsequent evaluation. Setup rules
+       Should set up the environment for all subsequent evaluation. Rules in 'SETUP'
        should be self-sufficient and not expect a working environment yet.
        A failure here will abort bar.
      * PREPROCESS
@@ -517,8 +517,8 @@ function help_describe_functions
              out = out text "\n"
     }
 
-    /^function[ \t]+[A-Za-z_][A-Za-z0-9_]*[ \t]*##/ {
-      if (match($0, /^function[ \t]+([A-Za-z_][A-Za-z0-9_]*)[ \t]*## (((.*) )?- )?(.*)$/, m)) {
+    /^.*function[ \t]+[A-Za-z_][A-Za-z0-9_]*[ \t]*##/ {
+      if (match($0, /^.*function[ \t]+([A-Za-z_][A-Za-z0-9_]*)[ \t]*## (((.*) )?- )?(.*)$/, m)) {
         printout()
         printout("      " m[1] " " m[4])
         printout("        " m[5])
@@ -551,7 +551,7 @@ function help_describe_rules
 
     /^rule([ \t]+[A-Za-z_-][A-Za-z0-9_-]*)+:/ {
       if (descr != "" ) {
-         if (match($0, /^rule([ \t](--[a-z_-]*)?)+([A-Za-z_][A-Za-z0-9_]*:)/, m)) {
+         if (match($0, /^rule([ \t](--[a-z_-]*)?)+([A-Za-z_-][A-Za-z0-9_-]*:)/, m)) {
             printout("      " m[3])
             printout(descr)
             descr=""
@@ -591,11 +591,13 @@ function help_describe_variables
     }
 
     /declare[ \t]+.*##/ {
-      if (match($0, /declare[ \t]+(-([a-zA-Z]+))? ([A-Za-z_][A-Za-z0-9_]*)="(.*)"[ \t]*## (.*)$/, m)) {
+      if (match($0, /declare[ \t]+(-([a-zA-Z]+))? ([A-Za-z_][A-Za-z0-9_]*)(="(.*)")?[ \t]*## (.*)$/, m)) {
         printout("")
         printout("      " m[3] " (" m[2] ")")
-        printout("        " m[5])
-        printout("        Default: " m[4])
+        printout("        " m[6])
+        if (m[4] != "") {
+           printout("        Default: " m[5])
+        }
         next
       }
     }

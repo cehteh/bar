@@ -1,20 +1,15 @@
 #!/bash
-## managing lockfiles
-##
 
-# Lockfiles: Manage ownership of resources.  We can create or wait on a lockfile with
-# lock_wait and remove it with lock_remove.  These locks are recursive the same process can
-# lock_wait on the same lockfile multiple times which must be paired with the same numbers of
-# lock_remove to unlock it.  lock_next does hand over hand locking locking a new lockfile and
-# then releases the original one.  lock_remove takes a name as parameter and removes the
-# lockfile if it is owned by the current process.  Locks can be send atomically to another
-# process. lock_receive blocks until the the process gets the lock, lock_send registers the
-# lock to be send to a process. It will be send at the final lock_remove in the sending
-# process.
+### Library for managing lockfiles
+
 declare -gA LOCK_REC=()
 
-function lock_wait #api <lockname> - lock a lockfile, waits until we have the lock
+function lock_wait ## <lockname> - Waits until we have the lock on a lockfile.
 {
+    ## '.lock' is automatically appended to the 'lockname'.
+    ## These locks are recursive the same process can lock_wait on the same lockfile multiple
+    ## times which must be paired with the same numbers of 'lock_remove' to unlock it.
+
     # shellcheck disable=SC2155
     local lockfile="$(realpath -s "$1.lock")"
     if (( LOCK_REC["$lockfile"] > 0 )); then
@@ -68,8 +63,9 @@ function lock_wait #api <lockname> - lock a lockfile, waits until we have the lo
     trace "locked: $1 as $BASHPID"
 }
 
-function lock_try_norec #api <lockname> - try to lock a lockfile non recursively, will not wait, fails when we already have the lock
+function lock_try_norec ## <lockname> - try to lock a lockfile non recursively.
 {
+    ## Will not wait, fails when we already have the lock
     # shellcheck disable=SC2155
     local lockfile="$(realpath -s "$1.lock")"
     if (( LOCK_REC["$lockfile"] > 0 )); then
@@ -105,14 +101,36 @@ function lock_try_norec #api <lockname> - try to lock a lockfile non recursively
     trace "locked: $1 as $BASHPID"
 }
 
-function lock_next # old new - hand over hand locking
+function lock_next # <old> <new> - hand over hand locking
 {
+    ## Locks 'new' and then removes the 'old' locck.
     lock_wait "$2"
     lock_remove "$1"
 }
 
-function lock_receive #api <lock> - to be called in a subprocess before sending the lock
+function lock_send ## <lock> <who> - Sends a 'lock' to another process with pid 'who'.
 {
+    ## Locks can be send atomically to another process. 'lock_send' registers the lock to be
+    ## send to a process, the lock will be send at the final lock_remove in the sending
+    ## process when all recursive locks are freed. Note that to obtain the 'who' pid the
+    ## receiver has to be started first.
+    # shellcheck disable=SC2155
+    local lockfile="$(realpath -s "$1.lock")"
+    (( LOCK_REC["$lockfile"] > 0 )) || die "lock $1 is not locked by $BASHPID"
+
+    # shellcheck disable=SC2155
+    local send_to=$(<"$lockfile")
+    [[ "$send_to" != "$BASHPID" ]] && {
+        error "lock $1 is already send to $send_to"
+        return 1
+    }
+
+    echo -n "$2" > "$lockfile"
+}
+
+function lock_receive ## <lock> - Wait for lock send by another process.
+{
+    ## Blocks until the the sender removed all uses of 'lock',
     # shellcheck disable=SC2155
     local lockfile="$(realpath -s "$1.lock")"
 
@@ -136,24 +154,10 @@ function lock_receive #api <lock> - to be called in a subprocess before sending 
     done
 }
 
-function lock_send #api <lock> <who> - to be called from parent after child forked
+function lock_remove ## <lock> - Unlocks 'lock'.
 {
-    # shellcheck disable=SC2155
-    local lockfile="$(realpath -s "$1.lock")"
-    (( LOCK_REC["$lockfile"] > 0 )) || die "lock $1 is not locked by $BASHPID"
-
-    # shellcheck disable=SC2155
-    local send_to=$(<"$lockfile")
-    [[ "$send_to" != "$BASHPID" ]] && {
-        error "lock $1 is already send to $send_to"
-        return 1
-    }
-
-    echo -n "$2" > "$lockfile"
-}
-
-function lock_remove #api {name} - remove a lockfile, unlock
-{
+    ## 'lock_remove' must be paired with the same numbers of earlier 'lock_wait'. Only the
+    ## last 'lock_remove' will release the lockfile.
     # shellcheck disable=SC2155
     local lockfile="$(realpath -s "$1.lock")"
 

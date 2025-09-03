@@ -1,27 +1,18 @@
 #!/bash
 
-## memo db and log
-
-# A memodb is a persistent database which records the stdout, stderr and state/exitcode of commands
-
-# This is used for
-#  1. Persist/cache command results throughout multiple invocations
-#  2. Implement background processing where one invocation can schedule commands to be
-#     executed in the background and a later invocation can collect the results
-#
-# Functions
-#   memodb_eval
-#     executes a command in foreground and stores its results (exitcode, stdout, stderr)
-#
-#   memodb_schedule [--tag <tag>] cmd [args]
-#     schedules a command to be run in background
-#     will memodb_eval the command when backgrounding is disabled
-#
-#   memodb_result [--tag <tag>] cmd [args]
-#     waits and merges/returns the result of a backgrounded command of a former invication
-#     just returns the (memodb cached) result when backgrounding is disabled
-#     will error when the command was not previously scheduled and backgrounding is enabled
-#
+### The memodb is a persistent database which memoizes command results.
+###
+### It records the stdout, stderr and state/exitcode commands and functions.  Commands and
+### functions that are used with the memodb must be pure as their result must only depend on
+### the arguments passed and the directory they are called in. The content of the directory is
+### hashed for the database. This requires properly set up '.gitignore' rules to ignore any
+### build artifacts. Otherwise subsequent instances will not use the same memodb and re-run
+### commands.
+###
+### This is used for
+###  1. Persist/cache command results throughout multiple invocations
+###  2. Implement background processing where one invocation can schedule commands to be
+###     executed in the background and a later invocation can collect the results
 
 # Internals
 #
@@ -42,18 +33,15 @@
 # Each memo log is used to cache the result of tests and to schedule background jobs.
 # A memo log is appended to after each test is run.
 
-# TODO: document that this needs clean .gitignore
-# TODO: make a gitignore rule, add .bar.db, .bar*.lock etc, add that to activate
-
 require lock
 
-declare -gx MEMODB_KEEP="${MEMODB_KEEP:-5}"
-declare -gx MEMODB_BACKGROUNDING="${MEMODB_BACKGROUNDING:-true}"
+declare -gx MEMODB_KEEP="${MEMODB_KEEP:-5}"                      ## How many trees to keep.
+declare -gx MEMODB_BACKGROUNDING="${MEMODB_BACKGROUNDING:-true}" ## Global backgrounding flag.
 declare -gA MEMODB_INITIALIZED_TAGS=()
 
-# (re-) initializes a memo log, acquires a lock
-function memodb_init #api [tag] - initializes a memo log
+function memodb_init # [tag] - initializes a memo log
 {
+    # (re-) initializes a memo log, acquires a lock
     trace "$*"
 
     local tag="${1:-bg}"
@@ -140,8 +128,11 @@ function memodb_log # state hash cmd args.. - logs the state of a command
     MEMODB[$PWD//#$*]="$state $hash"
 }
 
-function memodb_eval # [--tag <tag>] cmd [args..]
+# PLANNED: function memodb_eval # [--tag <tag>]
+function memodb_eval ## <cmd> [args..] - Execute a command in foreground and stores its results.
 {
+    ## The command is only executed on the first time the 'memodb_eval' is called with the
+    ## same options in the same directory. Any subsequent call will replay the stored results.
     memodb_init ''
 
     # shellcheck disable=SC2155
@@ -179,8 +170,10 @@ function memodb_eval # [--tag <tag>] cmd [args..]
 # list of schedules commands as "$cmdhash $PWD//#$*"
 declare -gax MEMODB_SCHEDULED=()
 
-function memodb_schedule # TODO: --tag <tag>
+# TODO: --tag <tag>
+function memodb_schedule ## <cmd> [args..] - Schedules a command to be run in background.
 {
+    ## Will 'memodb_eval' the command when 'MEMODB_BACKGROUNDING' is not true.
     trace "$*"
     memodb_init ''
     if [[ "$MEMODB_BACKGROUNDING" = true ]]; then
@@ -232,8 +225,13 @@ function memodb_replay_bg_log
     rm "$MEMODB_DIR/.bg.log"
 }
 
-function memodb_result # TODO: --tag <tag>
+# TODO: --tag <tag>
+function memodb_result ## <cmd> [args..] - Retrieves the background results.
 {
+    ## Waits for the backgrounding to be completed. Merges the results into the current memodb.
+    ## Replays the result (stdout/stderr/exitcode) of the given 'cmd [args..]'.
+    ## 'cmd [args..]' must be the same as used when scheduling it to the background.
+    ## Will error when the command was not previously scheduled and backgrounding is enabled.
     trace "$*"
     memodb_init ''
     # shellcheck disable=SC2155
@@ -336,7 +334,7 @@ function memodb_gc # - cleanup old memodbs
     lock_remove "$BAR_TOPLEVEL/.bar"
 }
 
-# function memo_exit #api - exits a memodb, remove the lock, but keeps the log
+# function memo_exit ## - exits a memodb, remove the lock, but keeps the log
 # {
 #     if [[ -n "$MEMO_LOCK" ]]; then
 #         unset MEMO_LOG

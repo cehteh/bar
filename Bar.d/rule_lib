@@ -1,20 +1,22 @@
 #!/bash
 #shellcheck disable=SC2016
 
-# library for the rule functions
-declare -g   BAR_CHECK_LEVEL=0         ## less alerting for check dependencies
-declare -gAx BAR_RULES                 ## discovered rules as name:"clauseidx.."
-declare -gAx BAR_RULES_RESULT          ## results "name":"hashes .." and "#hash":rc
-declare -gA  BAR_RULE_FLAGS=(          ## [r]everse [a]lways [m]eta [d]isjunct [m]meta [D]isabled
+### The library that implements rules, always loaded
+
+declare -g   BAR_CHECK_LEVEL=0         # less alerting for check dependencies
+declare -gAx BAR_RULES                 # discovered rules as name:"clauseidx.."
+declare -gAx BAR_RULES_RESULT          # results "name":"hashes .." and "#hash":rc
+declare -gA  BAR_RULE_FLAGS=(          # [r]everse [a]lways [m]eta [d]isjunct [m]meta [D]isabled
     [CLEANUP]="r"
     [clause_local]="am"
 )
-declare -gax BAR_CLAUSES=()            ## clause bodies enumerated
-declare -gax BAR_CLAUSE_DEPS=()        ## dependencies for each clause
-declare -ga  BAR_CLAUSE_FLAGS=()       ## [c]onclusive
+declare -gax BAR_CLAUSES=()            # clause bodies enumerated
+declare -gax BAR_CLAUSE_DEPS=()        # dependencies for each clause
+declare -ga  BAR_CLAUSE_FLAGS=()       # [c]onclusive
 
-function rule () ## [[--rule-flag].. <name>:] [--clause-flag].. [[!]dep[?] [arg]..].. [-- body..] - defines a rule
+function rule () ## [[--rule-flag].. <name>:] [--clause-flag].. [[!]dep[?] [arg]..].. [-- body..] - Defines a rule.
 {
+    ## See RULE DEFINITION SYNTAX in help for details
     trace "$*"
 
     local ruleflags=""
@@ -113,14 +115,16 @@ function rule () ## [[--rule-flag].. <name>:] [--clause-flag].. [[!]dep[?] [arg]
     BAR_RULES["$name"]+=" $(( ${#BAR_CLAUSES[@]} - 1))"
 }
 
-function newrule ## <name:> ... - creates a new rule with the given name, deletes the existing one
+function newrule ## <name:> ... - Creates a new rule, deletes the existing one.
 {
+    ## Used to replace already existing rules/clauses.
     rule_delete "${1%:}"
     rule "$@"
 }
 
-function rule_delete
+function rule_delete ## <name> - Deletes a rule (and all it clauses).
 {
+    ## Can only be used when the rule was not evaluated yet.
     trace "$*"
     local name="$1"
     if [[ -z "$name" ]]; then
@@ -143,6 +147,7 @@ function rule_delete
 
 function rule_rename ## <oldname> <newname> - renames a rule
 {
+    ## Can only be used when the rule was not evaluated yet.
     trace "$*"
     local oldname="$1"
     local newname="$2"
@@ -168,14 +173,7 @@ function rule_rename ## <oldname> <newname> - renames a rule
     unset "BAR_RULE_FLAGS[$oldname]"
 }
 
-function is_scalar
-{
-    # shellcheck disable=2155
-    local type="$(declare -p "$1")"
-    [[ $type == 'declare --'* || $type == 'declare -i'* || $type == 'declare -x'* ]]
-}
-
-function clause_local
+function clause_local ## [var[=value]..] - Makes scalar variables local to a clause.
 {
     local var
     local value
@@ -210,8 +208,10 @@ function clause_local_restore
     unset CLAUSE_LOCAL
 }
 
-function rule_eval ## <name> [args..]
+function rule_eval ## <name> [args..] - Evaluates a rule
 {
+    ## Normally this is used by bar itself but it can be used from function and rule bodies
+    ## to evaluate rules.
     trace "$*"
     # shellcheck disable=2155
     local rule_id="$(hash_args "$PWD $*")"
@@ -378,6 +378,7 @@ function rule_exists ## <name> - checks if a rule is defined
 
 function rule_list ## [pattern] - lists all loaded rules or rules matching pattern
 {
+    ## Because of automatic module loading this list is only a current view for diagnostics.
     local rule
     for rule in $(tr ' ' '\n' <<<"${!BAR_RULES[@]}" | sort); do
         # shellcheck disable=2053

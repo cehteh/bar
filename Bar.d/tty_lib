@@ -1,8 +1,50 @@
 #!/bash
 
-#
-# this module adds some support for terminal color codes and a fancy progress spinner
-#
+### This module adds some support for conditional terminal control codes.
+###
+### These codes are stored in the 'TTYCTL' associative array.  The 'TTYNIL' mirrors the keys
+### from 'TTYCTL' but maps them to empty strings.  Finally 'TTYOUT' and 'TTYERR' refer to
+### 'TTYCTL' when the associated output stream is a non dumb terminals and refer to 'TTYNIL'
+### when it is not a terminal or a dumb terminal.
+###
+### The keys in 'TTYCTL/TTYNIL' are as following.
+###
+### Two character control sequences:
+###  'ce' - Clears from cursor to the end of the line.
+###  'cl' - Puts the cursor in column 1 and clears the line.
+###  'cs' - Clears the entire screen.
+###  'cr' - Puts the cursor in column 1.
+###
+### Three character styles:
+###   The first two characters set the foreground and background color:
+###    '_' - no change.
+###    'k' - black
+###    'r' - red.
+###    'g' - green
+###    'b' - blue.
+###    'y' - yellow.
+###    'm' - magenta.
+###    'c' - cyan.
+###    'K' - bright black
+###    'R' - bright red.
+###    'G' - bright green
+###    'B' - bright blue.
+###    'Y' - bright yellow.
+###    'M' - bright magenta.
+###    'C' - bright cyan.
+###   The third character set the style uppercase enables, lowercase disables:
+###    '_' - no change.
+###    'B' - bold.
+###    'D' - dim.
+###    'U' - underline.
+###    'I' - italic.
+###    'R' - reverse.
+###    'S' - strike-through.
+###    'n' - normal (has no uppercase).
+###
+### Finally there is a the one character 'n' code that resets the style completely.
+###
+### For an example to see how this is used look at the 'std_lib' module.
 
 # compute lookup table for styles once
 tty_init_maps() {
@@ -69,6 +111,7 @@ tty_init_maps() {
             ;;
     esac
 
+    # Mark the arrays readonly
     declare -gxrA TTYCTL TTYNIL
     declare -gxrn TTYOUT TTYERR
 }
@@ -76,12 +119,12 @@ tty_init_maps() {
 tty_init_maps
 unset -f tty_init_maps
 
-function tty_echo # echos only when the output is a tty
+function tty_echo ## [echo_args] - Echos only when the output is a tty.
 {
     [[ -t 1 ]] && echo "$@"
 }
 
-[[ "${TERM:-dumb}" = "dumb" ]] || function tty_newline # prints a newline when we are not at column 1
+[[ "${TERM:-dumb}" = "dumb" ]] || function tty_newline ## Outputs a newline when we are not at column 1.
 {
     local col
     IFS=';' read -srdR -p $'\033[6n' _ col || true
@@ -89,11 +132,5 @@ function tty_echo # echos only when the output is a tty
     [[ "$col" != 1 ]] && echo
     return 0
 }
-
-# we now have:
-#  TTYCTL mapping styles to ansi control sequences
-#  TTYNIL mapping styles to empty strings
-#  TTYOUT points to TTYCTL when stdout is a tty, else to TTYNIL
-#  TTYERR points to TTYCTL when stderr is a tty, else to TTYNIL
 
 

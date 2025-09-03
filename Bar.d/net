@@ -1,26 +1,33 @@
 #!/bash
 
-function canon_hostname # <host>
+### Low level networking functions
+
+function net_canon_hostname ## <host> - Canonalize 'host' to a FQDN.
 {
     getent hosts "$1" | awk '{print $2}'
 }
 
-function net_host_reachable # <host> [timeout [tries]]
+function net_host_reachable ## <host> [timeout [tries]] - checks if 'host' is reachable.
 {
+    ## The check uses ICMP ping to check for reachability.
+    ## The [timeout] defaults to 10 seconds and [tries] defaults to 3.
     local i
     for (( i=0; i<${3:-1}; ++i)); do
-        ping -q -W"${2:-10}" -c1 "$1" >/dev/null
+        ping -q -W"${2:-10}" -c1 "$1" >/dev/null && return 0
     done
 }
 
-function net_wakeonlan # <host>
+function net_wakeonlan ## <host> - Sends a wake-on-lan signal.
 {
+    ## 'host' is a hostname. '/etc/ethers' must have entries to resolve hosts. See
+    ## 'contrib/update-ethers.sh' for automatically discover and maintain '/etc/ethers'. Waits
+    ## for the host to become reachable. Fails when it is not reachable.
     is_command_installed wakeonlan || {
         error "wakeonlan is not installed"
         return 1
     }
     local host
-    host="$(canon_hostname "$1")"
+    host="$(net_canon_hostname "$1")"
     if [[ -n "$host" ]]; then
         wakeonlan "$host"
         net_host_reachable "$host" 10 10 && return 0

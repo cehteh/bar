@@ -1,19 +1,35 @@
 #!/bash
 
+### Creating an isolated directory for testing.
+###
+### Unlike other frameworks which do 'pre-commit' processing bar will not modify, block or
+### stash the users workdir. Instead it creates and manages directories which become populated
+### with the projects files. These testdirs also act as caches for build artifacts an can be
+### seeded from previous runs to increase build/test speed. Testdirs are automatically garbage
+### collected, only a few most recent used ones are kept for inspection and seeding new build.
+###
+### Testdirs are created from git 'treeish' objects. Thus git is mandatory.
+### Testdirs are created in the git toplevel and have the name constructed from
+### '$TESTDIR_PREFIX-<timestamp>-<treehash>/'
+
 require lock
 require git_lib
 
-declare -gx TESTDIR_PREFIX="${TESTDIR_PREFIX:-.test}"
-declare -gx TESTDIR_KEEP="${TESTDIR_KEEP:-5}"
-declare -gx TESTDIR
-declare -gx TESTDIR_PREV
+declare -gx TESTDIR_PREFIX="${TESTDIR_PREFIX:-.test}" ## Prefix used for testdirs.
+declare -gx TESTDIR_KEEP="${TESTDIR_KEEP:-5}"         ## How many old testdirs.
+declare -gx TESTDIR                                   ## Path to the current testdir.
+declare -gx TESTDIR_PREV                              ## Path to the previous testdir if exits.
 
-# create and change into testdir
+## [treeish] - Sets up a test directory change dir into it.
+## Must be called from the git toplevel. Takes an optional treeish to construct the testdir
+## from. When no treeish is given then current index is used.  After creation the
+## 'testdir_enter_hook' rule is evaluated. This rule is used to prep/populate/seed the
+## testdir. When a previous testdir exists then 'TESTDIR_PREV' point to it, the hook can use
+## that as source for populating already build artifacts.
 rule testdir_enter: is_git_toplevel -
-# other modules can hook into here
 rule testdir_enter: testdir_enter_hook??
 
-function testdir_enter # treeish - Sets up a test directory change dir into it.
+function testdir_enter
 {
     trace "$*"
     lock_wait "$BAR_TOPLEVEL/.bar"
@@ -37,19 +53,25 @@ function testdir_enter # treeish - Sets up a test directory change dir into it.
     fi
     lock_next "$BAR_TOPLEVEL/.bar" "$TESTDIR/.bar"
     rule CLEANUP: -- "cd '$(git_toplevel)'; lock_remove '$TESTDIR/.bar'; testdir_gc"
-    cd "$TESTDIR" || { error "cant change into $TESTDIR"; return 1; }
+    cd "$TESTDIR" || { error "can't change into $TESTDIR"; return 1; }
 }
 
+## Succeeds when a testdir is in use and current working directory is inside it.
 function is_testdir_used
 {
-    [[ -v TESTDIR && "$PWD" = "$TESTDIR"* ]]
+    [[ -v TESTDIR && "$PWD/" = "$TESTDIR/"* ]]
 }
 
-function testdir_gc # - cleanup old testdirs
+function testdir_gc ## Cleanup old testdirs.
 {
+    ## Removed old unused testdirs. This is called automatically. It is only necessary to
+    ## manually call this when testdirs piled up because they where in use or when
+    ## 'TESTDIR_KEEP' was decremented.
     local testdir
     lock_wait "$BAR_TOPLEVEL/.bar"
-    find "$(git_toplevel)" -name "${TESTDIR_PREFIX}*" -type d -print0 | sort -z -n | head -z -n -$((TESTDIR_KEEP)) |
+    find "$(git_toplevel)" -maxdepth 1 -name "${TESTDIR_PREFIX}*" -type d -print0 |
+        sort -z -n |
+        head -z -n -$((TESTDIR_KEEP)) |
         while IFS= read -r -d '' testdir; do
             if lock_try_norec "$testdir/.bar"; then
                 info "deleting: $testdir"
@@ -61,11 +83,12 @@ function testdir_gc # - cleanup old testdirs
     lock_remove "$BAR_TOPLEVEL/.bar"
 }
 
-function testdir_clean # - cleanup all testdirs
+function testdir_clean ## Cleanup all testdirs.
 {
+    ## Removes all unused testdirs.
     local testdir
     lock_wait "$BAR_TOPLEVEL/.bar"
-    find "$(git_toplevel)" -name "${TESTDIR_PREFIX}*" -type d -print0 |
+    find "$(git_toplevel)" -maxdepth 1 -name "${TESTDIR_PREFIX}*" -type d -print0 |
         while IFS= read -r -d '' testdir; do
             if lock_try_norec "$testdir/.bar"; then
                 info "deleting: $testdir"
@@ -77,7 +100,7 @@ function testdir_clean # - cleanup all testdirs
     lock_remove "$BAR_TOPLEVEL/.bar"
 }
 
-function testdir_list # - list all testdirs
+function testdir_list ## Lists all testdirs.
 {
-    find "$(git_toplevel)" -name "${TESTDIR_PREFIX}*" -type d
+    find "$(git_toplevel)" -maxdepth 1 -name "${TESTDIR_PREFIX}*" -type d
 }

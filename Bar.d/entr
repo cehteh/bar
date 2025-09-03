@@ -1,13 +1,17 @@
 #!/bash
 # support for the entr file watcher
 
+### Support for the entr file watcher
 
+## Succeeds when 'entr' is available.
 rule is_entr_installed: 'is_command_installed entr'
 
-# shellcheck disable=2016
 function entr_watch
 {
     while ! git_ls_files --other | entr -c -s "sleep 0.25 ; $BAR_SELF $BARF_FILE $*"; do :; done
 }
 
+## Runs bar in a loop again whenever a file gets changed.
+## Takes a target rule and its parameters as argument.
+## Defaults to 'MAIN'.
 rule entr_watch: is_entr_installed -

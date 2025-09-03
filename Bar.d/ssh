@@ -1,16 +1,18 @@
 #!/bash
 
-function ssh_ping
+### Access remote hosts
+
+function ssh_ping ## [[user@]host] - Checks if one can connect to a remote host.
 {
     ssh "$1" true
 }
 
-function ssh_cmd
+function ssh_cmd ## [ssh_args].. - Executes a ssh command.
 {
     ssh "$@"
 }
 
-function ssh_bg_cmd
+function ssh_bg_cmd ## [ssh_args].. - Executes a ssh command in the background.
 {
-    ( ssh "$@" & )
+    ( ssh "$@" & ) </dev/null >&/dev/null
 }

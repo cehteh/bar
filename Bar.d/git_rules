@@ -1,29 +1,55 @@
 #!/bash
 #shellcheck disable=SC2016
 
-# called as githook (reserve and debug print all non p4 hooks)
+### Standard rules for git support
+
+# all non p4 hooks
+## Entry rule when called as githook.
 rule pre-commit: -- 'debug "called as $RULE_NAME hook"'
+## Entry rule when called as githook.
 rule pre-merge-commit: -- 'debug "called as $RULE_NAME hook"'
+## Entry rule when called as githook.
 rule prepare-commit-msg: -- 'debug "called as $RULE_NAME hook"'
+## Entry rule when called as githook.
 rule commit-msg: -- 'debug "called as $RULE_NAME hook"'
+## Entry rule when called as githook.
 rule applypatch-msg: -- 'debug "called as $RULE_NAME hook"'
+## Entry rule when called as githook.
 rule pre-applypatch: -- 'debug "called as $RULE_NAME hook"'
+## Entry rule when called as githook.
 rule post-applypatch: -- 'debug "called as $RULE_NAME hook"'
+## Entry rule when called as githook.
 rule post-commit: -- 'debug "called as $RULE_NAME hook"'
+## Entry rule when called as githook.
 rule pre-rebase: -- 'debug "called as $RULE_NAME hook"'
+## Entry rule when called as githook.
 rule post-checkout: -- 'debug "called as $RULE_NAME hook"'
+## Entry rule when called as githook.
 rule post-merge: -- 'debug "called as $RULE_NAME hook"'
+## Entry rule when called as githook.
 rule pre-push: -- 'debug "called as $RULE_NAME hook"'
+## Entry rule when called as githook.
 rule pre-receive: -- 'debug "called as $RULE_NAME hook"'
+## Entry rule when called as githook.
 rule update: -- 'debug "called as $RULE_NAME hook"'
+## Entry rule when called as githook.
 rule proc-receive: -- 'debug "called as $RULE_NAME hook"'
+## Entry rule when called as githook.
 rule post-receive: -- 'debug "called as $RULE_NAME hook"'
+## Entry rule when called as githook.
 rule post-update: -- 'debug "called as $RULE_NAME hook"'
+## Entry rule when called as githook.
 rule reference-transaction: -- 'debug "called as $RULE_NAME hook"'
+## Entry rule when called as githook.
 rule push-to-checkout: -- 'debug "called as $RULE_NAME hook"'
+## Entry rule when called as githook.
 rule pre-auto-gc: -- 'debug "called as $RULE_NAME hook"'
+## Entry rule when called as githook.
 rule post-rewrite: -- 'debug "called as $RULE_NAME hook"'
+## Entry rule when called as githook.
 rule sendemail-validate: -- 'debug "called as $RULE_NAME hook"'
+## Entry rule when called as githook.
 rule fsmonitor-watchman: -- 'debug "called as $RULE_NAME hook"'
+## Entry rule when called as githook.
 rule post-index-change: -- 'debug "called as $RULE_NAME hook"'
 

@@ -2,13 +2,14 @@
 
 require --opt tty_lib
 
-## Library of general functions which are always present
+### Library of general functions which are always present
 
 # TODO: add [-s|--state "extrastate"]
 
 function memo ## [-c|-d] [cmd args..].. - memoize the result/stdout/stderr of commands, will always return the same result again
 {
     ## Memoizes for the current run only. See memodb for persistent memoization.
+    ## Memoized functions must be pure and only depend on their arguments and the current working directory.
     ## Can not handle null bytes in stdout/stderr, use memodb when that is required.
     if [[ $1 == "-c" ]]; then
         unset MEMO_RC MEMO_STDOUT MEMO_STDERR
@@ -57,6 +58,13 @@ function memofn ## <functionnames..> - rewrites a function into a function that 
         # create a new function that calls memo with the original function
         eval "function $fn () { memo nomemo_$fn \"\$@\" ; }"
     done
+}
+
+function is_scalar ## <name> - Checks that a variable 'name' is a scalar (non array) variable.
+{
+    # shellcheck disable=2155
+    local type="$(declare -p "$1")"
+    [[ $type == 'declare --'* || $type == 'declare -i'* || $type == 'declare -x'* ]]
 }
 
 function called_as ## [pattern..] - Checks whenever bar is called as a symlink matching the given patterns.

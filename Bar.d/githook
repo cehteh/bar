@@ -1,5 +1,7 @@
 #!/bash
 
+### Support library for managing githooks
+
 function githook_enable
 {
      local hook
@@ -19,6 +21,8 @@ function githook_enable
      done
 }
 
+## Takes a list of githooks to enable as parameters. Must be called from the git_toplevel.
+## Fails when a hook is not available.
 rule githook_enable: is_git_toplevel -
 
 function githook_disable
@@ -37,4 +41,6 @@ function githook_disable
      done
 }
 
+## Takes a list of githooks to disable as parameters. Must be called from the git_toplevel.
+## Fails when a hook is not pointing to bar.
 rule githook_disable: is_git_toplevel -
