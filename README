@@ -352,10 +352,14 @@ RULE ENVIRONMENT
 
 MODULES
 
-  Modules are shell snippets located in 'Bar.d/', 'bar.d/', '.Bar.d/' or '.bar.d/' when called
-  as 'bar' or symlink or '~/.config/please' when called as 'please'.  All modules that contain
-  a underscore in their name are loaded at startup. Modules with alphabetic names without
-  underscores are lazy loaded on demand.
+  Modules are shell snippets normally located in '$BAR_DIR' ('Bar.d/', 'bar.d/', '.Bar.d/' or
+  '.bar.d/') when called as 'bar' or symlink or '~/.config/please' when called as 'please'.
+  All modules that contain a underscore in their name are loaded at startup. Modules with
+  alphabetic names without underscores are lazy loaded on demand.
+
+  Modules are loaded with the 'require' function. This ensures that they are loaded only once.
+  Require will load modules outside of '$BAR_DIR' when a path containing at least one slash
+  is given.
 
   The first variant for modules that are initially loaded is used for modules that define
   helper functions that don't have associated rules or rules that are primarly used for
