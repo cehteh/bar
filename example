@@ -158,3 +158,10 @@ rule disabled_rule: -- die "must not happen"
 rule --disable disabled_rule:
 
 rule disabled_rule
+
+# require with slash loads from arbitrary locations
+rule test_hello: 'require contrib/hello.sh'
+# hello is loaded only once, this wont show up
+rule test_hello: 'require ./contrib/hello.sh'
+
+rule test_hello

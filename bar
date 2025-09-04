@@ -156,7 +156,6 @@ function require ## [--opt] [modules..] - Loads modules.
     ## [modules..] - List of module names to be loaded. Modules are loaded only once, further
     ##               attempts to load it will be a no-op.
 
-    # TODO: support modules by explicit path
     trace "$*"
     declare -i rc=0
     local try_load=""
@@ -167,7 +166,9 @@ function require ## [--opt] [modules..] - Loads modules.
     local mod
     #shellcheck disable=2167,2165
     for mod in "$@"; do
-        for mod in "$BAR_DIR/"$mod; do
+        local moddir="$BAR_DIR/"
+        [[ "$mod" = */* ]] && moddir=
+        for mod in "$moddir"$mod; do
             local modname="${mod##*/}"
             if [[ ! -v BAR_REQUIRE_LOADED["$modname"] ]]; then
                 if [[ -f "$mod" ]]; then
