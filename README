@@ -623,6 +623,14 @@ MODULE API/RULES
         Runs cliff_changelog and then commits the changes.
 
 
+  cliff_rules - Hooks git cliff into build_versioned_artifacts
+
+    Rules:
+
+      is_cliff_installed:
+        Succeeds when 'git-cliff' is installed.
+
+
   entr - Support for the entr file watcher
 
     Rules:
@@ -1088,9 +1096,21 @@ MODULE API/RULES
 
   shellcheck - Support for the shellcheck shell linter.
     
-    Beware: Shellcheck is surprisingly slow.
+    Shellcheck is surprisingly slow.  In projects using bar one can prevent the bar files
+    themselves being checked by setting in 'Barf':
+    
+     SHELLCHECK_LS_FILES=":!bar :!Bar.d"
+
+    Variables:
+
+      SHELLCHECK_LS_FILES (gx)
+        List of file match rules for git-ls-files.
+        Default: ${SHELLCHECK_LS_FILES:-}
 
     Functions:
+
+      shellcheck_is_shscript <file>
+        Check if <file> is a shell script
 
       shellcheck_list_shscripts 
         List all shell scripts under git control
@@ -1098,24 +1118,19 @@ MODULE API/RULES
       shellcheck_lint 
         Test if all shell scripts under git control pass the linter.
 
+    Rules:
+
+      has_shellcheck_shscripts:
+        Checks if the project has any shell scripts. Must be called from a git toplevel.
+        Checks whenever any shell scripts are versioned in gitq
+
+
   shellcheck_rules - Hooks shellcheck_lint into the std lint rule.
-
-    Functions:
-
-      shellcheck_is_shscript <file>
-        Check if <file> is a shell script
-
-      has_shellcheck_shscripts 
-        Checks whenever any shell scripts are versioned in git
 
     Rules:
 
       is_shellcheck_available:
         Checks if shellcheck is installed and the project has any shell scripts.
-        'rule_delete' this rule in 'PREPROCESS' to disable shellcheck linting.
-
-      has_shellcheck_shscripts:
-        Checks if the project has any shell scripts. Must be called from a git toplevel.
 
 
   ssh - Access remote hosts

@@ -2,18 +2,45 @@
 
 ### Support for the shellcheck shell linter.
 ###
-### Beware: Shellcheck is surprisingly slow.
+### Shellcheck is surprisingly slow.  In projects using bar one can prevent the bar files
+### themselves being checked by setting in 'Barf':
+###
+###  SHELLCHECK_LS_FILES=":!bar :!Bar.d"
+
+declare -gx SHELLCHECK_LS_FILES="${SHELLCHECK_LS_FILES:-}" ## List of file match rules for git-ls-files.
+
+function shellcheck_is_shscript ## <file> - Check if <file> is a shell script
+{
+    [[ -f "$1" ]] && { head -1 "$1" | grep -q "^#!.*sh" ; }
+}
+
+function shellcheck_has_shscripts
+{
+    local file
+    for file in $(git_ls_files --other ${SHELLCHECK_LS_FILES:+-- $SHELLCHECK_LS_FILES}); do
+        if shellcheck_is_shscript "$file"; then
+            trace "Shell scripts found"
+            return 0
+        fi
+    done
+    debug "No shell scripts found in the repository"
+    return 1
+}
+memofn shellcheck_has_shscripts
+
+## Checks if the project has any shell scripts. Must be called from a git toplevel.
+## Checks whenever any shell scripts are versioned in gitq
+rule has_shellcheck_shscripts: is_git_toplevel -
 
 function shellcheck_list_shscripts ## List all shell scripts under git control
 {
     local file
-    for file in $(git_ls_files --other); do
+    for file in $(git_ls_files --other ${SHELLCHECK_LS_FILES:+-- $SHELLCHECK_LS_FILES}); do
         if shellcheck_is_shscript "$file"; then
             echo "$file"
         fi
     done
 }
-
 memofn shellcheck_list_shscripts
 
 function shellcheck_lint ## Test if all shell scripts under git control pass the linter.
