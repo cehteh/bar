@@ -5,7 +5,7 @@
 
 function git_is_clean
 {
-    if git diff --exit-code; then
+    if git diff --quiet; then
         debug "nothing modified"
         return 0
     else
