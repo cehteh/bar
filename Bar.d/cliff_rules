@@ -1,0 +1,8 @@
+#!/bash
+
+### Hooks git cliff into build_versioned_artifacts
+
+## Succeeds when 'git-cliff' is installed.
+rule is_cliff_installed: 'is_command_installed git-cliff'
+
+rule build_versioned_artifacts: is_cliff_installed? cliff_changelog??
