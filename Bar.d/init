@@ -82,7 +82,7 @@ function init # --hidden|--update|--update-existing - initialize bar in a workdi
 rule init_update_gitignore: is_git_toplevel? -- '
      require --opt testdir
      git_add_ignore .bar\* \*.lock
-     [[ -v TESTDIR_PREFIX ]] && git_add_ignore "$TESTDIR_PREFIX"\*
+     [[ -v TESTDIR_PREFIX ]] && git_add_ignore "$TESTDIR_PREFIX-"\*
 '
 
 ## Initialize bar in a workdir. This copies the main 'bar' script, a default 'Barf' and all

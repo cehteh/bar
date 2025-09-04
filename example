@@ -144,13 +144,12 @@ rule test_ttylib: 'clause_local BAR_VERBOSITY_LEVEL BAR_CHECK_LEVEL' -- '
      trace trace
      uncond_call 0 uncond_ok
      uncond_call 1 uncond_fail
-     progress progress; echo >&2
-     success success
-     failure failure
-     BAR_CHECK_LEVEL+=1
-     progress check_progress; echo >&2
-     success check_success
-     failure check_failure
+     BAR_CHECK_LEVEL=0 progress progress; echo >&2
+     BAR_CHECK_LEVEL=0 success success
+     BAR_CHECK_LEVEL=0 failure failure
+     BAR_CHECK_LEVEL=2 progress check_progress; echo >&2
+     BAR_CHECK_LEVEL=3 success check_success
+     BAR_CHECK_LEVEL=4 failure check_failure
 '
 
 # rules can be permanently disabled
