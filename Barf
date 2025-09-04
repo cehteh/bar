@@ -23,7 +23,7 @@ rule lints: 'is_testdir_used?' nodbg
 rule test_staged: testdir_enter lints
 
 # maintenance rules
-rule build_docs: 'test? Bar.d/help -nt README' -- './bar help >README'
+rule build_docs: -- './bar help >README'
 
 # called by another name (githook)
 rule pre-commit: MAIN
