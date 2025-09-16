@@ -1,0 +1,46 @@
+#!/bash
+### managing a radicle installation itself
+
+function radicle_update ## [HEAD|TAG] - Updates the users radicle installation to [HEAD|TAG] or the latest stable
+{
+    if [[ ! -v HEARTWOOD_SRC ]]; then
+        error "HEARTWOOD_SRC is not configured"
+        return 1
+    fi
+    (
+        cd "$HEARTWOOD_SRC" || {
+            error "can't change dir to $HEARTWOOD_SRC"
+            return 1
+        }
+        git remote update
+        git fetch --all --tags
+        local last_stable
+        last_stable=$(git tag | grep -v - | sort -V | tail -1)
+        git reset --hard "${1:-$last_stable}"
+        cargo install --path crates/radicle-cli --force --locked --root ~/.radicle
+        cargo install --path crates/radicle-node --force --locked --root ~/.radicle
+        cargo install --path crates/radicle-remote-helper --force --locked --root ~/.radicle
+    )
+}
+
+function update_radicle_desktop ## [HEAD|TAG] - Build radicle-desktop, [HEAD|TAG] or the latest stable
+{
+    if [[ ! -v RADICLE_DESKTOP_SRC ]]; then
+        error "RADICLE_DESKTOP_SRC is not configured"
+        return 1
+    fi
+    (
+        cd "$RADICLE_DESKTOP_SRC" || {
+            error "can't change dir to $RADICLE_DESKTOP_SRC"
+            return 1
+        }
+        git remote update
+        local last_stable
+        last_stable=$(git tag | grep -v - | sort -V | tail -1)
+        git reset --hard "${1:-$last_stable}"
+        npm install
+        npm run tauri build
+    )
+}
+
+
