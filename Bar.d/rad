@@ -1,0 +1,15 @@
+#!/bash
+### Support for the radicle p2p git frontend
+
+function rad_import ## import a git repository into radicle
+{
+    if ! git remote | grep '^rad$'; then
+        rad init --name "${PWD##*/}" --description "" --public --setup-signing --no-confirm -v
+        git push --all rad
+    else
+        note "radicle already initialized"
+    fi
+}
+
+
+rule rad_import: is_git_toplevel -
