@@ -46,6 +46,15 @@ function semver_shortversion ## <version> - shortens a semver to the first non z
     esac
 }
 
+function semver_majorminor ## <version> - shortens a semver to major.minor
+{
+    # shellcheck disable=2034
+    local major minor patch prerelease build
+    semver_parse "$1" || return 1
+
+    echo "$major.$minor"
+}
+
 function semver_increment ## <version> <major|minor|patch> - Increment selected part
 {
     local major minor patch prerelease build
