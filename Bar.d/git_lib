@@ -100,3 +100,40 @@ function git_add_ignore ## [patterns..] - Adds new ignore patterns to '.gitignor
         fi
     done
 }
+
+function git_parse_worktrees # Parses git worktrees into variables provided by the caller
+{
+    ## These arrays are declared as:
+    ##  declare -l worktree_main        directory to the main worktree
+    ##  declare -Al worktree_dirs       holding 'branch:directory'
+    ##  declare -Al worktree_branches   holding 'directory:branch'
+    [[ "$(declare -p worktree_main 2>/dev/null)" = 'declare -l worktree_main' ]] || {
+        error "caller must 'declare -l worktree_main'"
+        return 1
+    }
+    [[ "$(declare -p worktree_dirs 2>/dev/null)" = 'declare -Al worktree_dirs' ]] || {
+        error "caller must 'declare -Al worktree_dirs'"
+        return 1
+    }
+    [[ "$(declare -p worktree_branches 2>/dev/null)" = 'declare -Al worktree_branches' ]] || {
+        error "caller must 'declare -Al worktree_branches'"
+        return 1
+    }
+    worktree_main=""
+    worktree_dirs=()
+    worktree_branches=()
+
+    local dir
+    while read -r key value; do
+        case "$key" in
+            worktree)
+                dir="$value"
+                [[ -z "$worktree_main" ]] && worktree_main="$value"
+                ;;
+            branch)
+                worktree_dirs["${value##*/}"]="$dir"
+                worktree_branches["$dir"]="${value##*/}"
+                ;;
+        esac
+    done < <(git worktree list --porcelain)
+}
