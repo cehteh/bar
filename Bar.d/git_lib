@@ -63,8 +63,10 @@ function git_branch_find ## [patterns].. - lists branches matching the given pat
 
 function git_branch_find_one ## [patterns].. - lists the matching the given patterns, fails when there are more than one
 {
-    [[ $(git_branch_find "$@" | wc -l) != 1 ]] && return 1
-    git_branch_find "$@"
+    local branches
+    mapfile branches < <(git_branch_find "$@")
+    [[ ${#branches[*]} != 1 ]] && return 1
+    echo "${branches[0]}"
 }
 
 function git_is_ancestor ## [patterns].. - checks if the current branch is a ancestor of the one branch matching the patterns
