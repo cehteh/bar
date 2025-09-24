@@ -86,6 +86,7 @@ rule self_modifying: -- '
 rule test_hooks: !failing_hook??? - echo "failing hook exists failed"
 rule test_hooks: nonexist_hook?? - echo "unreached: no_failing_hook does not exist"
 rule test_hooks: succeeding_hook??? - echo "success"
+rule test_hooks: failing_hook~?? - echo "always"
 rule failing_hook: -- false
 rule succeeding_hook: -- true
 
