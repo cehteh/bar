@@ -1,0 +1,163 @@
+#!/bash
+# shellcheck disable=2016
+
+### Library for parsing and manipulating (simplified) semver.
+###
+### For the sake of sanity not all possible semver syntax variants are
+### handled. Esp. manipulation is only implemented for the common cases. Patches welcome.
+
+function semver_parse ## requires major, minor, patch, prerelease and build to be declared local
+{
+    [[ -d major && -d minor && -d patch && -d prerelease && -d build ]]
+    if [[ "$1" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)((-.*)*)((\+.*)*)$ ]]; then
+        major="${BASH_REMATCH[1]}"
+        minor="${BASH_REMATCH[2]}"
+        patch="${BASH_REMATCH[3]}"
+        prerelease="${BASH_REMATCH[4]}"
+        build="${BASH_REMATCH[6]}"
+    else
+        return 1
+    fi
+}
+
+function semver_validate ## <version> - Validate if string is a valid semver
+{
+    # shellcheck disable=2034
+    local major minor patch prerelease build
+    semver_parse "$1"
+}
+
+
+function semver_nopatch ## <version> - Remove patch level from a semver
+{
+    # shellcheck disable=2034
+    local major minor patch prerelease build
+    semver_parse "$1" || return 1
+
+    echo "$major.$minor$prerelease$build"
+}
+
+function semver_increment ## <version> <major|minor|patch> - Increment selected part
+{
+    local major minor patch prerelease build
+    semver_parse "$1" || return 1
+
+    case "$2" in
+    release) # strips the prerelease
+        [[ -n "$prerelease" ]] || {
+            error "can't strip prerelease from $1"
+            return 1
+        }
+        prerelease=""
+        ;;
+    major)
+        [[ -z "$prerelease" ]] || {
+            error "can't increment major on a prerelease"
+            return 1
+        }
+        ((major++))
+        minor=0
+        patch=0
+        ;;
+    minor)
+        [[ -z "$prerelease" ]] || {
+            error "can't increment minor on a prerelease"
+            return 1
+        }
+        ((minor++))
+        patch=0
+        ;;
+    patch)
+        [[ -z "$prerelease" ]] || {
+            error "can't increment patch on a prerelease"
+            return 1
+        }
+        ((patch++))
+        ;;
+    *)
+        error "semver_increment: unknown part $2"
+        return 1
+        ;;
+    esac
+
+    echo "$major.$minor.$patch$prerelease$build"
+}
+
+function semver_cmp ## <a> <b> - comparing 'a' with 'b', prints 'lt', 'eq' or 'gt'
+{
+    local major minor patch prerelease build
+    semver_parse "$1" || return 1
+
+    local major_a="$major" minor_a="$minor" patch_a="$patch" prerelease_a="$prerelease"
+    semver_parse "$2" || return 1
+
+    if (( major_a < major )); then echo "lt"; return; fi
+    if (( major_a > major )); then echo "gt"; return; fi
+    if (( minor_a < minor )); then echo "lt"; return; fi
+    if (( minor_a > minor )); then echo "gt"; return; fi
+    if (( patch_a < patch )); then echo "lt"; return; fi
+    if (( patch_a > patch )); then echo "gt"; return; fi
+
+    if [[ -n "$prerelease_a" && -z "$prerelease" ]]; then echo "lt"; return; fi
+    if [[ -z "$prerelease_a" && -n "$prerelease" ]]; then echo "gt"; return; fi
+    if [[ "$prerelease_a" < "$prerelease" ]]; then echo "lt"; return; fi
+    if [[ "$prerelease_a" > "$prerelease" ]]; then echo "gt"; return; fi
+
+    echo "eq"
+}
+
+function semver_lt ## <a> <b> - succeeds if a < b
+{
+    case $(semver_cmp "$1" "$2") in
+    lt)
+        return 0
+        ;;
+    *)
+        return 1
+    esac
+}
+
+function semver_le ## <a> <b> - succeeds if a <= b
+{
+    case $(semver_cmp "$1" "$2") in
+    lt|eq)
+        return 0
+        ;;
+    *)
+        return 1
+    esac
+}
+
+function semver_gt ## <a> <b> - succeeds if a > b
+{
+    case $(semver_cmp "$1" "$2") in
+    gt)
+        return 0
+        ;;
+    *)
+        return 1
+    esac
+}
+
+function semver_ge ## <a> <b> - succeeds if a >= b
+{
+    case $(semver_cmp "$1" "$2") in
+    gt|eq)
+        return 0
+        ;;
+    *)
+        return 1
+    esac
+}
+
+function semver_eq ## <a> <b> - succeeds if a == b
+{
+    case $(semver_cmp "$1" "$2") in
+    eq)
+        return 0
+        ;;
+    *)
+        return 1
+    esac
+}
+
