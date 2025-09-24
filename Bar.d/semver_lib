@@ -27,14 +27,23 @@ function semver_validate ## <version> - Validate if string is a valid semver
     semver_parse "$1"
 }
 
-
-function semver_nopatch ## <version> - Remove patch level from a semver
+function semver_shortversion ## <version> - shortens a semver to the first non zero part 0.2.1-pre0+123 -> 0.2
 {
     # shellcheck disable=2034
     local major minor patch prerelease build
     semver_parse "$1" || return 1
 
-    echo "$major.$minor$prerelease$build"
+    case "$major.$minor" in
+    "0.0")
+        echo "$major.$minor.$patch"
+        ;;
+    "0"*)
+        echo "$major.$minor"
+        ;;
+    *)
+        echo "$major"
+        ;;
+    esac
 }
 
 function semver_increment ## <version> <major|minor|patch> - Increment selected part
