@@ -56,6 +56,22 @@ function git_branch_name ## Returns the branch name that is checked out, dies wh
     memo git branch --show-current
 }
 
+function git_branch_find ## [patterns].. - lists branches matching the given patterns
+{
+   git branch --list --format="%(refname:short)" "$@"
+}
+
+function git_branch_find_one ## [patterns].. - lists the matching the given patterns, fails when there are more than one
+{
+    [[ $(git_branch_find "$@" | wc -l) != 1 ]] && return 1
+    git_branch_find "$@"
+}
+
+function git_is_ancestor ## [patterns].. - checks if the current branch is a ancestor of the one branch matching the patterns
+{
+    git merge-base --is-ancestor "$(git_branch_find_one "$@")" "$(git_branch_name)"
+}
+
 # TODO: rename git_dir_hash or similar
 function git_tree_hash ## [git-ls-files-opts].. - Returns a sha1 hash over the current directory
 {
