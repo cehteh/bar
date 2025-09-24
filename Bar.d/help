@@ -553,7 +553,7 @@ function help_describe_rules
              out = out text "\n"
     }
 
-    /^rule([ \t]+[A-Za-z_-][A-Za-z0-9_-]*)+:/ {
+    /^rule([ \t](--[a-z_-]*)?)+([A-Za-z_-][A-Za-z0-9_-]*:)/ {
       if (descr != "" ) {
          if (match($0, /^rule([ \t](--[a-z_-]*)?)+([A-Za-z_-][A-Za-z0-9_-]*:)/, m)) {
             printout("      " m[3])
