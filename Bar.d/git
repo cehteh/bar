@@ -90,7 +90,7 @@ rule is_git_main_branch: 'git_branch_matches main master'
 ## Checks if the current branch matches 'release-* release/*'.
 rule is_git_release_branch: 'git_branch_matches release-* release/*'
 ## Checks if the current branch matches 'devel-* devel/*'.
-rule is_git_devel_branch: 'git_branch_matches devel-* devel/*'
+rule is_git_devel_branch: 'git_branch_matches devel devel-* devel/*'
 ## Checks if the current branch matches 'feature-* feature/*'.
 rule is_git_feature_branch: 'git_branch_matches feature-* feature/*'
 ## Checks if the current branch matches 'bugfix-* bugfix/* fix-* fix/*'.
