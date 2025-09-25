@@ -771,6 +771,15 @@ MODULE API/RULES
       git_branch_name 
         Returns the branch name that is checked out, dies when not in a git branch.
 
+      git_branch_find [patterns]..
+        lists branches matching the given patterns
+
+      git_branch_find_one [patterns]..
+        lists the matching the given patterns, fails when there are more than one
+
+      git_is_ancestor [patterns]..
+        checks if the current branch is a ancestor of the one branch matching the patterns
+
       git_tree_hash [git-ls-files-opts]..
         Returns a sha1 hash over the current directory
         This hash is a identifier used by bar. It is not the same hash git using for storing trees.
@@ -778,6 +787,10 @@ MODULE API/RULES
       git_add_ignore [patterns..]
         Adds new ignore patterns to '.gitignore'.
         Patterns that are already present are skipped.
+        These arrays are declared as:
+         declare -l worktree_main        directory to the main worktree
+         declare -Al worktree_dirs       holding 'branch:directory'
+         declare -Al worktree_branches   holding 'directory:branch'
 
     Rules:
 
@@ -1026,6 +1039,99 @@ MODULE API/RULES
         'contrib/update-ethers.sh' for automatically discover and maintain '/etc/ethers'. Waits
         for the host to become reachable. Fails when it is not reachable.
 
+  rad - Support for the radicle p2p git frontend
+
+    Functions:
+
+      rad_import 
+        import a git repository into radicle
+
+  radicle - managing a radicle installation itself
+
+    Functions:
+
+      radicle_update [HEAD|TAG]
+        Updates the users radicle installation to [HEAD|TAG] or the latest stable
+
+      update_radicle_desktop [HEAD|TAG]
+        Build radicle-desktop, [HEAD|TAG] or the latest stable
+
+  release - Rules for software releases
+    
+    The 'release' module implements a (opinionated) release workflow. Making releases starts
+    on a git toplevel in a development or main branch, a devel branch does not need to be
+    clean.  For each release a new branch/worktree based on the last commit is created. All
+    release work will be done in that branch/worktree. This can be a interactive process, when
+    release_tests fails one can correct things and commit them until the tests pass. The
+    actual release procedure then evaluates 'release_prepare', 'release_commit', 'release_tag'
+    and 'release_publish'.  Finally 'release_postprocess' and 'release_cleanup' are evaluated.
+    
+    Any non published release can be aborted.
+    
+    This only defines the bare workflow the actual implementation hooks into the
+    'release_rules'.
+    
+    We still make a few fixed assumptions:
+     - Versioning is based on semver
+     - Releases are called 'release'
+     - The main branch can be named 'main' or 'master'
+     - Development branches matching 'devel' 'devel-*' or 'devel/*'
+    
+    The worktree tracks its state in a local git config:
+     - start:
+       The worktree is created but not tested yet.
+     - ready:
+       The worktree/branch is ready for publishing
+     - published:
+       upload succeeded.
+     - done:
+       The release finished
+
+    Functions:
+
+      release_state_matches [[!]statematch]
+        check if the current state matches (does not match with '!').
+
+    Rules:
+
+      release:
+        Makes a software release. Takes an optional version number starting with a digit or a
+        name for the generating the version by 'release_generate_version_hook' as argument.
+        When no argument is provided it defaults to 'auto'.
+
+
+  release_rules - The rules called by the release rule
+
+    Rules:
+
+      release_prepare:
+        Generate changelog an other versioned artifacts, update manifests and so on.  Should leave
+        the tree in a uncommited state. Note that 'build_versioned_artifacts' is already a
+        dependency here.
+
+      release_tests:
+        All tests to run for a software release.
+
+      release_commit:
+        Create the release commit, maybe tag it.
+
+      release_publish:
+        Deploy the release, upload it to servers, git push or whatever necessary
+        Since network operations can be fallible this can be restarted.
+
+      release_postprocess:
+        Local actions to be done after the release, rebase main/devel on it etc.
+
+      release_cleanup:
+        Final cleanup for the release, clean/delete worktrees etc
+
+      release_generate_version_hook:
+        Canonicalize version names. Queried when the the version to 'release' does not start with a
+        digit or was not given. Other modules should plug in here. Names are 'auto', 'major',
+        'minor', 'patch'. Custom rules may support more names such as 'prerelease', 'alpha', 'beta'
+        and so on. 'auto' is the default for 'release'.
+
+
   rule_lib - The library that implements rules, always loaded
 
     Functions:
@@ -1094,12 +1200,52 @@ MODULE API/RULES
         Searches 'PLANNED:'.
 
 
+  semver_lib - Library for parsing and manipulating (simplified) semver.
+    
+    For the sake of sanity not all possible semver syntax variants are
+    handled. Esp. manipulation is only implemented for the common cases. Patches welcome.
+
+    Functions:
+
+      semver_parse 
+        requires major, minor, patch, prerelease and build to be declared local
+
+      semver_validate <version>
+        Validate if string is a valid semver
+
+      semver_shortversion <version>
+        shortens a semver to the first non zero part 0.2.1-pre0+123 -> 0.2
+
+      semver_majorminor <version>
+        shortens a semver to major.minor
+
+      semver_increment <version> <major|minor|patch>
+        Increment selected part
+
+      semver_cmp <a> <b>
+        comparing 'a' with 'b', prints 'lt', 'eq' or 'gt'
+
+      semver_lt <a> <b>
+        succeeds if a < b
+
+      semver_le <a> <b>
+        succeeds if a <= b
+
+      semver_gt <a> <b>
+        succeeds if a > b
+
+      semver_ge <a> <b>
+        succeeds if a >= b
+
+      semver_eq <a> <b>
+        succeeds if a == b
+
   shellcheck - Support for the shellcheck shell linter.
     
     Shellcheck is surprisingly slow.  In projects using bar one can prevent the bar files
     themselves being checked by setting in 'Barf':
     
-     SHELLCHECK_LS_FILES=":!bar :!Bar.d"
+     SHELLCHECK_LS_FILES=":!bar :!Bar.d"  # Perhaps adding ':!Barf' too
 
     Variables:
 
@@ -1282,15 +1428,6 @@ MODULE API/RULES
 
       benchmark:
         Running benchmarks. This does not include building benchmarks, see the 'bench' rule.
-
-      release_patch:
-        Make a patch release.
-
-      release_minor:
-        Make a minor release.
-
-      release_major:
-        Make a major release.
 
       deploy:
         Deploy the project to some server or similar.

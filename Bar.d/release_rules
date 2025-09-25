@@ -1,0 +1,32 @@
+#!/bash
+# shellcheck disable=2016
+
+### The rules called by the release rule
+
+## Generate changelog an other versioned artifacts, update manifests and so on.  Should leave
+## the tree in a uncommited state. Note that 'build_versioned_artifacts' is already a
+## dependency here.
+rule release_prepare: -- debug "Preparing release ..."
+rule release_prepare: build_versioned_artifacts
+
+## All tests to run for a software release.
+rule release_tests: -- debug "Running release tests..."
+
+## Create the release commit, maybe tag it.
+rule release_commit: -- debug "Committing release..."
+
+## Deploy the release, upload it to servers, git push or whatever necessary
+## Since network operations can be fallible this can be restarted.
+rule release_publish: -- debug "Publish release..."
+
+## Local actions to be done after the release, rebase main/devel on it etc.
+rule release_postprocess: -- debug "Running release postprocessing..."
+
+## Final cleanup for the release, clean/delete worktrees etc
+rule release_cleanup: -- debug "Running release cleanup..."
+
+## Canonicalize version names. Queried when the the version to 'release' does not start with a
+## digit or was not given. Other modules should plug in here. Names are 'auto', 'major',
+## 'minor', 'patch'. Custom rules may support more names such as 'prerelease', 'alpha', 'beta'
+## and so on. 'auto' is the default for 'release'.
+rule --disjunct release_generate_version_hook: -- false

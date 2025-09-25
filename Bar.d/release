@@ -1,0 +1,190 @@
+#!/bash
+# shellcheck disable=2016
+
+### Rules for software releases
+###
+### The 'release' module implements a (opinionated) release workflow. Making releases starts
+### on a git toplevel in a development or main branch, a devel branch does not need to be
+### clean.  For each release a new branch/worktree based on the last commit is created. All
+### release work will be done in that branch/worktree. This can be a interactive process, when
+### release_tests fails one can correct things and commit them until the tests pass. The
+### actual release procedure then evaluates 'release_prepare', 'release_commit', 'release_tag'
+### and 'release_publish'.  Finally 'release_postprocess' and 'release_cleanup' are evaluated.
+###
+### Any non published release can be aborted.
+###
+### This only defines the bare workflow the actual implementation hooks into the
+### 'release_rules'.
+###
+### We still make a few fixed assumptions:
+###  - Versioning is based on semver
+###  - Releases are called 'release'
+###  - The main branch can be named 'main' or 'master'
+###  - Development branches matching 'devel' 'devel-*' or 'devel/*'
+###
+### The worktree tracks its state in a local git config:
+###  - start:
+###    The worktree is created but not tested yet.
+###  - ready:
+###    The worktree/branch is ready for publishing
+###  - published:
+###    upload succeeded.
+###  - done:
+###    The release finished
+
+# PLANNED: basedir for release worktrees etc
+export RELEASE_BRANCH_DELIMITER="${RELEASE_BRANCH_DELIMITER:--}" ## The prefix for release branches, should be "-" or "/"
+
+function release_abort # [release] - A release that is not published yet can be aborted and deleted
+{
+    declare -l worktree_main
+    declare -Al worktree_dirs
+    # shellcheck disable=2034
+    declare -Al worktree_branches
+    git_parse_worktrees
+
+    local release="${1:-}"
+
+    if [[ -z "$release" ]]; then
+        # shellcheck disable=2155
+        local branch="$(git_branch_name)"
+        if [[ "$branch" = 'release-'* ]]; then
+            release="${branch#release-}"
+        else
+            error "no release given and not in a release branch"
+            return 1
+        fi
+    fi
+
+    # shellcheck disable=2155
+    local worktree_dir="${worktree_dirs[release-$release]}"
+    # shellcheck disable=2155
+    local state="$(git --git-dir="$worktree_dir/.git" config --get bar.release.state)"
+
+    if [[ "$state" =~ ^start|ready$ ]]; then
+        info "aborting $release"
+        cd "$worktree_main" || return 1
+        git worktree remove -f "$worktree_dir"
+        git branch -d "release-$release"
+    else
+        error "can't abort $release because state is $state"
+        return 1
+    fi
+}
+
+# only called from main or devel branch see below
+function release_start
+{
+     local startbranch
+     startbranch="$(git_branch_name)"
+     local version="${1:-auto}"
+     [[ "$version" != [0-9]* ]] && version="$(rule_eval release_generate_version_hook "$version")"
+     [[ "$version" != [0-9]* ]] && {
+         error "'release_generate_version_hook' did not generate a suitable version"
+         return 1
+     }
+     (
+         release_enter_worktree "$version" || {
+             error "failed to create worktree for $version"
+             return 1
+         }
+         release_startbranch_set "$startbranch"
+         release_state_set start
+         rule_eval release "$version"
+     )
+}
+
+# create branch/worktree for the release
+function release_enter_worktree
+{
+    trace "$*"
+    local version="$1"
+    local short_version
+    # PLANNED: how to make this customizeable between semver_shortversion/semver_majorminor?
+    short_version="$(semver_majorminor "$version")" || {
+        error "not a valid semver: '$version'"
+        return 1
+    }
+    # we need worktree configs enabled
+    git config extensions.worktreeConfig true
+    git worktree add -b "release$RELEASE_BRANCH_DELIMITER$short_version" "release-$short_version" "$startbranch" || {
+        error "failed to create worktree"
+        return 1
+    }
+    cd "release-$short_version"  || {
+        error "failed to cd into worktree"
+        return 1
+    }
+}
+
+# Eventually we may relax this rule since one may want to make releases from subprojects
+## Makes a software release. Takes an optional version number starting with a digit or a
+## name for the generating the version by 'release_generate_version_hook' as argument.
+## When no argument is provided it defaults to 'auto'.
+rule release: is_git_toplevel
+
+# devel branch, can be dirty, but must be an ancestor of main because later we want to merge back
+rule release: --conclusive is_git_devel_branch? '!git_is_ancestor main master' -- '
+     error "the devel branch must be an ancestor of the main branch"
+     false
+'
+rule release: --conclusive is_git_devel_branch? -- '
+     release_start $RULE_ARGS
+'
+
+# main branch must be clean
+rule release: --conclusive is_git_main_branch? git_is_clean -- '
+     release_start $RULE_ARGS
+'
+
+rule release_pending: is_git_release_branch 'release_state_matches !done'
+
+# Safety check, running in release worktree
+rule release: !release_pending -- '
+     error "no release pending"
+     false
+'
+
+# The release worktree must be clean
+rule release: !git_is_clean -- '
+     error "uncommited changes exists"
+     false
+'
+
+# We can't proceed on a published release
+rule release: 'release_state_matches? published done' -- '
+     error "release already published or done"
+     false
+'
+
+rule release: 'release_state_matches? start' release_prepare release_tests release_commit git_is_clean 'release_state_set ready'
+rule release: 'release_state_matches? ready' release_publish 'release_state_set published'
+rule release: 'release_state_matches? published' release_postprocess 'release_state_set done'
+rule release: 'release_state_matches? done' release_cleanup~
+
+function release_startbranch_set # stored the branch name from where the release was started
+{
+     git config set --worktree bar.release.startbranch "$1"
+}
+
+function release_state_set # <state> - sets the release state
+{
+     git config set --worktree bar.release.state "$1"
+}
+
+function release_state_matches ## [[!]statematch] - check if the current state matches (does not match with '!').
+{
+    local state
+    for state in "$@"; do
+        if [[ "${state:0:1}" != "!" ]]; then
+            # shellcheck disable=2053
+            [[ "$(git config get --worktree bar.release.state)" = $state ]] && return 0
+        else
+            state="${state:1}"
+            # shellcheck disable=2053
+            [[ "$(git config get --worktree bar.release.state)" != $state ]] && return 0
+        fi
+    done
+    return 1
+}
+

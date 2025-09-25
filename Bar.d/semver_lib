@@ -6,15 +6,15 @@
 ### For the sake of sanity not all possible semver syntax variants are
 ### handled. Esp. manipulation is only implemented for the common cases. Patches welcome.
 
-function semver_parse ## requires major, minor, patch, prerelease and build to be declared local
+function semver_parse ## <semver> [major [minor [patch [prerelease [build]]]]] - parses semver into the provided variables
 {
-    [[ -d major && -d minor && -d patch && -d prerelease && -d build ]]
     if [[ "$1" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)((-.*)*)((\+.*)*)$ ]]; then
-        major="${BASH_REMATCH[1]}"
-        minor="${BASH_REMATCH[2]}"
-        patch="${BASH_REMATCH[3]}"
-        prerelease="${BASH_REMATCH[4]}"
-        build="${BASH_REMATCH[6]}"
+        iset "${2:-}" = "${BASH_REMATCH[1]}"
+        iset "${3:-}" = "${BASH_REMATCH[2]}"
+        iset "${4:-}" = "${BASH_REMATCH[3]}"
+        iset "${5:-}" = "${BASH_REMATCH[4]}"
+        iset "${6:-}" = "${BASH_REMATCH[6]}"
+        return 0
     else
         return 1
     fi
@@ -22,16 +22,14 @@ function semver_parse ## requires major, minor, patch, prerelease and build to b
 
 function semver_validate ## <version> - Validate if string is a valid semver
 {
-    # shellcheck disable=2034
-    local major minor patch prerelease build
     semver_parse "$1"
 }
 
 function semver_shortversion ## <version> - shortens a semver to the first non zero part 0.2.1-pre0+123 -> 0.2
 {
     # shellcheck disable=2034
-    local major minor patch prerelease build
-    semver_parse "$1" || return 1
+    local major minor patch
+    semver_parse "$1" major minor patch || return 1
 
     case "$major.$minor" in
     "0.0")
@@ -49,8 +47,8 @@ function semver_shortversion ## <version> - shortens a semver to the first non z
 function semver_majorminor ## <version> - shortens a semver to major.minor
 {
     # shellcheck disable=2034
-    local major minor patch prerelease build
-    semver_parse "$1" || return 1
+    local major minor
+    semver_parse "$1" major minor || return 1
 
     echo "$major.$minor"
 }
@@ -58,7 +56,7 @@ function semver_majorminor ## <version> - shortens a semver to major.minor
 function semver_increment ## <version> <major|minor|patch> - Increment selected part
 {
     local major minor patch prerelease build
-    semver_parse "$1" || return 1
+    semver_parse "$1" major minor patch prerelease build || return 1
 
     case "$2" in
     release) # strips the prerelease
@@ -103,8 +101,8 @@ function semver_increment ## <version> <major|minor|patch> - Increment selected 
 
 function semver_cmp ## <a> <b> - comparing 'a' with 'b', prints 'lt', 'eq' or 'gt'
 {
-    local major minor patch prerelease build
-    semver_parse "$1" || return 1
+    local major minor patch prerelease
+    semver_parse "$1" major minor patch prerelease || return 1
 
     local major_a="$major" minor_a="$minor" patch_a="$patch" prerelease_a="$prerelease"
     semver_parse "$2" || return 1

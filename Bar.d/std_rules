@@ -111,14 +111,6 @@ rule test_expensive: -- debug "Running expensive tests..."
 ## Running benchmarks. This does not include building benchmarks, see the 'bench' rule.
 rule benchmark: -- debug "Running benchmarks..."
 
-# Maintenance and Configuration targets
-# The actual interpretation what these rules do is up to the rulefile author.
-## Make a patch release.
-rule release_patch: -- debug "Making patch release"
-## Make a minor release.
-rule release_minor: -- debug "Making minor release"
-## Make a major release.
-rule release_major: -- debug "Making major release"
 ## Deploy the project to some server or similar.
 rule deploy: -- debug "Deploying project"
 # TODO: rule deploy_staging: -- debug "Deploying project"
