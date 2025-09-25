@@ -11,7 +11,7 @@
 ### actual release procedure then evaluates 'release_prepare', 'release_commit', 'release_tag'
 ### and 'release_publish'.  Finally 'release_postprocess' and 'release_cleanup' are evaluated.
 ###
-### Any non published release can be aborted.
+### Any non published release can be aborted/deleted.
 ###
 ### This only defines the bare workflow the actual implementation hooks into the
 ### 'release_rules'.
@@ -25,6 +25,8 @@
 ### The worktree tracks its state in a local git config:
 ###  - start:
 ###    The worktree is created but not tested yet.
+###  - tested:
+###    All test passed
 ###  - ready:
 ###    The worktree/branch is ready for publishing
 ###  - published:
@@ -41,7 +43,7 @@ function release_abort # [release] - A release that is not published yet can be 
     declare -Al worktree_dirs
     # shellcheck disable=2034
     declare -Al worktree_branches
-    git_parse_worktrees
+    git_parse_worktrees worktree_main worktree_dirs worktree_branches
 
     local release="${1:-}"
 
@@ -56,12 +58,18 @@ function release_abort # [release] - A release that is not published yet can be 
         fi
     fi
 
+    semver_validate "$release" || {
+        error "not a valid semver: $release"
+        return 1
+    }
+
     # shellcheck disable=2155
     local worktree_dir="${worktree_dirs[release-$release]}"
     # shellcheck disable=2155
     local state="$(git --git-dir="$worktree_dir/.git" config --get bar.release.state)"
 
-    if [[ "$state" =~ ^start|ready$ ]]; then
+    # can only abort started or tested releases. Any further state is already committed/merged/published.
+    if [[ "$state" =~ ^start|tested$ ]]; then
         info "aborting $release"
         cd "$worktree_main" || return 1
         git worktree remove -f "$worktree_dir"
@@ -79,8 +87,8 @@ function release_start
      startbranch="$(git_branch_name)"
      local version="${1:-auto}"
      [[ "$version" != [0-9]* ]] && version="$(rule_eval release_generate_version_hook "$version")"
-     [[ "$version" != [0-9]* ]] && {
-         error "'release_generate_version_hook' did not generate a suitable version"
+     semver_validate "$version" || {
+         error "not a valid semver: $version"
          return 1
      }
      (
@@ -99,19 +107,13 @@ function release_enter_worktree
 {
     trace "$*"
     local version="$1"
-    local short_version
-    # PLANNED: how to make this customizeable between semver_shortversion/semver_majorminor?
-    short_version="$(semver_majorminor "$version")" || {
-        error "not a valid semver: '$version'"
-        return 1
-    }
     # we need worktree configs enabled
     git config extensions.worktreeConfig true
-    git worktree add -b "release$RELEASE_BRANCH_DELIMITER$short_version" "release-$short_version" "$startbranch" || {
+    git worktree add -b "release$RELEASE_BRANCH_DELIMITER$version" "release-$version" "$startbranch" || {
         error "failed to create worktree"
         return 1
     }
-    cd "release-$short_version"  || {
+    cd "release-$version"  || {
         error "failed to cd into worktree"
         return 1
     }
@@ -157,12 +159,14 @@ rule release: 'release_state_matches? published done' -- '
      false
 '
 
-rule release: 'release_state_matches? start' release_prepare release_tests release_commit git_is_clean 'release_state_set ready'
+# The state machine doing the actual (restartable) release:
+rule release: 'release_state_matches? start' release_prepare release_tests 'release_state_set tested'
+rule release: 'release_state_matches? tested' release_commit git_is_clean 'release_state_set ready'
 rule release: 'release_state_matches? ready' release_publish 'release_state_set published'
 rule release: 'release_state_matches? published' release_postprocess 'release_state_set done'
 rule release: 'release_state_matches? done' release_cleanup~
 
-function release_startbranch_set # stored the branch name from where the release was started
+function release_startbranch_set # stores the branch name from where the release was started
 {
      git config set --worktree bar.release.startbranch "$1"
 }
