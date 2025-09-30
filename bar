@@ -22,7 +22,9 @@ function bar_main ## [rulefile] [rule [arguments..]] - Loads a rulefile and exec
     # shell sanity options
     set -euo pipefail
     # shellcheck disable=SC2155
-    export LC_ALL=$(locale -a | grep -i 'C.utf.*8' || echo C)
+    export LC_ALL=$(locale -a 2>/dev/null | grep -i 'C.utf.*8' || echo C)
+
+    export TMPDIR="${TMPDIR:-/tmp}"
 
     # shellcheck disable=SC2155
     declare -grx BAR_SELF="$(realpath "$BASH_ARGV0")"  ## Path to bar itself.
