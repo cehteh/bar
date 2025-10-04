@@ -186,7 +186,7 @@ function iset ## <target> [values].. - indirect assign values to a variable give
 
     local target="$1"
     shift
-    declare -p "${target%\[*\]}" &>/dev/null || {
+    declare -p "${target%\[*}" &>/dev/null || {
         error "$target is not defined"
         return 1
     }

@@ -53,7 +53,7 @@ function semver_majorminor ## <version> - shortens a semver to major.minor
     echo "$major.$minor"
 }
 
-function semver_increment ## <version> <release|major|majorpre1x|minor|patch> [--pre1x] - Increment selected part
+function semver_increment ## <version> <release|major|majorpre1x|minor|patch> - Increment selected part
 {
     ## 'release' strips any 'prerelease' part
     ## 'majorpre1x' increments the minor part on a 0.x version
@@ -112,23 +112,23 @@ function semver_increment ## <version> <release|major|majorpre1x|minor|patch> [-
 
 function semver_cmp ## <a> <b> - comparing 'a' with 'b', prints 'lt', 'eq' or 'gt'
 {
-    local major minor patch prerelease
-    semver_parse "$1" major minor patch prerelease || return 1
+    local major_a minor_a patch_a prerelease_a
+    semver_parse "$1" major_a minor_a patch_a prerelease_a || return 1
 
-    local major_a="$major" minor_a="$minor" patch_a="$patch" prerelease_a="$prerelease"
-    semver_parse "$2" || return 1
+    local major_b minor_b patch_b prerelease_b
+    semver_parse "$2" major_b minor_b patch_b prerelease_b || return 1
 
-    if (( major_a < major )); then echo "lt"; return; fi
-    if (( major_a > major )); then echo "gt"; return; fi
-    if (( minor_a < minor )); then echo "lt"; return; fi
-    if (( minor_a > minor )); then echo "gt"; return; fi
-    if (( patch_a < patch )); then echo "lt"; return; fi
-    if (( patch_a > patch )); then echo "gt"; return; fi
+    if (( major_a < major_b )); then echo "lt"; return; fi
+    if (( major_a > major_b )); then echo "gt"; return; fi
+    if (( minor_a < minor_b )); then echo "lt"; return; fi
+    if (( minor_a > minor_b )); then echo "gt"; return; fi
+    if (( patch_a < patch_b )); then echo "lt"; return; fi
+    if (( patch_a > patch_b )); then echo "gt"; return; fi
 
-    if [[ -n "$prerelease_a" && -z "$prerelease" ]]; then echo "lt"; return; fi
-    if [[ -z "$prerelease_a" && -n "$prerelease" ]]; then echo "gt"; return; fi
-    if [[ "$prerelease_a" < "$prerelease" ]]; then echo "lt"; return; fi
-    if [[ "$prerelease_a" > "$prerelease" ]]; then echo "gt"; return; fi
+    if [[ -n "$prerelease_a" && -z "$prerelease_b" ]]; then echo "lt"; return; fi
+    if [[ -z "$prerelease_a" && -n "$prerelease_b" ]]; then echo "gt"; return; fi
+    if [[ "$prerelease_a" < "$prerelease_b" ]]; then echo "lt"; return; fi
+    if [[ "$prerelease_a" > "$prerelease_b" ]]; then echo "gt"; return; fi
 
     echo "eq"
 }
