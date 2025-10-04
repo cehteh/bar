@@ -33,7 +33,7 @@
 # Each memo log is used to cache the result of tests and to schedule background jobs.
 # A memo log is appended to after each test is run.
 
-require lock
+require lock git_lib
 
 declare -gx MEMODB_KEEP="${MEMODB_KEEP:-5}"                      ## How many trees to keep.
 declare -gx MEMODB_BACKGROUNDING="${MEMODB_BACKGROUNDING:-true}" ## Global backgrounding flag.

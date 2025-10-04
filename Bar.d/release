@@ -33,6 +33,7 @@
 ###    upload succeeded.
 ###  - done:
 ###    The release finished
+require git_lib
 
 # PLANNED: basedir for release worktrees etc
 export RELEASE_BRANCH_DELIMITER="${RELEASE_BRANCH_DELIMITER:--}" ## The prefix for release branches, should be "-" or "/"

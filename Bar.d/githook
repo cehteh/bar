@@ -2,6 +2,8 @@
 
 ### Support library for managing githooks
 
+require git_lib
+
 function githook_enable
 {
      local hook
