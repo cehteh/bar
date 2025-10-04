@@ -9,11 +9,11 @@
 function semver_parse ## <semver> [major [minor [patch [prerelease [build]]]]] - parses semver into the provided variables
 {
     if [[ "$1" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)((-.*)*)((\+.*)*)$ ]]; then
-        iset "${2:-}" = "${BASH_REMATCH[1]}"
-        iset "${3:-}" = "${BASH_REMATCH[2]}"
-        iset "${4:-}" = "${BASH_REMATCH[3]}"
-        iset "${5:-}" = "${BASH_REMATCH[4]}"
-        iset "${6:-}" = "${BASH_REMATCH[6]}"
+        iset "${2:-}" "${BASH_REMATCH[1]}"
+        iset "${3:-}" "${BASH_REMATCH[2]}"
+        iset "${4:-}" "${BASH_REMATCH[3]}"
+        iset "${5:-}" "${BASH_REMATCH[4]}"
+        iset "${6:-}" "${BASH_REMATCH[6]}"
         return 0
     else
         return 1
@@ -53,12 +53,23 @@ function semver_majorminor ## <version> - shortens a semver to major.minor
     echo "$major.$minor"
 }
 
-function semver_increment ## <version> <major|minor|patch> - Increment selected part
+function semver_increment ## <version> <release|major|majorpre1x|minor|patch> [--pre1x] - Increment selected part
 {
+    ## 'release' strips any 'prerelease' part
+    ## 'majorpre1x' increments the minor part on a 0.x version
     local major minor patch prerelease build
     semver_parse "$1" major minor patch prerelease build || return 1
 
-    case "$2" in
+    local level="$2"
+    if [[ "$level" = 'majorpre1x' ]]; then
+        if [[ "$major" = 0 ]]; then
+            level="minor"
+        else
+            level="major"
+        fi
+    fi
+
+    case "$level" in
     release) # strips the prerelease
         [[ -n "$prerelease" ]] || {
             error "can't strip prerelease from $1"
@@ -91,7 +102,7 @@ function semver_increment ## <version> <major|minor|patch> - Increment selected 
         ((patch++))
         ;;
     *)
-        error "semver_increment: unknown part $2"
+        error "semver_increment: unknown part $level"
         return 1
         ;;
     esac
