@@ -354,8 +354,9 @@ MODULES
 
   Modules are shell snippets normally located in '$BAR_DIR' ('Bar.d/', 'bar.d/', '.Bar.d/' or
   '.bar.d/') when called as 'bar' or symlink or '~/.config/please' when called as 'please'.
-  All modules that contain a underscore in their name are loaded at startup. Modules with
-  alphabetic names without underscores are lazy loaded on demand.
+  The 'std_lib' and 'rules_lib' are always loaded at startup. Modules matching '*_rules' are
+  also autoloaded at startup. Any other '*_lib' must be manuallly loaded with 'require'.
+  Modules with simple alphabetic names without underscores are lazy loaded on demand.
 
   Modules are loaded with the 'require' function. This ensures that they are loaded only once.
   Require will load modules outside of '$BAR_DIR' when a path containing at least one slash
@@ -377,10 +378,12 @@ MODULES
   suffixes. Thus the rules which shall trigger loading must follow the naming schema with the
   module name after the prefixes in the rule name.
 
-  Per convention 'name_rules' is a module that contains the rules (and few functions) that
-  that add clauses to other rules to make 'name' accessible. 'name_lib' contains support
-  functions other modules may use (with 'require name_lib') and 'name' are the autoloaded
-  functions and rules that implement the actual functionality of 'name'.
+  Per convention '<name>_rules' is a module that contains the rules (and few functions) that
+  that add clauses to other rules to make 'name' accessible. These '*_rules' files are
+  autoloaded at startup.
+
+  '<name>_lib' are libraries for support functions other modules may use (with 'require
+  name_lib').
 
 
 AUTOMATIC MODULE LOADING
@@ -787,10 +790,10 @@ MODULE API/RULES
       git_add_ignore [patterns..]
         Adds new ignore patterns to '.gitignore'.
         Patterns that are already present are skipped.
-        These arrays are declared as:
-         declare -l worktree_main        directory to the main worktree
-         declare -Al worktree_dirs       holding 'branch:directory'
-         declare -Al worktree_branches   holding 'directory:branch'
+        - main:     variable storing the main worktree
+        - dirs:     associative array storing 'branch:directory'
+        - branches: associative array storing 'directory:branch'
+        - heads:    associative array storing 'directory:head'
 
     Rules:
 
@@ -1066,7 +1069,7 @@ MODULE API/RULES
     actual release procedure then evaluates 'release_prepare', 'release_commit', 'release_tag'
     and 'release_publish'.  Finally 'release_postprocess' and 'release_cleanup' are evaluated.
     
-    Any non published release can be aborted.
+    Any non published release can be aborted/deleted.
     
     This only defines the bare workflow the actual implementation hooks into the
     'release_rules'.
@@ -1077,15 +1080,30 @@ MODULE API/RULES
      - The main branch can be named 'main' or 'master'
      - Development branches matching 'devel' 'devel-*' or 'devel/*'
     
-    The worktree tracks its state in a local git config:
+    The worktree tracks its state in a local git config bar.release.state:
      - start:
        The worktree is created but not tested yet.
+     - tested:
+       All test passed.
      - ready:
        The worktree/branch is ready for publishing
      - published:
        upload succeeded.
      - done:
-       The release finished
+       The release finished.
+    
+    Further following git config variables are set:
+     - bar.release.startbranch:
+       Branch this release initiated from (usually main or devel).
+     - bar.release.version:
+       The (semver) version of this release.
+    
+    Release Configuration and Workflow
+    
+    
+    
+    
+    
 
     Functions:
 
@@ -1105,19 +1123,20 @@ MODULE API/RULES
     Rules:
 
       release_prepare:
-        Generate changelog an other versioned artifacts, update manifests and so on.  Should leave
-        the tree in a uncommited state. Note that 'build_versioned_artifacts' is already a
-        dependency here.
+        Generate changelog an other versioned artifacts, update manifest, bump versions and so on.
+        Should leave the tree in a uncommited state. Note that 'build_versioned_artifacts' is
+        already a dependency here.
 
       release_tests:
-        All tests to run for a software release.
+        All tests and lints to run for a software release.
 
       release_commit:
-        Create the release commit, maybe tag it.
+        Create the release commit, rebase/merge to local branches branches, tag it.
 
       release_publish:
-        Deploy the release, upload it to servers, git push or whatever necessary
-        Since network operations can be fallible this can be restarted.
+        Deploy the release, upload it to servers, git push or whatever necessary. Since network
+        operations can be fallible this can be restarted.  Should start with them least critical
+        (git push) and finally publish it to registries.
 
       release_postprocess:
         Local actions to be done after the release, rebase main/devel on it etc.
@@ -1207,8 +1226,8 @@ MODULE API/RULES
 
     Functions:
 
-      semver_parse 
-        requires major, minor, patch, prerelease and build to be declared local
+      semver_parse <semver> [major [minor [patch [prerelease [build]]]]]
+        parses semver into the provided variables
 
       semver_validate <version>
         Validate if string is a valid semver
@@ -1219,8 +1238,10 @@ MODULE API/RULES
       semver_majorminor <version>
         shortens a semver to major.minor
 
-      semver_increment <version> <major|minor|patch>
+      semver_increment <version> <release|major|majorpre1x|minor|patch> [--pre1x]
         Increment selected part
+        'release' strips any 'prerelease' part
+        'majorpre1x' increments the minor part on a 0.x version
 
       semver_cmp <a> <b>
         comparing 'a' with 'b', prints 'lt', 'eq' or 'gt'
@@ -1266,7 +1287,7 @@ MODULE API/RULES
 
     Rules:
 
-      has_shellcheck_shscripts:
+      shellcheck_has_shscripts:
         Checks if the project has any shell scripts. Must be called from a git toplevel.
         Checks whenever any shell scripts are versioned in gitq
 
@@ -1322,6 +1343,11 @@ MODULE API/RULES
 
       hash_args <arguments..>
         returns the sha1hash of all supplied arguments
+
+      iset <target> [values]..
+        indirect assign values to a variable given by name, assigns to an array when more values are given.
+        When target is empty or '[*]' (missing name) then this is a no-op. Otherwise target
+        must be a declared variable When no values are given then target is cleared.
 
   std_rules - Standard rule targets where other modules can hook in
     
@@ -1497,6 +1523,63 @@ MODULE API/RULES
         testdir. When a previous testdir exists then 'TESTDIR_PREV' point to it, the hook can use
         that as source for populating already build artifacts.
 
+
+  toml - toml_lib -- Advanced TOML parser and mutator for Bash
+    - Preserves comments/formatting
+    - Supports multiline strings, inline tables, nested/multiline arrays, etc.
+    - API: toml_parse, toml_query, toml_set, toml_rm, toml_apply_mutations, toml_diff
+    - Variables passed by name, no globals
+    - Comprehensive test suite
+
+    Functions:
+
+      _toml_split_trailing_comment 
+        <line> <out_line_var> <out_comment_var>
+
+      toml_parse 
+        <file> <kv_var> <meta_var>
+
+      toml_query 
+        <key> <kv_var> -- returns TOML value (raw string, possibly multiline)
+
+      toml_query_meta 
+        <key> <meta_var> -- returns metadata string
+
+      toml_set 
+        <key> <value> <kv_var> <meta_var>
+
+      toml_rm 
+        <key> <kv_var> <meta_var>
+
+      toml_apply_mutations 
+        <srcfile> <dstfile> <kv_var> <meta_var>
+
+      toml_diff 
+        <srcfile> <kv_var> <meta_var>
+
+      toml_test_parse_standard 
+        parse typical TOML, check comments/format/values
+
+      toml_test_query 
+        test toml_query and toml_query_meta
+
+      toml_test_set_and_rm 
+        test mutation, add, remove, edge
+
+      toml_test_multiline_string_and_array 
+        parse/emit multiline string/array, preserve comments
+
+      toml_test_inline_table_and_nested_array 
+        parse/emit inline table, nested arrays
+
+      toml_test_comments_and_formatting_preserved 
+        check that comments, spacing, blank lines are unchanged except for mutations
+
+      toml_test_diff 
+        test diff output
+
+      toml_test_all 
+        run all tests
 
   tty_lib - This module adds some support for conditional terminal control codes.
     

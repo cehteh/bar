@@ -81,7 +81,7 @@ function init # --hidden|--update|--update-existing - initialize bar in a workdi
 
 rule init_update_gitignore: is_git_toplevel? -- '
      require --opt testdir
-     git_add_ignore .bar\* \*.lock
+     git_add_ignore ".bar.\*"
      [[ -v TESTDIR_PREFIX ]] && git_add_ignore "$TESTDIR_PREFIX-"\*
 '
 

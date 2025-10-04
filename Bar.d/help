@@ -382,8 +382,9 @@ MODULES
 
   Modules are shell snippets normally located in '\$BAR_DIR' ('Bar.d/', 'bar.d/', '.Bar.d/' or
   '.bar.d/') when called as 'bar' or symlink or '~/.config/please' when called as 'please'.
-  All modules that contain a underscore in their name are loaded at startup. Modules with
-  alphabetic names without underscores are lazy loaded on demand.
+  The 'std_lib' and 'rules_lib' are always loaded at startup. Modules matching '*_rules' are
+  also autoloaded at startup. Any other '*_lib' must be manuallly loaded with 'require'.
+  Modules with simple alphabetic names without underscores are lazy loaded on demand.
 
   Modules are loaded with the 'require' function. This ensures that they are loaded only once.
   Require will load modules outside of '\$BAR_DIR' when a path containing at least one slash
@@ -405,10 +406,12 @@ MODULES
   suffixes. Thus the rules which shall trigger loading must follow the naming schema with the
   module name after the prefixes in the rule name.
 
-  Per convention 'name_rules' is a module that contains the rules (and few functions) that
-  that add clauses to other rules to make 'name' accessible. 'name_lib' contains support
-  functions other modules may use (with 'require name_lib') and 'name' are the autoloaded
-  functions and rules that implement the actual functionality of 'name'.
+  Per convention '<name>_rules' is a module that contains the rules (and few functions) that
+  that add clauses to other rules to make 'name' accessible. These '*_rules' files are
+  autoloaded at startup.
+
+  '<name>_lib' are libraries for support functions other modules may use (with 'require
+  name_lib').
 
 
 AUTOMATIC MODULE LOADING

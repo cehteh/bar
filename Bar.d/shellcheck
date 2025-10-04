@@ -5,7 +5,9 @@
 ### Shellcheck is surprisingly slow.  In projects using bar one can prevent the bar files
 ### themselves being checked by setting in 'Barf':
 ###
-###  SHELLCHECK_LS_FILES=":!bar :!Bar.d"
+###  SHELLCHECK_LS_FILES=":!bar :!Bar.d"  # Perhaps adding ':!Barf' too
+
+require git_lib
 
 declare -gx SHELLCHECK_LS_FILES="${SHELLCHECK_LS_FILES:-}" ## List of file match rules for git-ls-files.
 
@@ -30,7 +32,7 @@ memofn shellcheck_has_shscripts
 
 ## Checks if the project has any shell scripts. Must be called from a git toplevel.
 ## Checks whenever any shell scripts are versioned in gitq
-rule has_shellcheck_shscripts: is_git_toplevel -
+rule shellcheck_has_shscripts: is_git_toplevel -
 
 function shellcheck_list_shscripts ## List all shell scripts under git control
 {

@@ -46,8 +46,8 @@ function bar_main ## [rulefile] [rule [arguments..]] - Loads a rulefile and exec
     debug "using Bar directory: $BAR_DIR"
     # the std_lib and rule_lib are omnipresent other modules don't need to require it
     require std_lib rule_lib
-    # load all modules with underscores in the name
-    require '*_*'
+    # load all '*_rules'
+    require '*_rules'
 
     local maybe_barf=
     local initial_rule=

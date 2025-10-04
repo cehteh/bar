@@ -14,4 +14,4 @@ function entr_watch
 ## Runs bar in a loop again whenever a file gets changed.
 ## Takes a target rule and its parameters as argument.
 ## Defaults to 'MAIN'.
-rule entr_watch: is_entr_installed -
+rule entr_watch: 'require git_lib' is_entr_installed -
