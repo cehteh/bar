@@ -1,0 +1,16 @@
+#!/bash
+# shellcheck disable=2016
+
+### hooks entr into the watch/watch_git_index rules
+
+require watch_rules
+
+rule watch: is_entr_installed? -- '
+     require entr
+     entr_watch "${RULE_ARGS[*]}"
+'
+
+rule watch_git_index: is_entr_installed? is_git_repository -- '
+     require entr
+     entr_watch_git_index "${RULE_ARGS[*]}"
+'

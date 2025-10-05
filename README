@@ -652,6 +652,8 @@ MODULE API/RULES
         Defaults to 'MAIN'.
 
 
+  entr_rules - hooks entr into the watch/watch_git_index rules
+
   git - Git support rules
 
     Rules:
@@ -1640,13 +1642,17 @@ MODULE API/RULES
       tty_newline 
         Outputs a newline when we are not at column 1.
 
-  watch - Continious supervision by a file watcher
+  watch_rules - Continious supervision by a file watcher
 
     Rules:
 
       watch:
-        Run bar in a file watcher ('entr'), whenever a file
-        changed it will be run again.
+        Evaluates a rule or MAIN whenever a versioned files changed in the current directory.
+        File watchers hook into this rule.
+
+      watch_git_index:
+        Evaluates a rule or MAIN whenever a the git index changed.
+        File watchers hook into this rule.
 
 
 LICENSE

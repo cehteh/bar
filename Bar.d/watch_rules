@@ -1,0 +1,26 @@
+#!/bash
+# shellcheck disable=2016,2086
+
+### Continious supervision by a file watcher
+
+## Evaluates a rule or MAIN whenever a versioned files changed in the current directory.
+## File watchers hook into this rule.
+rule --disjunct --always watch: -- '
+     debug "Selecting file watcher.."
+     false
+'
+rule watch: --default -- '
+     warn "no supported file watcher available"
+     false
+'
+
+## Evaluates a rule or MAIN whenever a the git index changed.
+## File watchers hook into this rule.
+rule --disjunct --always watch_git_index: -- '
+     debug "Selecting git index file watcher.."
+     false
+'
+rule watch_git_index: --default -- '
+     warn "no supported git index file watcher available"
+     false
+'
