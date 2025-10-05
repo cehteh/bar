@@ -257,6 +257,11 @@ RULE DEFINITION SYNTAX
     --conclusive
       Makes a clause result conclusive, if not skipped no more clauses will be tried.
 
+    --default
+      Default clauses will be kept at the end of the list of clauses. Using '--default'
+      together with 'disjunct' rules allows one to hook up action while maintaining a fallback
+      or warning/error when no hooked up rule succeeded.
+
   * [[!]deps[?|~][??] args..]..
 
     Dependencies, are a list of other rules that this rule depends on. These will be executed

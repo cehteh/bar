@@ -57,6 +57,9 @@ function rule () ## [[--rule-flag].. <name>:] [--clause-flag].. [[!]dep[?] [arg]
         --conclusive)
             clauseflags+="c"
             ;;
+        --default)
+            clauseflags+="d"
+            ;;
         *)
             break;;
         esac
@@ -112,7 +115,25 @@ function rule () ## [[--rule-flag].. <name>:] [--clause-flag].. [[!]dep[?] [arg]
 
     BAR_CLAUSE_FLAGS+=("$clauseflags")
     BAR_RULE_FLAGS["$name"]="${BAR_RULE_FLAGS[$name]:-}$ruleflags"
-    BAR_RULES["$name"]+=" $(( ${#BAR_CLAUSES[@]} - 1))"
+
+    local newclause=" $((${#BAR_CLAUSES[@]} - 1))"
+
+    # if this clause is --default then just append it to the end
+    if [[ "${BAR_CLAUSE_FLAGS[$newclause]}" = *d* ]]; then
+        BAR_RULES["$name"]+="$newclause"
+    else # append it before any defaults
+        local newclauses=""
+        local clause
+        for clause in ${BAR_RULES["$name"]:-}; do
+            if [[ -n "$newclause" && "${BAR_CLAUSE_FLAGS[$clause]}" = *d* ]]; then
+                newclauses+="$newclause"
+                newclause=""
+            fi
+            newclauses+=" $clause"
+        done
+        newclauses+="$newclause"
+        BAR_RULES["$name"]="$newclauses"
+    fi
 }
 
 function newrule ## <name:> ... - Creates a new rule, deletes the existing one.
