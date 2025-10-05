@@ -34,11 +34,6 @@ function git_dir ## Returns the absolute path to the 'GIT_DIR' (.git/).
     memo git rev-parse --absolute-git-dir
 }
 
-## Succeeds when we are in inside (at or below) a git repository.
-rule is_git_repository: -- 'git_toplevel &>/dev/null'
-## Succeeds when we are at the top level of a git repository.
-rule is_git_toplevel: -- '[[ "$(git_toplevel)" = "$PWD" ]]'
-
 function git_ls_files # [git-ls-files-opts].. - Sorted list of files in the git repository.
 {
     ## git-ls-files '--cached' and '--exclude-standard' are always implied.  Notable options

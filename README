@@ -658,6 +658,12 @@ MODULE API/RULES
 
     Rules:
 
+      is_git_repository:
+        Succeeds when we are in inside (at or below) a git repository.
+
+      is_git_toplevel:
+        Succeeds when we are at the top level of a git repository.
+
       git_is_clean:
         Checks if there are modified files, fails if there are any.
 
@@ -801,15 +807,6 @@ MODULE API/RULES
         - dirs:     associative array storing 'branch:directory'
         - branches: associative array storing 'directory:branch'
         - heads:    associative array storing 'directory:head'
-
-    Rules:
-
-      is_git_repository:
-        Succeeds when we are in inside (at or below) a git repository.
-
-      is_git_toplevel:
-        Succeeds when we are at the top level of a git repository.
-
 
   git_rules - Standard rules for git support
 
