@@ -16,6 +16,7 @@ function semver_parse ## <semver> [major [minor [patch [prerelease [build]]]]] -
         iset "${6:-}" "${BASH_REMATCH[6]}"
         return 0
     else
+        error "invalid semver: $1"
         return 1
     fi
 }
@@ -44,6 +45,28 @@ function semver_shortversion ## <version> - shortens a semver to the first non z
     esac
 }
 
+function semver_major ## <version> - shortens a semver to major
+{
+    # shellcheck disable=2034
+    local major
+    semver_parse "$1" major || return 1
+
+    echo "$major"
+}
+
+function semver_majorpre1x ## <version> - shortens a semver to major with 0.x major semantic
+{
+    # shellcheck disable=2034
+    local major minor
+    semver_parse "$1" major minor || return 1
+
+    if [[ "$major" = 0 ]]; then
+        echo "$major.$minor"
+    else
+        echo "$major"
+    fi
+}
+
 function semver_majorminor ## <version> - shortens a semver to major.minor
 {
     # shellcheck disable=2034
@@ -51,6 +74,14 @@ function semver_majorminor ## <version> - shortens a semver to major.minor
     semver_parse "$1" major minor || return 1
 
     echo "$major.$minor"
+}
+
+function semver_is_patch ## <version>
+{
+    # shellcheck disable=2034
+    local major minor patch
+    semver_parse "$1" major minor patch || return 1
+    [[ "$patch" != 0 ]]
 }
 
 function semver_increment ## <version> <release|major|majorpre1x|minor|patch> - Increment selected part

@@ -182,6 +182,11 @@ rule test_semver_validate_invalid: 'semver_validate? 1.2.3@beta' -- false
 
 rule test_semver_validate_invalid
 
+rule test_semver_is_patch: 'semver_is_patch 1.2.3+beta'
+rule test_semver_is_patch: 'semver_is_patch? 1.2.0+beta' -- false
+
+rule test_semver_is_patch
+
 function assert_semver_inc
 {
     local ver=$1 part=$2 expected=$3
