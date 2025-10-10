@@ -22,23 +22,61 @@
 ###  - The main branch can be named 'main' or 'master'
 ###  - Development branches matching 'devel' 'devel-*' or 'devel/*'
 ###
-### The worktree tracks its state in a local git config:
+### The worktree tracks its state in a local git config bar.release.state:
 ###  - start:
 ###    The worktree is created but not tested yet.
 ###  - tested:
-###    All test passed
+###    All test passed.
+###  - changelog:
+###    generated the changelog and committed it.
 ###  - ready:
 ###    The worktree/branch is ready for publishing
 ###  - published:
-###    upload succeeded.
+###    uploads succeeded.
 ###  - done:
-###    The release finished
-require git_lib
+###    The release finished.
+###
+### Further following git config variables are set:
+###  - bar.release.startbranch:
+###    Branch this release initiated from (usually main or devel).
+###  - bar.release.version:
+###    The (semver) version of this release.
+###
+### Release Configuration and Workflow
+###
+### Every release starts in its own git worktree. All testing, and fixes necessary for the
+### release are made in that worktree.
+###
+### Configuration of release workflows is done by extending the rules from 'release_rules'.
+### Many other '*_rules' modules already hook into these rules and do the 'right thing'.
+### The parts that can configured in Barf are:
+###   - release_prepare:
+###     Any extra preparation for releases. 'cargo_rules' already bumps the version.
+###   - release_tests:
+###     Whatever tests are necessary for making a software release. 'lints' and 'tests' are
+###     already defined dependencies. Anything more needs to be added in Barf.
+###   - release_preprocess:
+###     Any final work that needs to be done before publishing. This should not change the
+###     project files anymore. This is the place to do git tags, merge/fast-forward branches
+###     or switch over to other worktrees. For convenience the 'release_as_*' rules exist to
+###     do this work.
+###   - release_publish:
+###     The actual publishing part. May need access to the internet.
+###     The 'git_rules' and 'cargo_rules' already hook into this.
+###   - release_postprocess:
+###     Any work to be done after the publishing. Like rebase work/devel branches on the
+###     release and so on.
+###   - release_cleanup:
+##-     Final clean up work to remove artifacts not needed after the release.
+
+# ## rule --disjunct release_generate_version_hook: -- false
+
+require git_lib semver_lib
 
 # PLANNED: basedir for release worktrees etc
 export RELEASE_BRANCH_DELIMITER="${RELEASE_BRANCH_DELIMITER:--}" ## The prefix for release branches, should be "-" or "/"
 
-function release_abort # [release] - A release that is not published yet can be aborted and deleted
+function release_abort # <release> - A release that is not published yet can be aborted and deleted
 {
     declare -l worktree_main
     declare -Al worktree_dirs
@@ -51,8 +89,8 @@ function release_abort # [release] - A release that is not published yet can be 
     if [[ -z "$release" ]]; then
         # shellcheck disable=2155
         local branch="$(git_branch_name)"
-        if [[ "$branch" = 'release-'* ]]; then
-            release="${branch#release-}"
+        if [[ "$branch" = "release$RELEASE_BRANCH_DELIMITER"* ]]; then
+            release="${branch#release"$RELEASE_BRANCH_DELIMITER"}"
         else
             error "no release given and not in a release branch"
             return 1
@@ -69,12 +107,13 @@ function release_abort # [release] - A release that is not published yet can be 
     # shellcheck disable=2155
     local state="$(git --git-dir="$worktree_dir/.git" config --get bar.release.state)"
 
-    # can only abort started or tested releases. Any further state is already committed/merged/published.
-    if [[ "$state" =~ ^start|tested$ ]]; then
+    # can only abort started to ready states. Any further state is already committed/merged/published.
+    if [[ "$state" =~ ^start|tested|ready$ ]]; then
         info "aborting $release"
         cd "$worktree_main" || return 1
         git worktree remove -f "$worktree_dir"
-        git branch -d "release-$release"
+        git branch -D "release-$release"
+        git tag -d "v$release"
     else
         error "can't abort $release because state is $state"
         return 1
@@ -87,9 +126,9 @@ function release_start
      local startbranch
      startbranch="$(git_branch_name)"
      local version="${1:-auto}"
-     [[ "$version" != [0-9]* ]] && version="$(rule_eval release_generate_version_hook "$version")"
+     [[ "$version" != [0-9]* ]] && version="$(rule_eval release_generate_version "$version")"
      semver_validate "$version" || {
-         error "not a valid semver: $version"
+         error "not a valid semver: ${version:-<no version given>}"
          return 1
      }
      (
@@ -97,10 +136,23 @@ function release_start
              error "failed to create worktree for $version"
              return 1
          }
-         release_startbranch_set "$startbranch"
+
+         git config set --worktree bar.release.startbranch "$startbranch"
+         git config set --worktree bar.release.version "$version"
          release_state_set start
          rule_eval release "$version"
      )
+}
+
+function release_version
+{
+    memo git config get --worktree bar.release.version
+}
+
+## checks whenever the current worktrees release is a patch release
+function release_is_patch
+{
+    memo semver_is_patch "$(release_version)"
 }
 
 # create branch/worktree for the release
@@ -132,12 +184,12 @@ rule release: --conclusive is_git_devel_branch? '!git_is_ancestor main master' -
      false
 '
 rule release: --conclusive is_git_devel_branch? -- '
-     release_start $RULE_ARGS
+     release_start "${RULE_ARGS[@]}"
 '
 
 # main branch must be clean
 rule release: --conclusive is_git_main_branch? git_is_clean -- '
-     release_start $RULE_ARGS
+     release_start "${RULE_ARGS[@]}"
 '
 
 rule release_pending: is_git_release_branch 'release_state_matches !done'
@@ -162,34 +214,142 @@ rule release: 'release_state_matches? published done' -- '
 
 # The state machine doing the actual (restartable) release:
 rule release: 'release_state_matches? start' release_prepare release_tests 'release_state_set tested'
-rule release: 'release_state_matches? tested' release_commit git_is_clean 'release_state_set ready'
+rule release: 'release_state_matches? tested' release_changelog git_is_clean 'release_state_set changelog'
+rule release: 'release_state_matches? changelog' release_preprocess 'release_state_set ready'
 rule release: 'release_state_matches? ready' release_publish 'release_state_set published'
 rule release: 'release_state_matches? published' release_postprocess 'release_state_set done'
 rule release: 'release_state_matches? done' release_cleanup~
-
-function release_startbranch_set # stores the branch name from where the release was started
-{
-     git config set --worktree bar.release.startbranch "$1"
-}
 
 function release_state_set # <state> - sets the release state
 {
      git config set --worktree bar.release.state "$1"
 }
 
-function release_state_matches ## [[!]statematch] - check if the current state matches (does not match with '!').
+function release_state_get # <state> - gets the release state
+{
+     git config get --worktree bar.release.state
+}
+
+function release_state_matches ## [[!]statematch] - Check if the current state matches (does not match with '!').
 {
     local state
     for state in "$@"; do
         if [[ "${state:0:1}" != "!" ]]; then
             # shellcheck disable=2053
-            [[ "$(git config get --worktree bar.release.state)" = $state ]] && return 0
+            [[ "$(release_state_get)" = $state ]] && return 0
         else
             state="${state:1}"
             # shellcheck disable=2053
-            [[ "$(git config get --worktree bar.release.state)" != $state ]] && return 0
+            [[ "$(release_state_get)" != $state ]] && return 0
         fi
     done
     return 1
 }
 
+function release_into ## <target_version> - switch over to another existing release worktree, reset it to the current release state
+{
+    ## We prepare releases in dedicated worktrees. This would leave a lot worktrees behind.
+    ## This provides the facility to coalesce worktrees to keep only major, majorpre1x, or majorminor versions.
+    local release
+    release=$(release_version)
+    local state
+    state="$(release_state_get)"
+    local startbranch
+    startbranch="$(git config get --worktree bar.release.startbranch)"
+
+    local target_version="$1"
+
+    declare -l worktree_main
+    declare -Al worktree_dirs
+    # shellcheck disable=2034
+    declare -Al worktree_branches
+    git_parse_worktrees worktree_main worktree_dirs worktree_branches
+
+    local target_worktree_dir="${worktree_dirs[release$RELEASE_BRANCH_DELIMITER$target_version]}"
+
+    [[ -d "$target_worktree_dir" ]] || {
+        error "target worktree for branch 'release$RELEASE_BRANCH_DELIMITER$target_version' does not exist"
+        return 1
+    }
+
+    # switch over
+    cd "$target_worktree_dir" || return 1
+
+    git_is_ancestor "release$RELEASE_BRANCH_DELIMITER$release" || {
+        error "release$RELEASE_BRANCH_DELIMITER$target_version is not a ancestor of release$RELEASE_BRANCH_DELIMITER$release"
+        return 1
+    }
+
+    git reset --hard "release$RELEASE_BRANCH_DELIMITER$release"
+
+    release_state_set "$state"
+    git config set --worktree bar.release.startbranch "$startbranch"
+    git config set --worktree bar.release.version "$release"
+
+    # can remove the release-x.y.z worktree and branch now
+    git worktree remove "${worktree_dirs[release$RELEASE_BRANCH_DELIMITER$release]}"
+    git branch -d "${worktree_dirs[release$RELEASE_BRANCH_DELIMITER$release]}"
+}
+
+## Transfer over to major version, for workflows that keep 'release-x' worktrees and branches
+function release_into_major
+{
+    release_into "$(semver_major "$(release_version)")"
+}
+
+## Transfer over to major version with 0.x major semantic, for workflows that keep 'release-0.x' and 'release-x' worktrees and branches
+function release_into_majorpre1x
+{
+    release_into "$(semver_majorpre1x "$(release_version)")"
+}
+
+## Transfer over to major.minor version, for workflows that keep 'release-x.y' worktrees and branches
+function release_into_majorminor
+{
+    release_into "$(semver_majorminor "$(release_version)")"
+}
+
+function release_worktree_rename ## <version> - rename worktree and cd into that
+{
+    # shellcheck disable=2155
+    local current="$(git rev-parse --show-toplevel)"
+
+    # safety check
+    [[ "${current##*/}" = "release-"* ]] || {
+        error "not in a relelease-* worktree"
+        return 1
+    }
+
+    local target="${current%/*}/release-$1"
+
+    git worktree move "$current" "$target"
+    cd target || return 1
+}
+
+## Rename worktree to'release-x' with major version only.
+function release_worktree_rename_major
+{
+    release_worktree_rename "$(semver_major "$(release_version)")"
+}
+
+## Rename worktree to'release-x[.y]' with 0.x major semantic.
+function release_worktree_rename_majorpre1x
+{
+    release_worktree_rename "$(semver_majorpre1x "$(release_version)")"
+}
+
+## Rename worktree to 'release-x.y' with major.minor.
+function release_worktree_rename_majorminor
+{
+    release_worktree_rename "$(semver_majorminor "$(release_version)")"
+}
+
+## To be used from release-preprocess. Creates or resets the release worktree to release.x major.
+rule release_as_major: !release_is_patch release_worktree_rename_major
+rule release_as_major: release_is_patch? release_into_major
+## To be used from release-preprocess. Creates or resets the release worktree to release.x[.y] major with 0.x major semantic.
+rule release_as_majorpre1x: !release_is_patch release_worktree_rename_majorpre1x
+rule release_as_majorpre1x: release_is_patch? release_into_majorpre1x
+## To be used from release-preprocess. Creates or resets the release worktree to release.x.y major.minor.
+rule release_as_majorminor: !release_is_patch release_worktree_rename_majorminor
+rule release_as_majorminor: release_is_patch? release_into_majorminor

@@ -98,7 +98,7 @@ function git_add_ignore ## [patterns..] - Adds new ignore patterns to '.gitignor
 
 function git_parse_worktrees # [main [dirs [branches [heads]]]] - Parses git worktrees into variables provided by the caller
 {
-    ## - main:     variable storing the main worktree
+    ## - main:     variable storing the main worktree (dir)
     ## - dirs:     associative array storing 'branch:directory'
     ## - branches: associative array storing 'directory:branch'
     ## - heads:    associative array storing 'directory:head'

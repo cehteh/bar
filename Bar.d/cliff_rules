@@ -2,7 +2,9 @@
 
 ### Hooks git cliff into build_versioned_artifacts
 
-## Succeeds when 'git-cliff' is installed.
-rule is_cliff_installed: 'is_command_installed git-cliff'
-
+# ## Succeeds when 'git-cliff' is installed.
+# 
 rule build_versioned_artifacts: is_cliff_installed? cliff_changelog??
+
+## Create a cliff changelog for releases when there is a 'cliff.toml' at the project root.
+rule release_changelog: is_cliff_installed 'test -f cliff.toml' cliff_release_changelog

@@ -5,7 +5,9 @@
 
 declare -gx GIT_CLIFF_OUTPUT="${GIT_CLIFF_OUTPUT:-CHANGELOG.md}" ## Output where to write the changelog
 
-function cliff_changelog # [cliff_args..] - Runs git-cliff.
+rule is_cliff_installed: 'is_command_installed git-cliff'
+
+function cliff_changelog
 {
     ## The generated changelog and cliff.toml (when there where changes) are implicitly staged.
     ## This does not git-commit though.
@@ -14,13 +16,24 @@ function cliff_changelog # [cliff_args..] - Runs git-cliff.
     git add "$GIT_CLIFF_OUTPUT"
 }
 
+## [cliff_args..] - use git cliff to generate a changelog.
+rule cliff_changelog: is_cliff_installed -
+
+function cliff_release_changelog
+{
+    local release
+    release=$(release_version)
+    cliff_changelog --tag "v$release"
+    git commit -n -m "v$release"
+    git tag "v$release"
+}
+
+## Makes a changelog for a release, commits and tags it. Must be called from a release worktree
+## with state 'tested'.
+rule cliff_release_changelog: 'release_state_matches tested' -
+
 ## Regenerates the changelog up to the previous commit and amends the current commit with the new changelog
 rule cliff_changelog_amend: 'cliff_changelog -- "$(git rev-list --max-parents=0 HEAD)"..HEAD~1' -- '
      git commit --amend --no-edit
-'
-
-## Runs cliff_changelog and then commits the changes.
-rule cliff_changelog_commit: cliff_changelog -- '
-     git commit -m "CHORE: update $GIT_CLIFF_OUTPUT"
 '
 

@@ -3,7 +3,7 @@
 
 ### The rules called by the release rule
 
-## Generate changelog an other versioned artifacts, update manifest, bump versions and so on.
+## Update manifest, bump versions, generate changelog an other versioned artifacts etc..
 ## Should leave the tree in a uncommited state. Note that 'build_versioned_artifacts' is
 ## already a dependency here.
 rule release_prepare: -- debug "Preparing release ..."
@@ -11,16 +11,20 @@ rule release_prepare: build_versioned_artifacts
 
 ## All tests and lints to run for a software release.
 rule release_tests: -- debug "Running release tests..."
+rule release_tests: lints tests
 
-## Create the release commit, rebase/merge to local branches branches, tag it.
-rule release_commit: -- debug "Committing release..."
+## Create the changelog and commit it, may include tags etc.
+rule release_changelog: -- debug "Generating changelog ..."
+
+## Local actions to be done before the release, rebase main/devel on it etc.
+rule release_preprocess: -- debug "Running release postprocessing..."
 
 ## Deploy the release, upload it to servers, git push or whatever necessary. Since network
 ## operations can be fallible this can be restarted.  Should start with them least critical
 ## (git push) and finally publish it to registries.
 rule release_publish: -- debug "Publish release..."
 
-## Local actions to be done after the release, rebase main/devel on it etc.
+## Local actions to be done after the release.
 rule release_postprocess: -- debug "Running release postprocessing..."
 
 ## Final cleanup for the release, clean/delete worktrees etc
@@ -30,4 +34,7 @@ rule release_cleanup: -- debug "Running release cleanup..."
 ## digit or was not given. Other modules should plug in here. Names are 'auto', 'major',
 ## 'minor', 'patch'. Custom rules may support more names such as 'prerelease', 'alpha', 'beta'
 ## and so on. 'auto' is the default for 'release'.
-rule --disjunct release_generate_version_hook: -- false
+rule --disjunct release_generate_version: -- false
+
+## Query the current version of this project.
+rule --disjunct release_current_version: -- false

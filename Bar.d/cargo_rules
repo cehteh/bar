@@ -65,3 +65,16 @@ rule fix: is_cargo_project? cargo_fix
 # running benchmarks
 rule benchmark: is_cargo_project? cargo_bench
 
+rule release_current_version: is_cargo_project? 'is_cargo_tool_installed metadata --help' 'is_command_installed jq' -- '
+     cargo metadata --no-deps --format-version 1 | jq -r ".packages[0].version"
+'
+
+rule release_prepare: is_cargo_project? 'is_cargo_tool_installed set-version' 'release_state_matches start' -- '
+     cargo set-version $(release_version)
+'
+rule release_prepare: is_cargo_project? is_git_repository? 'release_state_matches start' -- '
+     git add "Cargo.toml"
+'
+
+## Push a software release to crates.io (or whatever registry is configured).
+rule release_publish: is_cargo_project? cargo_publish

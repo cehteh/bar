@@ -53,3 +53,10 @@ rule fsmonitor-watchman: -- 'debug "called as $RULE_NAME hook"'
 ## Entry rule when called as githook.
 rule post-index-change: -- 'debug "called as $RULE_NAME hook"'
 
+# support for software release
+
+## Push tags and branches to the default push remove when publishing a release.
+rule release_publish: is_git_repository? -- '
+     git push --all
+     git push --tags
+'

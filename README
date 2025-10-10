@@ -542,6 +542,9 @@ MODULE API/RULES
       cargo_bench 
         Run 'cargo bench'
 
+      cargo_publish 
+        Run 'cargo publish'
+
     Rules:
 
       cargo_lint:
@@ -590,6 +593,9 @@ MODULE API/RULES
         Run 'cargo audit' when it is available.
         When 'cargo-audit' is not installed a warning is printed.
 
+      cargo_semver_checks:
+        Run cargo semver-checks to test if a semver for a release is sufficient
+
 
   cargo_rules - General support rules for Rust/Cargo projects
     
@@ -609,6 +615,9 @@ MODULE API/RULES
       is_cargo_project:
         Check whenever we are ready to use cargo here.
 
+      release_publish:
+        Push a software release to crates.io (or whatever registry is configured).
+
 
   cliff - git cliff changelog generation
 
@@ -624,19 +633,23 @@ MODULE API/RULES
 
     Rules:
 
+      cliff_changelog:
+        [cliff_args..] - use git cliff to generate a changelog.
+
+      cliff_release_changelog:
+        Makes a changelog for a release, commits and tags it. Must be called from a release worktree
+        with state 'tested'.
+
       cliff_changelog_amend:
         Regenerates the changelog up to the previous commit and amends the current commit with the new changelog
-
-      cliff_changelog_commit:
-        Runs cliff_changelog and then commits the changes.
 
 
   cliff_rules - Hooks git cliff into build_versioned_artifacts
 
     Rules:
 
-      is_cliff_installed:
-        Succeeds when 'git-cliff' is installed.
+      release_changelog:
+        Create a cliff changelog for releases when there is a 'cliff.toml' at the project root.
 
 
   entr - Support for the entr file watcher
@@ -803,7 +816,7 @@ MODULE API/RULES
       git_add_ignore [patterns..]
         Adds new ignore patterns to '.gitignore'.
         Patterns that are already present are skipped.
-        - main:     variable storing the main worktree
+        - main:     variable storing the main worktree (dir)
         - dirs:     associative array storing 'branch:directory'
         - branches: associative array storing 'directory:branch'
         - heads:    associative array storing 'directory:head'
@@ -883,6 +896,9 @@ MODULE API/RULES
 
       post-index-change:
         Entry rule when called as githook.
+
+      release_publish:
+        Push tags and branches to the default push remove when publishing a release.
 
 
   githook - Support library for managing githooks
@@ -1089,10 +1105,12 @@ MODULE API/RULES
        The worktree is created but not tested yet.
      - tested:
        All test passed.
+     - changelog:
+       generated the changelog and committed it.
      - ready:
        The worktree/branch is ready for publishing
      - published:
-       upload succeeded.
+       uploads succeeded.
      - done:
        The release finished.
     
@@ -1104,15 +1122,42 @@ MODULE API/RULES
     
     Release Configuration and Workflow
     
+    Every release starts in its own git worktree. All testing, and fixes necessary for the
+    release are made in that worktree.
     
-    
-    
-    
+    Configuration of release workflows is done by extending the rules from 'release_rules'.
+    Many other '*_rules' modules already hook into these rules and do the 'right thing'.
+    The parts that can configured in Barf are:
+      - release_prepare:
+        Any extra preparation for releases. 'cargo_rules' already bumps the version.
+      - release_tests:
+        Whatever tests are necessary for making a software release. 'lints' and 'tests' are
+        already defined dependencies. Anything more needs to be added in Barf.
+      - release_preprocess:
+        Any final work that needs to be done before publishing. This should not change the
+        project files anymore. This is the place to do git tags, merge/fast-forward branches
+        or switch over to other worktrees. For convenience the 'release_as_*' rules exist to
+        do this work.
+      - release_publish:
+        The actual publishing part. May need access to the internet.
+        The 'git_rules' and 'cargo_rules' already hook into this.
+      - release_postprocess:
+        Any work to be done after the publishing. Like rebase work/devel branches on the
+        release and so on.
+      - release_cleanup:
 
     Functions:
 
       release_state_matches [[!]statematch]
-        check if the current state matches (does not match with '!').
+        Check if the current state matches (does not match with '!').
+
+      release_into <target_version>
+        switch over to another existing release worktree, reset it to the current release state
+        We prepare releases in dedicated worktrees. This would leave a lot worktrees behind.
+        This provides the facility to coalesce worktrees to keep only major, majorpre1x, or majorminor versions.
+
+      release_worktree_rename <version>
+        rename worktree and cd into that
 
     Rules:
 
@@ -1121,21 +1166,33 @@ MODULE API/RULES
         name for the generating the version by 'release_generate_version_hook' as argument.
         When no argument is provided it defaults to 'auto'.
 
+      release_as_major:
+        To be used from release-preprocess. Creates or resets the release worktree to release.x major.
+
+      release_as_majorpre1x:
+        To be used from release-preprocess. Creates or resets the release worktree to release.x[.y] major with 0.x major semantic.
+
+      release_as_majorminor:
+        To be used from release-preprocess. Creates or resets the release worktree to release.x.y major.minor.
+
 
   release_rules - The rules called by the release rule
 
     Rules:
 
       release_prepare:
-        Generate changelog an other versioned artifacts, update manifest, bump versions and so on.
+        Update manifest, bump versions, generate changelog an other versioned artifacts etc..
         Should leave the tree in a uncommited state. Note that 'build_versioned_artifacts' is
         already a dependency here.
 
       release_tests:
         All tests and lints to run for a software release.
 
-      release_commit:
-        Create the release commit, rebase/merge to local branches branches, tag it.
+      release_changelog:
+        Create the changelog and commit it, may include tags etc.
+
+      release_preprocess:
+        Local actions to be done before the release, rebase main/devel on it etc.
 
       release_publish:
         Deploy the release, upload it to servers, git push or whatever necessary. Since network
@@ -1143,16 +1200,19 @@ MODULE API/RULES
         (git push) and finally publish it to registries.
 
       release_postprocess:
-        Local actions to be done after the release, rebase main/devel on it etc.
+        Local actions to be done after the release.
 
       release_cleanup:
         Final cleanup for the release, clean/delete worktrees etc
 
-      release_generate_version_hook:
+      release_generate_version:
         Canonicalize version names. Queried when the the version to 'release' does not start with a
         digit or was not given. Other modules should plug in here. Names are 'auto', 'major',
         'minor', 'patch'. Custom rules may support more names such as 'prerelease', 'alpha', 'beta'
         and so on. 'auto' is the default for 'release'.
+
+      release_current_version:
+        Query the current version of this project.
 
 
   rule_lib - The library that implements rules, always loaded
@@ -1239,10 +1299,19 @@ MODULE API/RULES
       semver_shortversion <version>
         shortens a semver to the first non zero part 0.2.1-pre0+123 -> 0.2
 
+      semver_major <version>
+        shortens a semver to major
+
+      semver_majorpre1x <version>
+        shortens a semver to major with 0.x major semantic
+
       semver_majorminor <version>
         shortens a semver to major.minor
 
-      semver_increment <version> <release|major|majorpre1x|minor|patch> [--pre1x]
+      semver_is_patch 
+        <version>
+
+      semver_increment <version> <release|major|majorpre1x|minor|patch>
         Increment selected part
         'release' strips any 'prerelease' part
         'majorpre1x' increments the minor part on a 0.x version
@@ -1456,6 +1525,11 @@ MODULE API/RULES
         this is accumulated in this single rule. This allows to exclude expensive tests from the
         normal workflow rules and include them on demand.
 
+      testrelease:
+        Runs the 'release_tests' in a testdir. Uses the current index (staged or last commit) This
+        is not a full release test as it wont attempt to bump version and does not generate
+        changelogs etc.
+
       benchmark:
         Running benchmarks. This does not include building benchmarks, see the 'bench' rule.
 
@@ -1527,63 +1601,6 @@ MODULE API/RULES
         testdir. When a previous testdir exists then 'TESTDIR_PREV' point to it, the hook can use
         that as source for populating already build artifacts.
 
-
-  toml - toml_lib -- Advanced TOML parser and mutator for Bash
-    - Preserves comments/formatting
-    - Supports multiline strings, inline tables, nested/multiline arrays, etc.
-    - API: toml_parse, toml_query, toml_set, toml_rm, toml_apply_mutations, toml_diff
-    - Variables passed by name, no globals
-    - Comprehensive test suite
-
-    Functions:
-
-      _toml_split_trailing_comment 
-        <line> <out_line_var> <out_comment_var>
-
-      toml_parse 
-        <file> <kv_var> <meta_var>
-
-      toml_query 
-        <key> <kv_var> -- returns TOML value (raw string, possibly multiline)
-
-      toml_query_meta 
-        <key> <meta_var> -- returns metadata string
-
-      toml_set 
-        <key> <value> <kv_var> <meta_var>
-
-      toml_rm 
-        <key> <kv_var> <meta_var>
-
-      toml_apply_mutations 
-        <srcfile> <dstfile> <kv_var> <meta_var>
-
-      toml_diff 
-        <srcfile> <kv_var> <meta_var>
-
-      toml_test_parse_standard 
-        parse typical TOML, check comments/format/values
-
-      toml_test_query 
-        test toml_query and toml_query_meta
-
-      toml_test_set_and_rm 
-        test mutation, add, remove, edge
-
-      toml_test_multiline_string_and_array 
-        parse/emit multiline string/array, preserve comments
-
-      toml_test_inline_table_and_nested_array 
-        parse/emit inline table, nested arrays
-
-      toml_test_comments_and_formatting_preserved 
-        check that comments, spacing, blank lines are unchanged except for mutations
-
-      toml_test_diff 
-        test diff output
-
-      toml_test_all 
-        run all tests
 
   tty_lib - This module adds some support for conditional terminal control codes.
     
