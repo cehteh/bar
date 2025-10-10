@@ -223,7 +223,22 @@ function cargo_audit
 rule cargo_audit: --conclusive 'is_cargo_tool_installed? audit' -
 rule cargo_audit: --conclusive '!is_cargo_tool_installed audit' -- warn "cargo audit is not installed"
 
+function cargo_semver_checks
+{
+    run_test --timeout 300 cargo semver-checks
+}
+
+## Run cargo semver-checks to test if a semver for a release is sufficient
+rule cargo_semver_checks: --conclusive 'is_cargo_tool_installed? semver-checks' -
+rule cargo_semver_checks: --conclusive '!is_cargo_tool_installed semver-checks' -- warn "cargo semver-checks is not installed"
+
 function cargo_bench ## Run 'cargo bench'
 {
     cargo --color "${COLOR:-auto}" bench
 }
+
+function cargo_publish ## Run 'cargo publish'
+{
+    cargo --color "${COLOR:-auto}" publish
+}
+
