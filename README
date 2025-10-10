@@ -1158,7 +1158,7 @@ MODULE API/RULES
         We prepare releases in dedicated worktrees. This would leave a lot worktrees behind.
         This provides the facility to coalesce worktrees to keep only major, majorpre1x, or majorminor versions.
 
-      release_worktree_rename <version>
+      release_rename <version>
         rename worktree and cd into that
 
     Rules:

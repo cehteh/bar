@@ -311,7 +311,7 @@ function release_into_majorminor
     release_into "$(semver_majorminor "$(release_version)")"
 }
 
-function release_worktree_rename ## <version> - rename worktree and cd into that
+function release_rename ## <version> - rename worktree and cd into that
 {
     # shellcheck disable=2155
     local current="$(git rev-parse --show-toplevel)"
@@ -325,33 +325,34 @@ function release_worktree_rename ## <version> - rename worktree and cd into that
     local target="${current%/*}/release-$1"
 
     git worktree move "$current" "$target"
+    git branch -m "release$RELEASE_BRANCH_DELIMITER$1"
     cd target || return 1
 }
 
 ## Rename worktree to'release-x' with major version only.
-function release_worktree_rename_major
+function release_rename_major
 {
     release_worktree_rename "$(semver_major "$(release_version)")"
 }
 
 ## Rename worktree to'release-x[.y]' with 0.x major semantic.
-function release_worktree_rename_majorpre1x
+function release_rename_majorpre1x
 {
     release_worktree_rename "$(semver_majorpre1x "$(release_version)")"
 }
 
 ## Rename worktree to 'release-x.y' with major.minor.
-function release_worktree_rename_majorminor
+function release_rename_majorminor
 {
     release_worktree_rename "$(semver_majorminor "$(release_version)")"
 }
 
 ## To be used from release-preprocess. Creates or resets the release worktree to release.x major.
-rule release_as_major: !release_is_patch release_worktree_rename_major
+rule release_as_major: !release_is_patch release_rename_major
 rule release_as_major: release_is_patch? release_into_major
 ## To be used from release-preprocess. Creates or resets the release worktree to release.x[.y] major with 0.x major semantic.
-rule release_as_majorpre1x: !release_is_patch release_worktree_rename_majorpre1x
+rule release_as_majorpre1x: !release_is_patch release_rename_majorpre1x
 rule release_as_majorpre1x: release_is_patch? release_into_majorpre1x
 ## To be used from release-preprocess. Creates or resets the release worktree to release.x.y major.minor.
-rule release_as_majorminor: !release_is_patch release_worktree_rename_majorminor
+rule release_as_majorminor: !release_is_patch release_rename_majorminor
 rule release_as_majorminor: release_is_patch? release_into_majorminor
