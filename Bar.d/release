@@ -32,9 +32,11 @@
 ###  - ready:
 ###    The worktree/branch is ready for publishing
 ###  - published:
-###    uploads succeeded.
+###    Uploads succeeded.
 ###  - done:
-###    The release finished.
+###    Postprocessing done.
+###  - finished:
+###    Final state, everything finished.
 ###
 ### Further following git config variables are set:
 ###  - bar.release.startbranch:
@@ -218,7 +220,7 @@ rule release: 'release_state_matches? tested' release_changelog git_is_clean 're
 rule release: 'release_state_matches? changelog' release_preprocess 'release_state_set ready'
 rule release: 'release_state_matches? ready' release_publish 'release_state_set published'
 rule release: 'release_state_matches? published' release_postprocess 'release_state_set done'
-rule release: 'release_state_matches? done' release_cleanup~
+rule release: 'release_state_matches? done' release_cleanup~ 'release_state_set finished'
 
 function release_state_set # <state> - sets the release state
 {
