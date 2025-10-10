@@ -146,7 +146,7 @@ function rule_autoload # <name> - module autoloader
     modname="${modname#has_}"
     modname="${modname#try_}"
     modname="${modname%%_*}"
-    require --opt "$modname"
+    require --opt "$modname" "${modname}_lib"
 
     # when $name exists as command or function then create a rule for that
     if ! rule_exists "$1" && command -v "$1" >/dev/null ; then
