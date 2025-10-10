@@ -108,6 +108,11 @@ rule test_integrations: build_integration_tests -- debug "Running integration te
 ## normal workflow rules and include them on demand.
 rule test_expensive: -- debug "Running expensive tests..."
 
+## Runs the 'release_tests' in a testdir. Uses the current index (staged or last commit) This
+## is not a full release test as it wont attempt to bump version and does not generate
+## changelogs etc.
+rule testrelease: testdir_enter release_tests
+
 ## Running benchmarks. This does not include building benchmarks, see the 'bench' rule.
 rule benchmark: -- debug "Running benchmarks..."
 
