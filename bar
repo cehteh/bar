@@ -1,6 +1,31 @@
 #!/bin/bash
-# bar -- BAsh Rulez
-#shellcheck disable=SC2016
+# shellcheck disable=SC2016
+#
+# Bar ships with its license attached. But when it becomes initialized in a project the
+# LICENSE file becomes lost. There is a mention in the help module. Which can be optionally
+# removed. Thus we repeat here that 'bar' is licensed under the AGPL3.
+#
+# The license applies only to the 'bar' script and it's modules in Bar.d/ we would like to
+# encourage anyone who creates or improves bar and its modules to share this via a pull
+# request. This license applies not to a project that uses 'bar'.
+#
+# LICENSE
+#
+#     bar -- BAsh Rulez
+#     Copyright (C) 2025  Christian Thäter <ct.bar@pipapo.org>
+#
+#     This program is free software: you can redistribute it and/or modify
+#     it under the terms of the GNU Affero General Public License as
+#     published by the Free Software Foundation, either version 3 of the
+#     License, or (at your option) any later version.
+#
+#     This program is distributed in the hope that it will be useful,
+#     but WITHOUT ANY WARRANTY; without even the implied warranty of
+#     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#     GNU Affero General Public License for more details.
+#
+#     You should have received a copy of the GNU Affero General Public License
+#     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 ### The main BAsh Rulez script
 ###

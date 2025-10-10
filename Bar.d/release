@@ -78,6 +78,30 @@ require git_lib semver_lib
 # PLANNED: basedir for release worktrees etc
 export RELEASE_BRANCH_DELIMITER="${RELEASE_BRANCH_DELIMITER:--}" ## The prefix for release branches, should be "-" or "/"
 
+# only called from main or devel branch see below
+function release_start
+{
+     local startbranch
+     startbranch="$(git_branch_name)"
+     local version="${1:-auto}"
+     [[ "$version" != [0-9]* ]] && version="$(rule_eval release_generate_version "$version")"
+     semver_validate "$version" || {
+         error "not a valid semver: ${version:-<no version given>}"
+         return 1
+     }
+     (
+         release_enter_worktree "$version" || {
+             error "failed to create worktree for $version"
+             return 1
+         }
+
+         git config set --worktree bar.release.startbranch "$startbranch"
+         git config set --worktree bar.release.version "$version"
+         release_state_set start
+         rule_eval release "$version"
+     )
+}
+
 function release_abort # <release> - A release that is not published yet can be aborted and deleted
 {
     declare -l worktree_main
@@ -120,30 +144,6 @@ function release_abort # <release> - A release that is not published yet can be 
         error "can't abort $release because state is $state"
         return 1
     fi
-}
-
-# only called from main or devel branch see below
-function release_start
-{
-     local startbranch
-     startbranch="$(git_branch_name)"
-     local version="${1:-auto}"
-     [[ "$version" != [0-9]* ]] && version="$(rule_eval release_generate_version "$version")"
-     semver_validate "$version" || {
-         error "not a valid semver: ${version:-<no version given>}"
-         return 1
-     }
-     (
-         release_enter_worktree "$version" || {
-             error "failed to create worktree for $version"
-             return 1
-         }
-
-         git config set --worktree bar.release.startbranch "$startbranch"
-         git config set --worktree bar.release.version "$version"
-         release_state_set start
-         rule_eval release "$version"
-     )
 }
 
 function release_version
