@@ -1145,8 +1145,12 @@ MODULE API/RULES
         The 'git_rules' and 'cargo_rules' already hook into this.
       - release_postprocess:
         Any work to be done after the publishing. Like rebase work/devel branches on the
-        release and so on.
+        release and so on. For example resetting the main branch and rebase the branch from
+        where the release started:
+         rule release_postprocess: release_reset_mainbranch release_rebase_startbranch
       - release_cleanup:
+        Final clean up work to remove artifacts not needed after the release.
+        May just use 'rule release_cleanup: clean' when build artifacts can be deleted.
 
     Functions:
 
@@ -1160,6 +1164,18 @@ MODULE API/RULES
 
       release_rename <version>
         rename worktree and cd into that
+
+      release_fastforward_branch <branch>
+        fast-forward <branch> to the release branch if possible
+
+      release_reset_mainbranch 
+        Find main branch (main/master) and reset it to the release branch
+
+      release_rebase_branch <branch>
+        rebase <branch> onto the release branch
+
+      release_rebase_startbranch 
+        Rebase the branch that started the release on the release branch.
 
     Rules:
 

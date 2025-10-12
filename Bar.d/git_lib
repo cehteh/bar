@@ -48,7 +48,7 @@ function git_ls_files # [git-ls-files-opts].. - Sorted list of files in the git 
 
 function git_branch_name ## Returns the branch name that is checked out, dies when not in a git branch.
 {
-    memo git branch --show-current
+    git branch --show-current
 }
 
 function git_branch_find ## [patterns].. - lists branches matching the given patterns

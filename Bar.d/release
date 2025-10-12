@@ -67,9 +67,12 @@
 ###     The 'git_rules' and 'cargo_rules' already hook into this.
 ###   - release_postprocess:
 ###     Any work to be done after the publishing. Like rebase work/devel branches on the
-###     release and so on.
+###     release and so on. For example resetting the main branch and rebase the branch from
+###     where the release started:
+###      rule release_postprocess: release_reset_mainbranch release_rebase_startbranch
 ###   - release_cleanup:
-##-     Final clean up work to remove artifacts not needed after the release.
+###     Final clean up work to remove artifacts not needed after the release.
+###     May just use 'rule release_cleanup: clean' when build artifacts can be deleted.
 
 # ## rule --disjunct release_generate_version_hook: -- false
 
@@ -356,3 +359,88 @@ rule release_as_majorpre1x: release_is_patch? release_into_majorpre1x
 ## To be used from release-preprocess. Creates or resets the release worktree to release.x.y major.minor.
 rule release_as_majorminor: !release_is_patch release_rename_majorminor
 rule release_as_majorminor: release_is_patch? release_into_majorminor
+
+# Functions for release_postprocess
+
+function release_fastforward_branch ## <branch> - fast-forward <branch> to the release branch if possible
+{
+    local branch="$1"
+    [[ -z "$branch" ]] && { error "No branch given to fast-forward"; return 1; }
+
+    local release_branch
+    release_branch="$(git_branch_name)"
+
+    # Check if branch is an ancestor of release (can fast-forward)
+    if git merge-base --is-ancestor "$branch" "$release_branch"; then
+        info "Fast-forwarding branch '$branch' to '$release_branch'"
+        git branch --force "$branch" "$release_branch"
+        return 0
+    else
+        debug "Branch '$branch' has diverged from '$release_branch', cannot fast-forward"
+        return 1
+    fi
+}
+
+function release_reset_mainbranch ## Find main branch (main/master) and reset it to the release branch
+{
+    local main_branch
+    main_branch=$(git_branch_find_one "main" "master") || {
+        error "No main or master branch found"
+        return 1
+    }
+    release_fastforward_branch "$main_branch"
+}
+
+function release_rebase_branch ## <branch> - rebase <branch> onto the release branch
+{
+    local branch="$1"
+    [[ -z "$branch" ]] && { error "No branch given to rebase"; return 1; }
+
+    local release_branch
+    release_branch="$(git_branch_name)"
+
+    release_fastforward_branch "$branch" && return 0
+
+    local tmp_wt
+    tmp_wt="$(mktemp -d -t .bar-rebase-XXXXXX)"
+
+    git worktree add --detach "$tmp_wt" "$branch" || {
+        error "Failed to create temp worktree for $branch"
+        rm -rf "$tmp_wt"
+        return 1
+    }
+
+    local rc=0
+    (
+        cd "$tmp_wt" || exit 1
+        if git rebase "$release_branch"; then
+            info "Rebase of $branch onto $release_branch successful"
+            git branch --force "$branch" HEAD
+            exit 0
+        else
+            error "Rebase of $branch onto $release_branch failed"
+            git rebase --abort 2>/dev/null || true
+            exit 1
+        fi
+    ) || rc=$?
+
+    git worktree remove --force "$tmp_wt"
+    return $rc
+}
+
+function release_rebase_startbranch ## Rebase the branch that started the release on the release branch.
+{
+    local start_branch
+    start_branch=$(git config get --worktree bar.release.startbranch)
+    [[ -z "$start_branch" ]] && { error "No startbranch set in config"; return 1; }
+
+    local main_branch=""
+    main_branch=$(git_branch_find_one "main" "master") || true
+
+    if [[ "$start_branch" == "$main_branch" ]]; then
+        debug "Startbranch '$start_branch' is main branch, already reset - skipping rebase"
+        return 0
+    fi
+
+    release_rebase_branch "$start_branch"
+}
