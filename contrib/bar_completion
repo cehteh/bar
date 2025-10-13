@@ -226,12 +226,11 @@ _bar_extract_arg_hints() {
     
     # Look for function or rule definition followed by ## comments
     # For functions: function name ## [args] - description
-    local in_function=0
     local line
     
     # Extract from function definition line
-    grep -A 20 "^function $name[[:space:]]" "$file" 2>/dev/null | while IFS= read -r line; do
-        if [[ "$line" =~ ^function[[:space:]]+$name[[:space:]]+##[[:space:]]*(.*)$ ]]; then
+    grep -A 20 "^function ${name}[[:space:]]" "$file" 2>/dev/null | while IFS= read -r line; do
+        if [[ "$line" =~ ^function[[:space:]]+${name}[[:space:]]+##[[:space:]]*(.*)$ ]]; then
             # Extract argument hints from the definition line
             local hint="${BASH_REMATCH[1]}"
             # Remove " - description" part
@@ -246,7 +245,7 @@ _bar_extract_arg_hints() {
     done
     
     # Also check for rules
-    grep -B 20 "^rule[[:space:]].*$name:" "$file" 2>/dev/null | while IFS= read -r line; do
+    grep -B 20 "^rule[[:space:]].*${name}:" "$file" 2>/dev/null | while IFS= read -r line; do
         if [[ "$line" =~ ^##[[:space:]]*(.*)$ ]]; then
             local hint="${BASH_REMATCH[1]}"
             # Extract words in square brackets or angle brackets
@@ -267,6 +266,7 @@ _bar_complete() {
         # Fallback: manual initialization
         COMPREPLY=()
         cur="${COMP_WORDS[COMP_CWORD]}"
+        # shellcheck disable=SC2034  # prev may be used by bash-completion framework
         prev="${COMP_WORDS[COMP_CWORD-1]}"
         words=("${COMP_WORDS[@]}")
         cword=$COMP_CWORD
@@ -295,20 +295,32 @@ _bar_complete() {
         # 2. Shell commands and functions
         local commands
         commands=$(_bar_get_commands | grep "^$cur")
-        [[ -n "$commands" ]] && completions+=($commands)
+        if [[ -n "$commands" ]]; then
+            while IFS= read -r cmd; do
+                completions+=("$cmd")
+            done <<< "$commands"
+        fi
         
         # 3. Rules and functions from default Barf
         local default_items
         default_items=$(_bar_get_default_items "$cmd" | grep "^$cur")
-        [[ -n "$default_items" ]] && completions+=($default_items)
+        if [[ -n "$default_items" ]]; then
+            while IFS= read -r item; do
+                completions+=("$item")
+            done <<< "$default_items"
+        fi
         
         # 4. Autoloadable modules that match
         local modules
         modules=$(_bar_get_autoload_modules "$cur")
-        [[ -n "$modules" ]] && completions+=($modules)
+        if [[ -n "$modules" ]]; then
+            while IFS= read -r mod; do
+                completions+=("$mod")
+            done <<< "$modules"
+        fi
         
         # Remove duplicates and generate completions
-        COMPREPLY=($(printf '%s\n' "${completions[@]}" | sort -u | grep "^$cur"))
+        mapfile -t COMPREPLY < <(printf '%s\n' "${completions[@]}" | sort -u | grep "^$cur")
         
         return 0
     fi
@@ -323,27 +335,47 @@ _bar_complete() {
             # Complete with rules and functions from that file
             local items
             items=$(_bar_extract_rules "$first_arg")
-            completions+=($items)
+            if [[ -n "$items" ]]; then
+                while IFS= read -r item; do
+                    completions+=("$item")
+                done <<< "$items"
+            fi
             items=$(_bar_extract_functions "$first_arg")
-            completions+=($items)
+            if [[ -n "$items" ]]; then
+                while IFS= read -r item; do
+                    completions+=("$item")
+                done <<< "$items"
+            fi
         fi
         
         # Also include default completions (commands, rules, functions)
         local commands
         commands=$(_bar_get_commands | grep "^$cur")
-        [[ -n "$commands" ]] && completions+=($commands)
+        if [[ -n "$commands" ]]; then
+            while IFS= read -r cmd; do
+                completions+=("$cmd")
+            done <<< "$commands"
+        fi
         
         local default_items
         default_items=$(_bar_get_default_items "$cmd" | grep "^$cur")
-        [[ -n "$default_items" ]] && completions+=($default_items)
+        if [[ -n "$default_items" ]]; then
+            while IFS= read -r item; do
+                completions+=("$item")
+            done <<< "$default_items"
+        fi
         
         # Autoloadable modules
         local modules
         modules=$(_bar_get_autoload_modules "$cur")
-        [[ -n "$modules" ]] && completions+=($modules)
+        if [[ -n "$modules" ]]; then
+            while IFS= read -r mod; do
+                completions+=("$mod")
+            done <<< "$modules"
+        fi
         
         # Remove duplicates
-        COMPREPLY=($(printf '%s\n' "${completions[@]}" | sort -u | grep "^$cur"))
+        mapfile -t COMPREPLY < <(printf '%s\n' "${completions[@]}" | sort -u | grep "^$cur")
         
         return 0
     fi
@@ -382,13 +414,13 @@ _bar_complete() {
             hints=$(_bar_extract_arg_hints "$target_file" "$target_name")
             
             if [[ -n "$hints" ]]; then
-                COMPREPLY=($(compgen -W "$hints" -- "$cur"))
+                mapfile -t COMPREPLY < <(compgen -W "$hints" -- "$cur")
                 return 0
             fi
         fi
         
         # Fallback: complete with files
-        COMPREPLY=($(compgen -f -- "$cur"))
+        mapfile -t COMPREPLY < <(compgen -f -- "$cur")
         return 0
     fi
 }
