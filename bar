@@ -36,11 +36,12 @@
 # PLANNED: parallel dependencies dep+
 # PLANNED: load make style rules from a file?
 
-function bar_main ## [rulefile] [rule [arguments..]] - Loads a rulefile and executes rule with optional arguments
+function bar_main ## [rulefile] [--bare] [rule [arguments..]] - Loads a rulefile and executes rule with optional arguments
 {
     ## [rulefile]           - File to load the user rules from.
     ##                        Default: Barf|barf|.Barf|.barf when called as bar or symlink.
     ##                                 Pleasef|pleasef|.Pleasef|.pleasef|\$HOME/.Pleasef when called as please.
+    ## [--bare]             - Don't eval SETUP, PREPROCESS, POSTPROCESS and CLEANUP.
     ## [rule [arguments..]] - Target rule with arguments.
     ##                        Default: MAIN
     trace "$*"
@@ -55,6 +56,7 @@ function bar_main ## [rulefile] [rule [arguments..]] - Loads a rulefile and exec
     declare -grx BAR_SELF="$(realpath "$BASH_ARGV0")"  ## Path to bar itself.
     declare -grx BAR_CALLED_AS="${BASH_ARGV0##*/}"     ## Name of bar when called by symlink.
     declare -gx  BAR_DIR                               ## Directory to load rules from.
+    declare -g   BAR_BARE                              ## When set, don't eval SETUP, PREPROCESS, POSTPROCESS and CLEANUP.
     declare -gx  BARF_FILE                             ## The Barf file used.
     declare -gxr BAR_PWD="$PWD"                        ## Initial working directory.
     declare -gxi BAR_VERBOSITY_LEVEL="${BAR_VERBOSITY_LEVEL:-2}" ## Verbosity level from 0 (silent) to 6 (trace).
@@ -97,6 +99,11 @@ function bar_main ## [rulefile] [rule [arguments..]] - Loads a rulefile and exec
         fi
     done
 
+    if [[ "${1:-}" = '--bare' ]]; then
+        shift
+        BAR_BARE=true
+    fi
+
     local rc=0
     [[ -z "$initial_rule" && -n "${1:-}" ]] && rule_autoload "$1"
     # shellcheck disable=SC2155
@@ -108,19 +115,20 @@ function bar_main ## [rulefile] [rule [arguments..]] - Loads a rulefile and exec
     }
 
     if rule_exists "$initial_rule"; then
-        trap 'rule_exists CLEANUP && { rule_eval CLEANUP || error "CLEANUP failed" ; }' EXIT
-
-        rule_exists SETUP && {
-            rule_eval SETUP || die "SETUP failed" ;
-        }
-        rule_exists PREPROCESS && {
-            rule_eval PREPROCESS || die "PREPROCESS failed" ;
+        [[ -z "${BAR_BARE:-}" ]] && {
+            trap 'rule_exists CLEANUP && { rule_eval CLEANUP || error "CLEANUP failed" ; }' EXIT
+            rule_exists SETUP && {
+                rule_eval SETUP || die "SETUP failed" ;
+            }
+            rule_exists PREPROCESS && {
+                rule_eval PREPROCESS || die "PREPROCESS failed" ;
+            }
         }
 
         rule_eval "$initial_rule" "$@" || rc=$?
         if (( "$rc" == 0 )); then
             success "$initial_rule" "$@"
-            rule_exists POSTPROCESS && { rule_eval POSTPROCESS || error "POSTPROCCESS failed" ; }
+            [[ -z "${BAR_BARE:-}" ]] && rule_exists POSTPROCESS && { rule_eval POSTPROCESS || error "POSTPROCCESS failed" ; }
         else
             failure "$initial_rule" "$@"
         fi

@@ -57,9 +57,9 @@ QUICKSTART
 
 INVOCATION AND SEMANTICS
 
-    bar [rulefile] [rule [arguments..]]
-    please [rulefile] [rule [arguments..]]
-    ./bar [rulefile] [rule [arguments..]]
+    bar [rulefile] [--bare] [rule [arguments..]]
+    please [rulefile] [--bare] [rule [arguments..]]
+    ./bar [rulefile] [--bare] [rule [arguments..]]
     <symlink> [arguments..]
 
   Starts by loading all initial modules (those which have underscores in their name) and the
@@ -476,11 +476,12 @@ MAIN API
 
     Functions:
 
-      bar_main [rulefile] [rule [arguments..]]
+      bar_main [rulefile] [--bare] [rule [arguments..]]
         Loads a rulefile and executes rule with optional arguments
         [rulefile]           - File to load the user rules from.
                                Default: Barf|barf|.Barf|.barf when called as bar or symlink.
                                         Pleasef|pleasef|.Pleasef|.pleasef|\$HOME/.Pleasef when called as please.
+        [--bare]             - Don't eval SETUP, PREPROCESS, POSTPROCESS and CLEANUP.
         [rule [arguments..]] - Target rule with arguments.
                                Default: MAIN
 

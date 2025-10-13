@@ -85,9 +85,9 @@ QUICKSTART
 
 INVOCATION AND SEMANTICS
 
-    bar [rulefile] [rule [arguments..]]
-    please [rulefile] [rule [arguments..]]
-    ./bar [rulefile] [rule [arguments..]]
+    bar [rulefile] [--bare] [rule [arguments..]]
+    please [rulefile] [--bare] [rule [arguments..]]
+    ./bar [rulefile] [--bare] [rule [arguments..]]
     <symlink> [arguments..]
 
   Starts by loading all initial modules (those which have underscores in their name) and the
