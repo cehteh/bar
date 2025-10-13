@@ -41,6 +41,28 @@ declare -g  _bar_completion_functions_freelist=""
 # has changed by mtime, if so then only the changed files need to be reparsed.
 declare -gA _bar_completion_dir_mtime=()
 
+# Parameter completion data structures
+# _bar_completion_func_params: associative array "funcname" -> "param_list"
+# param_list is space-separated list of parameters like: "[--opt] <file> [output]"
+declare -gA _bar_completion_func_params=()
+
+# _bar_completion_rule_params: associative array "rulename" -> "param_list"
+declare -gA _bar_completion_rule_params=()
+
+# _bar_completion_registry: associative array "prototype" -> "completer_function [predicates]"
+# Maps parameter prototypes to their completion functions
+# Examples: registry["file"]="_bar_complete_file"
+#           registry["cargo@toolchain"]="_bar_extcomplete cargo_toolchain_complete"
+declare -gA _bar_completion_registry=()
+
+# _bar_completion_extcomplete_cache: associative array "completer_name" -> "cached_results"
+# Cache for external completion results
+declare -gA _bar_completion_extcomplete_cache=()
+
+# _bar_completion_module_completers: indexed array storing module-specific completers
+# Format: "module:completer_name"
+declare -ga _bar_completion_module_completers=()
+
 # Helper: Get modification time of a file or directory with high resolution
 _bar_get_mtime()
 {
@@ -94,6 +116,235 @@ _bar_free_slot()
     arr[slot]=""
 }
 
+# Generic completion functions
+
+# Complete file paths
+_bar_complete_file()
+{
+    local cur="$1"
+    shift
+    # shellcheck disable=SC2034
+    local predicates=("$@")
+    
+    # Use bash's built-in file completion
+    # Apply predicates if specified (future enhancement)
+    compgen -f -- "$cur"
+}
+
+# Complete directory paths
+_bar_complete_directory()
+{
+    local cur="$1"
+    shift
+    # shellcheck disable=SC2034
+    local predicates=("$@")
+    
+    compgen -d -- "$cur"
+}
+
+# Complete any path (file or directory)
+_bar_complete_path()
+{
+    local cur="$1"
+    shift
+    # shellcheck disable=SC2034
+    local predicates=("$@")
+    
+    compgen -f -- "$cur"
+}
+
+# Complete with any text (no suggestions, just allow anything)
+_bar_complete_text()
+{
+    local cur="$1"
+    # No completions for free text
+    return 0
+}
+
+# Complete with numbers
+_bar_complete_number()
+{
+    local cur="$1"
+    # No specific completions for numbers
+    return 0
+}
+
+# Complete with existing rule names
+_bar_complete_rule()
+{
+    local cur="$1"
+    local curdir="$PWD"
+    
+    # Get all rules from cache
+    for idx in ${_bar_completion_rules_path[$curdir]:-}; do
+        local entry="${_bar_completion_rules[$idx]}"
+        local rule="${entry#*:}"
+        if [[ "$rule" == "$cur"* ]]; then
+            echo "$rule"
+        fi
+    done
+}
+
+# Complete with command/function names
+_bar_complete_command()
+{
+    local cur="$1"
+    
+    # Complete with functions and commands in PATH
+    compgen -c -- "$cur"
+}
+
+# External completer - calls bar --bare <completer_name> to get completions
+_bar_extcomplete()
+{
+    local completer_name="$1"
+    local cur="$2"
+    
+    # Check cache first
+    if [[ -v _bar_completion_extcomplete_cache["$completer_name"] ]]; then
+        local cached="${_bar_completion_extcomplete_cache[$completer_name]}"
+        # Filter cached results by current prefix
+        local result
+        for result in $cached; do
+            if [[ "$result" == "$cur"* ]]; then
+                echo "$result"
+            fi
+        done
+        return 0
+    fi
+    
+    # Call bar --bare to get completions
+    local results
+    if results=$(bar --bare "$completer_name" 2>/dev/null); then
+        # Cache the results
+        _bar_completion_extcomplete_cache[$completer_name]="$results"
+        # Filter and return
+        local result
+        for result in $results; do
+            if [[ "$result" == "$cur"* ]]; then
+                echo "$result"
+            fi
+        done
+    fi
+}
+
+# Initialize default completion registry
+_bar_init_completion_registry()
+{
+    # Generic completers
+    _bar_completion_registry[file]="_bar_complete_file"
+    _bar_completion_registry[directory]="_bar_complete_directory"
+    _bar_completion_registry[path]="_bar_complete_path"
+    _bar_completion_registry[text]="_bar_complete_text"
+    _bar_completion_registry[number]="_bar_complete_number"
+    _bar_completion_registry[rule]="_bar_complete_rule"
+    _bar_completion_registry[command]="_bar_complete_command"
+    
+    # Add module-specific completers (populated during file parsing)
+}
+
+# Parse parameter spec and extract individual parameters
+# Input: "[--opt] <file> [output..]"
+# Output: array of parameters (without decorators)
+_bar_parse_params()
+{
+    local param_spec="$1"
+    local -a params=()
+    
+    # Simple tokenization - split on spaces, handling brackets and angle brackets
+    # This is a simplified parser; a full implementation would need better parsing
+    local token
+    for token in $param_spec; do
+        # Remove decorators and extract identifier
+        local clean_token="$token"
+        # Remove leading/trailing brackets, angles, dots
+        clean_token="${clean_token#[}"
+        clean_token="${clean_token#<}"
+        clean_token="${clean_token%]}"
+        clean_token="${clean_token%>}"
+        clean_token="${clean_token%..}"
+        
+        # Skip empty tokens and special markers
+        [[ -z "$clean_token" || "$clean_token" == "-" || "$clean_token" == "--" ]] && continue
+        
+        # Store the token
+        params+=("$clean_token")
+    done
+    
+    printf '%s\n' "${params[@]}"
+}
+
+# Get completer for a prototype
+# Looks up: func@proto, then proto
+_bar_get_completer()
+{
+    local func_or_rule="$1"
+    local proto="$2"
+    
+    # Try hierarchical lookup: func@proto first
+    local key="${func_or_rule}@${proto}"
+    if [[ -v _bar_completion_registry["$key"] ]]; then
+        echo "${_bar_completion_registry[$key]}"
+        return 0
+    fi
+    
+    # Try just the prototype
+    if [[ -v _bar_completion_registry["$proto"] ]]; then
+        echo "${_bar_completion_registry[$proto]}"
+        return 0
+    fi
+    
+    # Default to text completion
+    echo "_bar_complete_text"
+}
+
+# Complete parameters for a specific function or rule
+_bar_complete_params()
+{
+    local func_or_rule="$1"
+    local cur="$2"
+    shift 2
+    local -a prev_words=("$@")
+    
+    # Get parameter spec for this function/rule
+    local param_spec=""
+    if [[ -v _bar_completion_func_params["$func_or_rule"] ]]; then
+        param_spec="${_bar_completion_func_params[$func_or_rule]}"
+    elif [[ -v _bar_completion_rule_params["$func_or_rule"] ]]; then
+        param_spec="${_bar_completion_rule_params[$func_or_rule]}"
+    fi
+    
+    # If no parameter spec, try generic completions
+    if [[ -z "$param_spec" ]]; then
+        # Default to file completion
+        _bar_complete_file "$cur"
+        return 0
+    fi
+    
+    # Parse the parameter spec to get list of parameter prototypes
+    local -a params
+    mapfile -t params < <(_bar_parse_params "$param_spec")
+    
+    # Simple completion: offer completions for each parameter type
+    # A more sophisticated implementation would track which parameters have been used
+    local proto
+    for proto in "${params[@]}"; do
+        # Get completer for this prototype
+        local completer
+        completer=$(_bar_get_completer "$func_or_rule" "$proto")
+        
+        # Call the completer
+        if [[ "$completer" == "_bar_extcomplete "* ]]; then
+            # External completer
+            local ext_name="${completer#_bar_extcomplete }"
+            _bar_extcomplete "$ext_name" "$cur"
+        else
+            # Internal completer
+            $completer "$cur"
+        fi
+    done
+}
+
 # Parse a file for documented rules and functions
 _bar_parse_file()
 {
@@ -135,26 +386,60 @@ _bar_parse_file()
     _bar_completion_functions_path[$curdir]="${new_func_indices# }"
 
     # Parse file line by line looking for documented entities
+    local doc_params=""
+    local last_doc_line=""
     while IFS= read -r line; do
-        # Check for documented function: function name ##
-        if [[ "$line" =~ ^[[:space:]]*function[[:space:]]+([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*## ]]; then
+        # Check for documented function: function name ## [params] - description
+        if [[ "$line" =~ ^[[:space:]]*function[[:space:]]+([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*##[[:space:]]*(.*)$ ]]; then
             local func="${BASH_REMATCH[1]}"
+            local doc="${BASH_REMATCH[2]}"
             local slot
             slot=$(_bar_alloc_slot "_bar_completion_functions_freelist" "_bar_completion_functions")
             _bar_completion_functions[slot]="$file_idx:$func"
             _bar_completion_functions_path[$curdir]="${_bar_completion_functions_path[$curdir]:-} $slot"
-        # Check for documented rule: ## followed by rule name:
-        elif [[ "$line" =~ ^## ]]; then
+            
+            # Extract parameters from documentation
+            # Format: [params] - description OR just description
+            if [[ "$doc" =~ ^(.+)[[:space:]]+-[[:space:]] ]]; then
+                local func_params="${BASH_REMATCH[1]}"
+                _bar_completion_func_params[$func]="$func_params"
+            fi
+            
+            # Check if this is a module-specific completer (pattern: <module>_<proto>_complete)
+            if [[ "$func" =~ ^([a-z_]+)_([a-z_]+)_complete$ ]]; then
+                local module="${BASH_REMATCH[1]}"
+                local proto="${BASH_REMATCH[2]}"
+                # Register in completion registry
+                _bar_completion_registry["${module}@${proto}"]="_bar_extcomplete $func"
+                # Store in module completers list
+                _bar_completion_module_completers+=("${module}:${func}")
+            fi
+            
+        # Check for documented rule: ## [params] - description followed by rule name:
+        elif [[ "$line" =~ ^##[[:space:]]*(.*)$ ]]; then
             in_doc_comment=true
+            last_doc_line="${BASH_REMATCH[1]}"
+            # Check if this line has parameters
+            if [[ "$last_doc_line" =~ ^(.+)[[:space:]]+-[[:space:]] ]]; then
+                doc_params="${BASH_REMATCH[1]}"
+            fi
         elif [[ $in_doc_comment == true && "$line" =~ ^[[:space:]]*rule[[:space:]]+(--[a-z_-]*[[:space:]]+)*([A-Za-z_-][A-Za-z0-9_-]*): ]]; then
             local rule="${BASH_REMATCH[2]}"
             local slot
             slot=$(_bar_alloc_slot "_bar_completion_rules_freelist" "_bar_completion_rules")
             _bar_completion_rules[slot]="$file_idx:$rule"
             _bar_completion_rules_path[$curdir]="${_bar_completion_rules_path[$curdir]:-} $slot"
+            
+            # Store parameters if we captured them
+            if [[ -n "$doc_params" ]]; then
+                _bar_completion_rule_params[$rule]="$doc_params"
+            fi
+            
             in_doc_comment=false
+            doc_params=""
         elif [[ "$line" =~ ^[[:space:]]*rule[[:space:]] ]]; then
             in_doc_comment=false
+            doc_params=""
         fi
     done < "$file"
 
@@ -334,8 +619,8 @@ _bar_get_completions()
 # Main completion function
 _bar_complete()
 {
-    local cur words
-
+    local cur words cword
+    
     # Initialize completion variables (works without bash-completion package)
     if type _init_completion &>/dev/null; then
         _init_completion || return
@@ -343,11 +628,12 @@ _bar_complete()
         # Manual initialization
         cur="${COMP_WORDS[COMP_CWORD]}"
         words=("${COMP_WORDS[@]}")
+        cword=$COMP_CWORD
     fi
-
+    
     # Determine the command (bar, please, or a path like ./bar)
     local cmd="${words[0]}"
-
+    
     # For ./bar or similar, check if it's a bar executable
     if [[ "$cmd" == ./* || "$cmd" == ../* || "$cmd" == *"/bar" ]]; then
         # It's a path to bar
@@ -355,13 +641,111 @@ _bar_complete()
             return
         fi
     fi
-
+    
+    # Initialize completion registry if not done yet
+    if [[ ${#_bar_completion_registry[@]} -eq 0 ]]; then
+        _bar_init_completion_registry
+    fi
+    
     # Update cache for current directory
     _bar_update_cache "$cmd"
-
-    # Get completions
-    mapfile -t COMPREPLY < <(_bar_get_completions "$cur")
-
+    
+    # Determine completion context
+    # words[0] = bar/please/./bar
+    # words[1] = might be rulefile or --bare or rule/function name
+    # words[2+] = might be arguments to the rule/function
+    
+    local completing_what=""
+    local func_or_rule=""
+    
+    # Analyze command line structure
+    if [[ $cword -eq 1 ]]; then
+        # First argument - could be rulefile, --bare, or rule/function
+        completing_what="rule_or_file"
+    elif [[ "${words[1]}" == "--bare" ]]; then
+        if [[ $cword -eq 2 ]]; then
+            # Second argument after --bare - rule/function name
+            completing_what="rule_or_function"
+        else
+            # Arguments to the rule/function
+            func_or_rule="${words[2]}"
+            completing_what="params"
+        fi
+    elif [[ -f "${words[1]}" ]]; then
+        # First arg is a file (rulefile)
+        if [[ $cword -eq 2 ]]; then
+            # Second argument - rule/function name
+            completing_what="rule_or_function"
+        else
+            # Arguments to the rule/function
+            func_or_rule="${words[2]}"
+            completing_what="params"
+        fi
+    else
+        # First arg is likely a rule/function name
+        if [[ $cword -eq 1 ]]; then
+            completing_what="rule_or_function"
+        else
+            func_or_rule="${words[1]}"
+            completing_what="params"
+        fi
+    fi
+    
+    # Generate completions based on context
+    case "$completing_what" in
+        rule_or_file)
+            # Complete with files and rules/functions
+            mapfile -t COMPREPLY < <(_bar_get_completions "$cur")
+            ;;
+        rule_or_function)
+            # Complete with rules and functions only (not files)
+            local completions=()
+            local curdir="$PWD"
+            
+            # Get rules
+            for idx in ${_bar_completion_rules_path[$curdir]:-}; do
+                local entry="${_bar_completion_rules[$idx]}"
+                local rule="${entry#*:}"
+                if [[ "$rule" == "$cur"* ]]; then
+                    completions+=("$rule")
+                fi
+            done
+            
+            # Get functions
+            for idx in ${_bar_completion_functions_path[$curdir]:-}; do
+                local entry="${_bar_completion_functions[$idx]}"
+                local func="${entry#*:}"
+                if [[ "$func" == "$cur"* ]]; then
+                    completions+=("$func")
+                fi
+            done
+            
+            if [[ ${#completions[@]} -gt 0 ]]; then
+                mapfile -t COMPREPLY < <(printf '%s\n' "${completions[@]}" | sort -u)
+            fi
+            ;;
+        params)
+            # Complete parameters for the specific function/rule
+            if [[ -n "$func_or_rule" ]]; then
+                # Build array of previous words (for context-aware completion)
+                local -a prev_words=()
+                local i
+                for ((i=3; i<cword; i++)); do
+                    prev_words+=("${words[i]}")
+                done
+                
+                mapfile -t COMPREPLY < <(_bar_complete_params "$func_or_rule" "$cur" "${prev_words[@]}")
+            else
+                # Fallback to file completion
+                mapfile -t COMPREPLY < <(compgen -f -- "$cur")
+            fi
+            ;;
+        *)
+            # Default to file completion
+            mapfile -t COMPREPLY < <(compgen -f -- "$cur")
+            ;;
+    esac
+    
     return 0
 }
 

@@ -51,6 +51,15 @@ function is_cargo_toolchain_available ## [+toolchain] - Check if a toolchain is 
 
 memofn is_cargo_toolchain_available
 
+function cargo_toolchain_complete ## List available cargo toolchains for completion
+{
+    ## This function is called by bar_complete to provide completions for +toolchain parameters.
+    ## It lists installed Rust toolchains using rustup.
+    if command -v rustup &>/dev/null; then
+        rustup toolchain list 2>/dev/null | sed 's/[[:space:]].*$//' | sed 's/^/+/'
+    fi
+}
+
 function cargo_cache_artifacts
 {
     if [[ -n "${TESTDIR_PREV:-}" ]] && lock_wait "$TESTDIR_PREV/.bar" ; then
