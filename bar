@@ -36,13 +36,11 @@
 # PLANNED: parallel dependencies dep+
 # PLANNED: load make style rules from a file?
 
-function bar_main ## [rulefile] [[--bare] rule [arguments..]] - Loads a rulefile and executes rule with optional arguments
+function bar_main ## [rulefile] [rule [arguments..]] - Loads a rulefile and executes rule with optional arguments
 {
     ## [rulefile]           - File to load the user rules from.
     ##                        Default: Barf|barf|.Barf|.barf when called as bar or symlink.
     ##                                 Pleasef|pleasef|.Pleasef|.pleasef|\$HOME/.Pleasef when called as please.
-    ## [--bare]             - When bare is given only the user supplied rule is evaluated
-    ##                        without SETUP, PREPROCESS, POSTPROCESS, CLEANUP.
     ## [rule [arguments..]] - Target rule with arguments.
     ##                        Default: MAIN
     trace "$*"
@@ -78,7 +76,6 @@ function bar_main ## [rulefile] [[--bare] rule [arguments..]] - Loads a rulefile
 
     local maybe_barf=
     local initial_rule=
-    local bare_mode
     if [[ "$BAR_CALLED_AS" =~ \.?bar|please ]]; then
         maybe_barf="${1:-}"
     else
@@ -101,15 +98,7 @@ function bar_main ## [rulefile] [[--bare] rule [arguments..]] - Loads a rulefile
     done
 
     local rc=0
-    
-    # Parse --bare option before rule name
-    if [[ -z "$initial_rule" && "${1:-}" = "--bare" ]]; then
-        bare_mode=true
-        shift
-    fi
-    
     [[ -z "$initial_rule" && -n "${1:-}" ]] && rule_autoload "$1"
-    
     # shellcheck disable=SC2155
     declare -grix BAR_TIMESTAMP="$(bar_now)" ## Timestamp in microseconds since epoch of this invocation
 
@@ -119,23 +108,19 @@ function bar_main ## [rulefile] [[--bare] rule [arguments..]] - Loads a rulefile
     }
 
     if rule_exists "$initial_rule"; then
-        if [[ -z "$bare_mode" ]]; then
-            trap 'rule_exists CLEANUP && { rule_eval CLEANUP || error "CLEANUP failed" ; }' EXIT
+        trap 'rule_exists CLEANUP && { rule_eval CLEANUP || error "CLEANUP failed" ; }' EXIT
 
-            rule_exists SETUP && {
-                rule_eval SETUP || die "SETUP failed" ;
-            }
-            rule_exists PREPROCESS && {
-                rule_eval PREPROCESS || die "PREPROCESS failed" ;
-            }
-        fi
+        rule_exists SETUP && {
+            rule_eval SETUP || die "SETUP failed" ;
+        }
+        rule_exists PREPROCESS && {
+            rule_eval PREPROCESS || die "PREPROCESS failed" ;
+        }
 
         rule_eval "$initial_rule" "$@" || rc=$?
         if (( "$rc" == 0 )); then
             success "$initial_rule" "$@"
-            if [[ -z "$bare_mode" ]]; then
-                rule_exists POSTPROCESS && { rule_eval POSTPROCESS || error "POSTPROCCESS failed" ; }
-            fi
+            rule_exists POSTPROCESS && { rule_eval POSTPROCESS || error "POSTPROCCESS failed" ; }
         else
             failure "$initial_rule" "$@"
         fi

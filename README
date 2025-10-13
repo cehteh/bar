@@ -89,6 +89,30 @@ INVOCATION AND SEMANTICS
   the same name as the symlink is called with all arguments passed.
 
 
+BASH COMPLETION
+
+  Bar supports bash completion for rulefiles, rules, functions, and their arguments. Completion
+  is automatically installed when you run 'bar init_install'.
+
+  The completion script is installed to '~/.bash_completion/bar_complete'. To enable it,
+  either source it in your .bashrc:
+
+    source ~/.bash_completion/bar_complete
+
+  Or if you have bash-completion package installed, it should be automatically loaded.
+
+  Completion works for:
+  - bar <TAB>       - completes rulefiles, rules, and functions in current directory
+  - please <TAB>    - completes rulefiles, rules, and functions
+  - ./bar <TAB>     - completes rulefiles, rules, and functions from local bar
+
+  The completion logic will:
+  1. Find any user rule files in current directory (files containing 'function' or 'rule',
+     or with shebang pointing to bar/please)
+  2. Complete available bash functions and rules from default rule file and Bar.d/ modules
+  3. Provide context-aware argument completion based on parameter types
+
+
 INITIAL INSTALLATION
 
   Bar can be invoked in different ways:
