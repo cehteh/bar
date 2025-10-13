@@ -230,3 +230,9 @@ rule test_semver_cmp: 'semver_gt? 1.2.3 1.2.3' -- false
 rule test_semver_cmp: 'semver_gt 1.2.3 1.2.3-alpha'
 
 rule test_semver_cmp
+
+# test bare rules (BAR_VERBOSITY_LEVEL=4 bar example test_bare)
+
+rule --bare test_bare: -- echo "This is bare"
+
+rule test_bare

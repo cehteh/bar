@@ -253,6 +253,10 @@ RULE DEFINITION SYNTAX
     --always
       The result is not cached and the rule will be always evaluated again.
 
+    --bare
+      When this rule is called as initial rule (bar <rule>) then do not eval SETUP,
+      PREPROCESS, POSTPROCESS and CLEANUP.
+
     --reverse
       The clauses of this rule will be evaluated in reverse order
 

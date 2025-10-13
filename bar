@@ -114,6 +114,8 @@ function bar_main ## [rulefile] [--bare] [rule [arguments..]] - Loads a rulefile
         shift || true
     }
 
+    [[ "${BAR_RULE_FLAGS[$initial_rule]:-}" == *b* ]] && BAR_BARE=true
+
     if rule_exists "$initial_rule"; then
         [[ -z "${BAR_BARE:-}" ]] && {
             trap 'rule_exists CLEANUP && { rule_eval CLEANUP || error "CLEANUP failed" ; }' EXIT

@@ -25,6 +25,9 @@ function rule () ## [[--rule-flag].. <name>:] [--clause-flag].. [[!]dep[?] [arg]
         --always)
             ruleflags+="a"
             ;;
+        --bare)
+            ruleflags+="b"
+            ;;
         --reverse)
             ruleflags+="r"
             ;;
