@@ -425,6 +425,21 @@ _bar_complete() {
     fi
 }
 
+# Wrapper function to handle completion for any path to bar/please
+_bar_complete_wrapper() {
+    local cmd="${COMP_WORDS[0]}"
+    local basename="${cmd##*/}"
+    
+    # Check if the command is bar or please (with any path prefix)
+    if [[ "$basename" == "bar" || "$basename" == "please" ]]; then
+        _bar_complete "$@"
+        return $?
+    fi
+    
+    # Not a bar/please command, return 124 to fall back to default completion
+    return 124
+}
+
 # Register completion for bar, please, and ./bar
 complete -F _bar_complete bar
 complete -F _bar_complete please
@@ -432,3 +447,7 @@ complete -F _bar_complete please
 # Also handle local ./bar execution
 complete -F _bar_complete ./bar
 complete -F _bar_complete ./please
+
+# Register default completion to catch relative paths like ../bar, ../../bar, etc.
+# This will handle any command that ends with /bar or /please
+complete -D -F _bar_complete_wrapper
