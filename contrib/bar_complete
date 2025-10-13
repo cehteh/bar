@@ -214,7 +214,13 @@ _bar_update_cache()
     done
 
     # Add Bar.d modules if directory exists
-    local bar_d_dirs=("Bar.d" "bar.d" ".Bar.d" ".bar.d")
+    local bar_d_dirs=()
+    if [[ "$cmd" == *please* ]]; then
+        bar_d_dirs=("$HOME/.config/please")
+    else
+        bar_d_dirs=("Bar.d" "bar.d" ".Bar.d" ".bar.d")
+    fi
+    
     for bar_d in "${bar_d_dirs[@]}"; do
         if [[ -d "$bar_d" ]]; then
             for module in "$bar_d"/*; do
