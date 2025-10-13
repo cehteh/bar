@@ -279,22 +279,18 @@ _bar_complete() {
     if [[ $cword -eq 1 ]]; then
         local completions=()
         
-        # 1. Text files in current directory
-        local txt_files
-        txt_files=$(compgen -f -X '!*.txt' -- "$cur")
-        [[ -n "$txt_files" ]] && completions+=($txt_files)
-        
-        # Also include files that could be Barf files or shell scripts
-        local sh_files
-        sh_files=$(compgen -f -X '!*.sh' -- "$cur")
-        [[ -n "$sh_files" ]] && completions+=($sh_files)
-        
-        # Include Barf-like files
-        for pattern in Barf barf .Barf .barf Pleasef pleasef .Pleasef .pleasef; do
-            if [[ "$pattern" == "$cur"* && -f "$pattern" ]]; then
-                completions+=("$pattern")
-            fi
-        done
+        # 1. Files in current directory (text files, Barf files, scripts, etc.)
+        # Include all regular files that could potentially be used as arguments
+        local files
+        files=$(compgen -f -- "$cur")
+        if [[ -n "$files" ]]; then
+            # Filter to only include regular files, exclude directories
+            while IFS= read -r file; do
+                if [[ -f "$file" && ! -d "$file" ]]; then
+                    completions+=("$file")
+                fi
+            done <<< "$files"
+        fi
         
         # 2. Shell commands and functions
         local commands
