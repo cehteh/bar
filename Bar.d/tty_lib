@@ -133,4 +133,9 @@ function tty_echo ## [echo_args] - Echos only when the output is a tty.
     return 0
 }
 
+# Define --bare rules for tty functions (TTY state is constant for the run)
+rule --bare tty_echo:
+rule --bare tty_newline:
+
+
 
