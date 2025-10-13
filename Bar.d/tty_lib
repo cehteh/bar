@@ -132,5 +132,3 @@ function tty_echo ## [echo_args] - Echos only when the output is a tty.
     [[ "$col" != 1 ]] && echo
     return 0
 }
-
-

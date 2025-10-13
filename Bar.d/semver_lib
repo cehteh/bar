@@ -219,3 +219,18 @@ function semver_eq ## <a> <b> - succeeds if a == b
     esac
 }
 
+# Define --bare rules for all semver functions
+rule --bare semver_parse:
+rule --bare semver_validate:
+rule --bare semver_shortversion:
+rule --bare semver_major:
+rule --bare semver_majorpre1x:
+rule --bare semver_majorminor:
+rule --bare semver_is_patch:
+rule --bare semver_increment:
+rule --bare semver_cmp:
+rule --bare semver_lt:
+rule --bare semver_le:
+rule --bare semver_gt:
+rule --bare semver_ge:
+rule --bare semver_eq:
