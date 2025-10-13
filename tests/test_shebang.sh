@@ -91,6 +91,19 @@ test_assert_output "Execute Barf file with shebang" "shebang test executed" "$TE
 # Test 3: Execute with explicit rule
 test_assert_output "Execute Barf file with shebang and rule" "shebang test executed" "$TEST_BARF" test_rule
 
+# Test with arguments
+cat > "$TEST_BARF" << 'EOF'
+#!/bin/bash
+# Placeholder shebang - will be replaced
+
+rule greet: -- echo "Hello, $@!"
+
+rule MAIN: -- echo "Default rule"
+EOF
+sed -i "1s|.*|#!$BAR_EXEC|" "$TEST_BARF"
+
+test_assert_output "Execute Barf with rule and arguments" "Hello, greet arg1 arg2!" "$TEST_BARF" greet arg1 arg2
+
 # Test 4: Verify bar still works normally
 echo
 echo "Test Group: Normal Bar Execution"
