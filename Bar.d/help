@@ -653,3 +653,7 @@ function help_describe_variables
     }
     ' "$1"
 }
+
+# Define --bare rule for help (reads existing module files)
+rule --bare help:
+

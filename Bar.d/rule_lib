@@ -312,6 +312,14 @@ function rule_eval ## <name> [args..] - Evaluates a rule
             fi
             [[ -n "$check" ]] && BAR_CHECK_LEVEL=$((BAR_CHECK_LEVEL+1))
 
+            # Check if bare rule depends on non-bare rule
+            if [[ "${BAR_RULE_FLAGS[$RULE_NAME]:-}" == *b* ]]; then
+                rule_exists "$depname" || rule_autoload "$depname"
+                if [[ "${BAR_RULE_FLAGS[$depname]:-}" != *b* ]]; then
+                    die "bare rule '$RULE_NAME' cannot depend on non-bare rule '$depname'"
+                fi
+            fi
+
             if [[ -n "$ifexists" ]] && ! rule_exists "$depname"; then
                 BAR_CHECK_LEVEL=$((BAR_CHECK_LEVEL+1))
                 failure "$RULE_NAME: $dep"
@@ -432,3 +440,8 @@ function rule_list ## [pattern] - lists all loaded rules or rules matching patte
         echo
     done | less -SR
 }
+
+# Define --bare rules for read-only rule query functions
+rule --bare rule_exists:
+rule --bare rule_list:
+

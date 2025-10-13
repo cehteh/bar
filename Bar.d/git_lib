@@ -126,3 +126,15 @@ function git_parse_worktrees # [main [dirs [branches [heads]]]] - Parses git wor
     done < <(git worktree list --porcelain)
 }
 
+# Define --bare rules for read-only git query functions
+rule --bare git_toplevel:
+rule --bare git_bar:
+rule --bare git_dir:
+rule --bare git_ls_files:
+rule --bare git_branch_name:
+rule --bare git_branch_find:
+rule --bare git_branch_find_one:
+rule --bare git_is_ancestor:
+rule --bare git_tree_hash:
+
+

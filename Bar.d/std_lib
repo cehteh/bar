@@ -199,3 +199,9 @@ function iset ## <target> [values].. - indirect assign values to a variable give
         eval "$target=( \"\$@\" )"
     fi
 }
+
+# Define --bare rules for eligible std_lib functions
+rule --bare is_scalar:
+rule --bare called_as:
+rule --bare is_command_installed:
+rule --bare hash_args:
