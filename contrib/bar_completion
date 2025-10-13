@@ -1,0 +1,434 @@
+#!/bin/bash
+# Bash completion script for bar/please
+#
+# This script provides intelligent bash completion for the bar command runner.
+# It completes:
+#   - First argument: text files, shell commands, rules, functions, and autoloadable modules
+#   - Second argument: when first arg is a file, completes rules/functions from that file
+#   - Third+ arguments: attempts to extract argument hints from ## comments
+# 
+# Installation:
+#   1. User installation - add to your ~/.bashrc:
+#      source /path/to/contrib/bar_completion
+#
+#   2. System-wide installation:
+#      sudo cp contrib/bar_completion /etc/bash_completion.d/bar
+#
+#   3. For a specific project (if bar is in the repo):
+#      Add to your shell rc file:
+#      [[ -f /path/to/project/contrib/bar_completion ]] && source /path/to/project/contrib/bar_completion
+#
+# Features:
+#   - Completes rule names from Barf files
+#   - Completes function names from bar modules
+#   - Autoloads module names based on prefix (e.g., git<tab> shows git module)
+#   - Parses ## comments to suggest function/rule arguments
+#   - Supports both 'bar' and 'please' commands
+#   - Works with local ./bar and ./please executables
+
+# Helper function to extract rules from a file
+_bar_extract_rules() {
+    local file="$1"
+    [[ -f "$file" ]] || return 0
+    
+    # Extract rule names from rule definitions
+    grep -E '^rule[[:space:]]+(--[a-z_-]+[[:space:]]+)*[A-Za-z_][A-Za-z0-9_-]*:' "$file" 2>/dev/null | \
+        sed -E 's/^rule[[:space:]]+(--[a-z_-]+[[:space:]]+)*([A-Za-z_][A-Za-z0-9_-]*):.*$/\2/' | \
+        sort -u
+}
+
+# Helper function to extract functions from a file
+_bar_extract_functions() {
+    local file="$1"
+    [[ -f "$file" ]] || return 0
+    
+    # Extract function names
+    grep -E '^function[[:space:]]+[A-Za-z_][A-Za-z0-9_-]*' "$file" 2>/dev/null | \
+        sed -E 's/^function[[:space:]+]([A-Za-z_][A-Za-z0-9_-]*).*/\1/' | \
+        sort -u
+}
+
+# Helper function to get all shell commands including functions
+_bar_get_commands() {
+    # Get all commands in PATH
+    compgen -c
+    
+    # Get all defined functions
+    compgen -A function
+}
+
+# Helper function to find default Barf file
+_bar_find_default_barf() {
+    local called_as="$1"
+    local dir="$PWD"
+    
+    # Search upwards for Bar.d directory
+    while [[ "$dir" != "/" ]]; do
+        if [[ "$called_as" == "please" ]]; then
+            # Check for Pleasef files
+            for f in "$dir/Pleasef" "$dir/pleasef" "$dir/.Pleasef" "$dir/.pleasef" "$HOME/.Pleasef"; do
+                if [[ -f "$f" ]]; then
+                    echo "$f"
+                    return 0
+                fi
+            done
+            # Check for Bar.d equivalent for please
+            if [[ -d "$HOME/.config/please" ]]; then
+                echo "$HOME/.config/please"
+                return 0
+            fi
+        else
+            # Check for Barf files
+            for f in "$dir/Barf" "$dir/barf" "$dir/.Barf" "$dir/.barf"; do
+                if [[ -f "$f" ]]; then
+                    echo "$f"
+                    return 0
+                fi
+            done
+            # Check for Bar.d directory
+            for d in "$dir/Bar.d" "$dir/bar.d" "$dir/.Bar.d" "$dir/.bar.d"; do
+                if [[ -d "$d" ]]; then
+                    echo "$d"
+                    return 0
+                fi
+            done
+        fi
+        dir="$(dirname "$dir")"
+    done
+    
+    return 1
+}
+
+# Helper function to get rules and functions from default Barf
+_bar_get_default_items() {
+    local called_as="$1"
+    local default_barf
+    
+    default_barf="$(_bar_find_default_barf "$called_as")"
+    
+    if [[ -n "$default_barf" ]]; then
+        if [[ -f "$default_barf" ]]; then
+            # It's a file
+            _bar_extract_rules "$default_barf"
+            _bar_extract_functions "$default_barf"
+        elif [[ -d "$default_barf" ]]; then
+            # It's a directory (Bar.d)
+            local f
+            for f in "$default_barf"/*_rules "$default_barf"/*_lib; do
+                [[ -f "$f" ]] || continue
+                _bar_extract_rules "$f"
+                _bar_extract_functions "$f"
+            done
+        fi
+    fi
+}
+
+# Helper function to check if a module exists in Bar.d
+_bar_find_module() {
+    local module="$1"
+    local dir="$PWD"
+    
+    # Search upwards for Bar.d directory
+    while [[ "$dir" != "/" ]]; do
+        for d in "$dir/Bar.d" "$dir/bar.d" "$dir/.Bar.d" "$dir/.bar.d"; do
+            if [[ -d "$d" ]]; then
+                # Check for exact module match
+                if [[ -f "$d/$module" ]]; then
+                    echo "$d/$module"
+                    return 0
+                fi
+                # Check for module with _lib or _rules suffix
+                if [[ -f "$d/${module}_lib" ]]; then
+                    echo "$d/${module}_lib"
+                    return 0
+                fi
+                if [[ -f "$d/${module}" ]]; then
+                    echo "$d/${module}"
+                    return 0
+                fi
+            fi
+        done
+        dir="$(dirname "$dir")"
+    done
+    
+    return 1
+}
+
+# Helper function to get autoloadable modules and their functions/rules
+_bar_get_autoload_modules() {
+    local word="$1"
+    local dir="$PWD"
+    
+    # Search upwards for Bar.d directory
+    while [[ "$dir" != "/" ]]; do
+        for d in "$dir/Bar.d" "$dir/bar.d" "$dir/.Bar.d" "$dir/.bar.d"; do
+            if [[ -d "$d" ]]; then
+                # List all modules that match the word prefix
+                # Modules are single-word files without underscores
+                for f in "$d"/*; do
+                    [[ -f "$f" ]] || continue
+                    local basename="${f##*/}"
+                    # Skip files with underscores (these are libs and rules)
+                    [[ "$basename" == *_* ]] && continue
+                    # Skip if doesn't match prefix
+                    [[ "$basename" == "$word"* ]] || continue
+                    echo "$basename"
+                done
+                
+                # Also extract functions and rules from modules whose functions might match
+                # e.g., 'semv' should match semver_parse, semver_validate, etc.
+                # e.g., 'cargo' should match cargo_build, cargo_test, etc.
+                # e.g., 'cargo_b' should match cargo_build from cargo module
+                for f in "$d"/*_lib "$d"/*_rules "$d"/*; do
+                    [[ -f "$f" ]] || continue
+                    local basename="${f##*/}"
+                    
+                    # Skip if file has no underscore (single-word module)
+                    if [[ "$basename" != *_* ]]; then
+                        # Check if word matches the module name or is a function in this module
+                        # e.g., 'cargo' matches 'cargo' module
+                        # e.g., 'cargo_b' should match functions in 'cargo' module
+                        if [[ "$basename" == "$word"* ]] || [[ "$word" == "${basename}_"* ]]; then
+                            # Extract functions and rules from single-word modules that match
+                            _bar_extract_functions "$f" | grep "^$word"
+                            _bar_extract_rules "$f" | grep "^$word"
+                        fi
+                        continue
+                    fi
+                    
+                    # For _lib and _rules files, extract the module name
+                    local modname="${basename%_lib}"
+                    modname="${modname%_rules}"
+                    
+                    # Check if word is a prefix of the module name or module functions
+                    # e.g., 'semv' matches 'semver' module
+                    # e.g., 'cargo' matches 'cargo' module
+                    # e.g., 'cargo_b' matches functions in 'cargo' module
+                    if [[ "$modname" == "$word"* ]] || [[ "$word" == "${modname}_"* ]]; then
+                        # Extract functions and rules that match the prefix
+                        _bar_extract_functions "$f" | grep "^$word"
+                        _bar_extract_rules "$f" | grep "^$word"
+                    fi
+                done
+                return 0
+            fi
+        done
+        dir="$(dirname "$dir")"
+    done
+}
+
+# Helper function to extract argument hints from ## comments
+_bar_extract_arg_hints() {
+    local file="$1"
+    local name="$2"
+    
+    [[ -f "$file" ]] || return 0
+    
+    # Look for function or rule definition followed by ## comments
+    # For functions: function name ## [args] - description
+    local line
+    
+    # Extract from function definition line
+    grep -A 20 "^function ${name}[[:space:]]" "$file" 2>/dev/null | while IFS= read -r line; do
+        if [[ "$line" =~ ^function[[:space:]]+${name}[[:space:]]+##[[:space:]]*(.*)$ ]]; then
+            # Extract argument hints from the definition line
+            local hint="${BASH_REMATCH[1]}"
+            # Remove " - description" part
+            hint="${hint%% - *}"
+            # Extract words in square brackets or angle brackets
+            echo "$hint" | grep -oE '\[[-a-zA-Z0-9_]+\]|\<[-a-zA-Z0-9_]+\>' | tr -d '[]<>'
+            return 0
+        fi
+        # Stop at next function or empty line
+        [[ "$line" =~ ^function[[:space:]] ]] && break
+        [[ -z "$line" ]] && break
+    done
+    
+    # Also check for rules
+    grep -B 20 "^rule[[:space:]].*${name}:" "$file" 2>/dev/null | while IFS= read -r line; do
+        if [[ "$line" =~ ^##[[:space:]]*(.*)$ ]]; then
+            local hint="${BASH_REMATCH[1]}"
+            # Extract words in square brackets or angle brackets
+            echo "$hint" | grep -oE '\[[-a-zA-Z0-9_]+\]|\<[-a-zA-Z0-9_]+\>' | tr -d '[]<>'
+        fi
+    done
+}
+
+# Main completion function
+_bar_complete() {
+    local cur prev words cword
+    
+    # Initialize completion variables
+    # Use built-in bash completion support if available
+    if declare -F _init_completion >/dev/null 2>&1; then
+        _init_completion || return
+    else
+        # Fallback: manual initialization
+        COMPREPLY=()
+        cur="${COMP_WORDS[COMP_CWORD]}"
+        # shellcheck disable=SC2034  # prev may be used by bash-completion framework
+        prev="${COMP_WORDS[COMP_CWORD-1]}"
+        words=("${COMP_WORDS[@]}")
+        cword=$COMP_CWORD
+    fi
+    
+    # Determine which command was used (bar, please, or symlink)
+    local cmd="${COMP_WORDS[0]##*/}"
+    
+    # First argument: complete with files, commands, rules, and functions
+    if [[ $cword -eq 1 ]]; then
+        local completions=()
+        
+        # 1. Files in current directory (text files, Barf files, scripts, etc.)
+        # Include all regular files that could potentially be used as arguments
+        local files
+        files=$(compgen -f -- "$cur")
+        if [[ -n "$files" ]]; then
+            # Filter to only include regular files, exclude directories
+            while IFS= read -r file; do
+                if [[ -f "$file" && ! -d "$file" ]]; then
+                    completions+=("$file")
+                fi
+            done <<< "$files"
+        fi
+        
+        # 2. Shell commands and functions
+        local commands
+        commands=$(_bar_get_commands | grep "^$cur")
+        if [[ -n "$commands" ]]; then
+            while IFS= read -r cmd; do
+                completions+=("$cmd")
+            done <<< "$commands"
+        fi
+        
+        # 3. Rules and functions from default Barf
+        local default_items
+        default_items=$(_bar_get_default_items "$cmd" | grep "^$cur")
+        if [[ -n "$default_items" ]]; then
+            while IFS= read -r item; do
+                completions+=("$item")
+            done <<< "$default_items"
+        fi
+        
+        # 4. Autoloadable modules that match
+        local modules
+        modules=$(_bar_get_autoload_modules "$cur")
+        if [[ -n "$modules" ]]; then
+            while IFS= read -r mod; do
+                completions+=("$mod")
+            done <<< "$modules"
+        fi
+        
+        # Remove duplicates and generate completions
+        mapfile -t COMPREPLY < <(printf '%s\n' "${completions[@]}" | sort -u | grep "^$cur")
+        
+        return 0
+    fi
+    
+    # Second or third argument: depends on first argument
+    if [[ $cword -eq 2 ]]; then
+        local first_arg="${words[1]}"
+        local completions=()
+        
+        # Check if first argument is a file
+        if [[ -f "$first_arg" ]]; then
+            # Complete with rules and functions from that file
+            local items
+            items=$(_bar_extract_rules "$first_arg")
+            if [[ -n "$items" ]]; then
+                while IFS= read -r item; do
+                    completions+=("$item")
+                done <<< "$items"
+            fi
+            items=$(_bar_extract_functions "$first_arg")
+            if [[ -n "$items" ]]; then
+                while IFS= read -r item; do
+                    completions+=("$item")
+                done <<< "$items"
+            fi
+        fi
+        
+        # Also include default completions (commands, rules, functions)
+        local commands
+        commands=$(_bar_get_commands | grep "^$cur")
+        if [[ -n "$commands" ]]; then
+            while IFS= read -r cmd; do
+                completions+=("$cmd")
+            done <<< "$commands"
+        fi
+        
+        local default_items
+        default_items=$(_bar_get_default_items "$cmd" | grep "^$cur")
+        if [[ -n "$default_items" ]]; then
+            while IFS= read -r item; do
+                completions+=("$item")
+            done <<< "$default_items"
+        fi
+        
+        # Autoloadable modules
+        local modules
+        modules=$(_bar_get_autoload_modules "$cur")
+        if [[ -n "$modules" ]]; then
+            while IFS= read -r mod; do
+                completions+=("$mod")
+            done <<< "$modules"
+        fi
+        
+        # Remove duplicates
+        mapfile -t COMPREPLY < <(printf '%s\n' "${completions[@]}" | sort -u | grep "^$cur")
+        
+        return 0
+    fi
+    
+    # Third and beyond: try to extract argument hints from ## comments
+    if [[ $cword -ge 3 ]]; then
+        local target_name=""
+        local target_file=""
+        
+        # Determine what we're completing arguments for
+        if [[ -f "${words[1]}" ]]; then
+            # First arg was a file, second arg is the rule/function
+            target_file="${words[1]}"
+            target_name="${words[2]}"
+        else
+            # First arg is the rule/function
+            target_name="${words[1]}"
+            # Find it in default Barf
+            target_file="$(_bar_find_default_barf "$cmd")"
+            
+            # Also check if it's a module that needs loading
+            local module="${target_name#always_}"
+            module="${module#is_}"
+            module="${module#has_}"
+            module="${module#try_}"
+            module="${module%%_*}"
+            
+            local module_file
+            module_file="$(_bar_find_module "$module")"
+            [[ -n "$module_file" ]] && target_file="$module_file"
+        fi
+        
+        # Try to extract argument hints
+        if [[ -n "$target_file" && -n "$target_name" ]]; then
+            local hints
+            hints=$(_bar_extract_arg_hints "$target_file" "$target_name")
+            
+            if [[ -n "$hints" ]]; then
+                mapfile -t COMPREPLY < <(compgen -W "$hints" -- "$cur")
+                return 0
+            fi
+        fi
+        
+        # Fallback: complete with files
+        mapfile -t COMPREPLY < <(compgen -f -- "$cur")
+        return 0
+    fi
+}
+
+# Register completion for bar, please, and ./bar
+complete -F _bar_complete bar
+complete -F _bar_complete please
+
+# Also handle local ./bar execution
+complete -F _bar_complete ./bar
+complete -F _bar_complete ./please

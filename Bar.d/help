@@ -141,6 +141,9 @@ INITIAL INSTALLATION
      This creates symlinks to 'bar', 'please', 'Bar.d', 'Barf.default', 'Please.default' in ~/.local
      and symlinks 'Bar.d/*' to '~/.config/please/'.
 
+     This also installs bash completion to '~/.bash_completion/bar_completion'.
+     Bash will automatically source this directory.
+
      Now 'bar' is installed, check it with 'bar help'
 
   2. The local './.bar' initialized from above:
@@ -182,6 +185,25 @@ GIT HOOK ACTIVATION
   '.git/hooks/' directory to the 'bar' script. These hooks will then be executed when the
   respective git hook is triggered. The rules for these hooks are defined in the 'Barf' file
   in the project directory.
+
+
+BASH COMPLETION
+
+  Bar provides intelligent bash completion for both 'bar' and 'please' commands. The
+  completion understands bar's rule system and provides context-aware suggestions.
+
+  When you type 'bar <TAB>', completion offers:
+  - Files in the current directory (Barf files, scripts, text files, etc.)
+  - Shell commands and functions available in your PATH
+  - Rules and functions from the default Barf file
+  - Functions from bar modules (e.g., typing 'semver_' shows semver_parse, semver_validate, etc.)
+
+  The completion script is installed automatically by 'bar init_install' to
+  '~/.bash_completion/bar_completion'. Bash will automatically source this directory,
+  so the completion will be available in new terminal sessions.
+
+  After opening a new terminal, you can use TAB completion with 'bar' and 'please'
+  commands for improved productivity.
 
 
 RULE SEMANTICS
