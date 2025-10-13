@@ -51,6 +51,12 @@ function git_branch_name ## Returns the branch name that is checked out, dies wh
     git branch --show-current
 }
 
+function git_branch_complete ## List all git branches for completion
+{
+    ## This function is called by bar_complete to provide completions for branch parameters.
+    git branch --list --format="%(refname:short)" 2>/dev/null
+}
+
 function git_branch_find ## [patterns].. - lists branches matching the given patterns
 {
    git branch --list --format="%(refname:short)" "$@"
