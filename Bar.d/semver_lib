@@ -21,14 +21,10 @@ function semver_parse ## <semver> [major [minor [patch [prerelease [build]]]]] -
     fi
 }
 
-rule --bare semver_parse:
-
 function semver_validate ## <version> - Validate if string is a valid semver
 {
     semver_parse "$1"
 }
-
-rule --bare semver_validate:
 
 function semver_shortversion ## <version> - shortens a semver to the first non zero part 0.2.1-pre0+123 -> 0.2
 {
@@ -49,8 +45,6 @@ function semver_shortversion ## <version> - shortens a semver to the first non z
     esac
 }
 
-rule --bare semver_shortversion:
-
 function semver_major ## <version> - shortens a semver to major
 {
     # shellcheck disable=2034
@@ -59,8 +53,6 @@ function semver_major ## <version> - shortens a semver to major
 
     echo "$major"
 }
-
-rule --bare semver_major:
 
 function semver_majorpre1x ## <version> - shortens a semver to major with 0.x major semantic
 {
@@ -75,8 +67,6 @@ function semver_majorpre1x ## <version> - shortens a semver to major with 0.x ma
     fi
 }
 
-rule --bare semver_majorpre1x:
-
 function semver_majorminor ## <version> - shortens a semver to major.minor
 {
     # shellcheck disable=2034
@@ -86,8 +76,6 @@ function semver_majorminor ## <version> - shortens a semver to major.minor
     echo "$major.$minor"
 }
 
-rule --bare semver_majorminor:
-
 function semver_is_patch ## <version>
 {
     # shellcheck disable=2034
@@ -95,8 +83,6 @@ function semver_is_patch ## <version>
     semver_parse "$1" major minor patch || return 1
     [[ "$patch" != 0 ]]
 }
-
-rule --bare semver_is_patch:
 
 function semver_increment ## <version> <release|major|majorpre1x|minor|patch> - Increment selected part
 {
@@ -155,8 +141,6 @@ function semver_increment ## <version> <release|major|majorpre1x|minor|patch> - 
     echo "$major.$minor.$patch$prerelease$build"
 }
 
-rule --bare semver_increment:
-
 function semver_cmp ## <a> <b> - comparing 'a' with 'b', prints 'lt', 'eq' or 'gt'
 {
     local major_a minor_a patch_a prerelease_a
@@ -180,8 +164,6 @@ function semver_cmp ## <a> <b> - comparing 'a' with 'b', prints 'lt', 'eq' or 'g
     echo "eq"
 }
 
-rule --bare semver_cmp:
-
 function semver_lt ## <a> <b> - succeeds if a < b
 {
     case $(semver_cmp "$1" "$2") in
@@ -192,8 +174,6 @@ function semver_lt ## <a> <b> - succeeds if a < b
         return 1
     esac
 }
-
-rule --bare semver_lt:
 
 function semver_le ## <a> <b> - succeeds if a <= b
 {
@@ -206,8 +186,6 @@ function semver_le ## <a> <b> - succeeds if a <= b
     esac
 }
 
-rule --bare semver_le:
-
 function semver_gt ## <a> <b> - succeeds if a > b
 {
     case $(semver_cmp "$1" "$2") in
@@ -218,8 +196,6 @@ function semver_gt ## <a> <b> - succeeds if a > b
         return 1
     esac
 }
-
-rule --bare semver_gt:
 
 function semver_ge ## <a> <b> - succeeds if a >= b
 {
@@ -232,8 +208,6 @@ function semver_ge ## <a> <b> - succeeds if a >= b
     esac
 }
 
-rule --bare semver_ge:
-
 function semver_eq ## <a> <b> - succeeds if a == b
 {
     case $(semver_cmp "$1" "$2") in
@@ -245,4 +219,18 @@ function semver_eq ## <a> <b> - succeeds if a == b
     esac
 }
 
+# Define --bare rules for all semver functions
+rule --bare semver_parse:
+rule --bare semver_validate:
+rule --bare semver_shortversion:
+rule --bare semver_major:
+rule --bare semver_majorpre1x:
+rule --bare semver_majorminor:
+rule --bare semver_is_patch:
+rule --bare semver_increment:
+rule --bare semver_cmp:
+rule --bare semver_lt:
+rule --bare semver_le:
+rule --bare semver_gt:
+rule --bare semver_ge:
 rule --bare semver_eq:
