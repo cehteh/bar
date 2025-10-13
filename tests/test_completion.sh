@@ -1,6 +1,7 @@
 #!/bin/bash
 # Test for bar_complete functionality
 
+# shellcheck disable=SC1091
 # Source the completion script
 source ../contrib/bar_complete
 
