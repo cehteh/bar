@@ -154,7 +154,7 @@ _bar_find_module() {
     return 1
 }
 
-# Helper function to get autoloadable modules
+# Helper function to get autoloadable modules and their functions/rules
 _bar_get_autoload_modules() {
     local word="$1"
     local dir="$PWD"
@@ -173,6 +173,42 @@ _bar_get_autoload_modules() {
                     # Skip if doesn't match prefix
                     [[ "$basename" == "$word"* ]] || continue
                     echo "$basename"
+                done
+                
+                # Also extract functions and rules from modules whose functions might match
+                # e.g., 'semv' should match semver_parse, semver_validate, etc.
+                # e.g., 'cargo' should match cargo_build, cargo_test, etc.
+                # e.g., 'cargo_b' should match cargo_build from cargo module
+                for f in "$d"/*_lib "$d"/*_rules "$d"/*; do
+                    [[ -f "$f" ]] || continue
+                    local basename="${f##*/}"
+                    
+                    # Skip if file has no underscore (single-word module)
+                    if [[ "$basename" != *_* ]]; then
+                        # Check if word matches the module name or is a function in this module
+                        # e.g., 'cargo' matches 'cargo' module
+                        # e.g., 'cargo_b' should match functions in 'cargo' module
+                        if [[ "$basename" == "$word"* ]] || [[ "$word" == "${basename}_"* ]]; then
+                            # Extract functions and rules from single-word modules that match
+                            _bar_extract_functions "$f" | grep "^$word"
+                            _bar_extract_rules "$f" | grep "^$word"
+                        fi
+                        continue
+                    fi
+                    
+                    # For _lib and _rules files, extract the module name
+                    local modname="${basename%_lib}"
+                    modname="${modname%_rules}"
+                    
+                    # Check if word is a prefix of the module name or module functions
+                    # e.g., 'semv' matches 'semver' module
+                    # e.g., 'cargo' matches 'cargo' module
+                    # e.g., 'cargo_b' matches functions in 'cargo' module
+                    if [[ "$modname" == "$word"* ]] || [[ "$word" == "${modname}_"* ]]; then
+                        # Extract functions and rules that match the prefix
+                        _bar_extract_functions "$f" | grep "^$word"
+                        _bar_extract_rules "$f" | grep "^$word"
+                    fi
                 done
                 return 0
             fi
