@@ -144,7 +144,7 @@ function init_install ## [prefix] - install links in [prefix] or '~/.local'
     ## create symlinks at the given [prefix] directory or in '~/.local' by default.
     ##
     ## This also installs the bash completion script to '~/.bash_completion/bar_completion'.
-    ## To enable completion, add 'source ~/.bash_completion/bar_completion' to your ~/.bashrc
+    ## Bash will automatically source this directory.
     local prefix="${1:-$HOME/.local}"
     shift
 
@@ -193,12 +193,10 @@ function init_install ## [prefix] - install links in [prefix] or '~/.local'
         if [[ ! -e "$HOME/.bash_completion/bar_completion" ]]; then
             if ln -s "${origin%/*}/contrib/bar_completion" "$HOME/.bash_completion/bar_completion" 2>/dev/null; then
                 info "linked ${origin%/*}/contrib/bar_completion to $HOME/.bash_completion/bar_completion"
+                note "Bash completion installed to $HOME/.bash_completion/bar_completion"
             else
-                cp -L "${origin%/*}/contrib/bar_completion" "$HOME/.bash_completion/bar_completion"
-                info "copied ${origin%/*}/contrib/bar_completion to $HOME/.bash_completion/bar_completion"
+                error "failed to link ${origin%/*}/contrib/bar_completion to $HOME/.bash_completion/bar_completion"
             fi
-            note "Bash completion installed to $HOME/.bash_completion/bar_completion"
-            note "Add 'source \$HOME/.bash_completion/bar_completion' to your ~/.bashrc to enable it"
         else
             debug "bash completion already exists at $HOME/.bash_completion/bar_completion"
         fi

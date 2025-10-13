@@ -141,10 +141,8 @@ INITIAL INSTALLATION
      This creates symlinks to 'bar', 'please', 'Bar.d', 'Barf.default', 'Please.default' in ~/.local
      and symlinks 'Bar.d/*' to '~/.config/please/'.
 
-     This also installs bash completion to '~/.bash_completion/bar_completion'. To enable
-     completion, add the following line to your ~/.bashrc:
-
-       source ~/.bash_completion/bar_completion
+     This also installs bash completion to '~/.bash_completion/bar_completion'.
+     Bash will automatically source this directory.
 
      Now 'bar' is installed, check it with 'bar help'
 
@@ -201,12 +199,11 @@ BASH COMPLETION
   - Functions from bar modules (e.g., typing 'semver_' shows semver_parse, semver_validate, etc.)
 
   The completion script is installed automatically by 'bar init_install' to
-  '~/.bash_completion/bar_completion'. To enable it, add this line to your ~/.bashrc:
+  '~/.bash_completion/bar_completion'. Bash will automatically source this directory,
+  so the completion will be available in new terminal sessions.
 
-    source ~/.bash_completion/bar_completion
-
-  After sourcing the completion script or opening a new terminal, you can use TAB completion
-  with 'bar' and 'please' commands for improved productivity.
+  After opening a new terminal, you can use TAB completion with 'bar' and 'please'
+  commands for improved productivity.
 
 
 RULE SEMANTICS
