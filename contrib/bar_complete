@@ -1,0 +1,54 @@
+#!/bin/bash
+# Bash completion script for bar, please and ./bar
+#
+# Installation:
+#   Link this file to ~/.bash_completion.d/bar_complete or source it in your .bashrc
+#   Or run: bar init_install (which will create the symlink automatically)
+#
+# Usage:
+#   After installation, bash completion will work for:
+#   - bar <TAB>       - completes rulefiles, rules, and functions
+#   - please <TAB>    - completes rulefiles, rules, and functions
+#   - ./bar <TAB>     - completes rulefiles, rules, and functions
+
+_bar_complete()
+{
+    local cur prev words cword
+    _init_completion || return
+
+    # Determine the command (bar, please, or a path like ./bar)
+    local cmd="${words[0]}"
+    
+    # For ./bar or similar, check if it's a bar executable
+    if [[ "$cmd" == ./* || "$cmd" == ../* || "$cmd" == *"/bar" ]]; then
+        # It's a path to bar
+        if [[ ! -x "$cmd" ]]; then
+            return
+        fi
+    fi
+    
+    # Call bar to generate completions
+    # bar complete <current_word> <previous_word>
+    local completions
+    if command -v bar >/dev/null 2>&1; then
+        completions=$(bar complete "$cur" "$prev" 2>/dev/null)
+    elif [[ -x "$cmd" ]]; then
+        completions=$("$cmd" complete "$cur" "$prev" 2>/dev/null)
+    fi
+    
+    if [[ -n "$completions" ]]; then
+        mapfile -t COMPREPLY < <(echo "$completions")
+    fi
+    
+    return 0
+}
+
+# Register completion for bar and please
+complete -F _bar_complete bar
+complete -F _bar_complete please
+
+# Also register for ./bar pattern (when bar is in current directory)
+# This won't work perfectly for all cases, but handles the common ./bar case
+if [[ -x ./bar ]]; then
+    complete -F _bar_complete ./bar
+fi

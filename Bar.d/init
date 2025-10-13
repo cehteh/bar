@@ -183,5 +183,15 @@ function init_install ## [prefix] - install links in [prefix] or '~/.local'
         cp -L "$prefix/share/bar/Pleasef" "$HOME/.Pleasef"
         info "installed default $HOME/.Pleasef"
     fi
+
+    # link bash completion
+    if [[ ! -d "$HOME/.bash_completion.d" ]]; then
+        mkdir -p "$HOME/.bash_completion.d"
+    fi
+    if [[ ! -f "$HOME/.bash_completion.d/bar_complete" ]]; then
+        ln -s "${origin%/*}/contrib/bar_complete" "$HOME/.bash_completion.d/bar_complete" || error "linking completion script"
+        info "linked ${origin%/*}/contrib/bar_complete to $HOME/.bash_completion.d/bar_complete"
+        note "To enable bash completion, source $HOME/.bash_completion.d/bar_complete in your .bashrc or restart your shell"
+    fi
 }
 
