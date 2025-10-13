@@ -415,6 +415,35 @@ _bar_parse_file()
                 _bar_completion_module_completers+=("${module}:${func}")
             fi
             
+            in_doc_comment=false
+            doc_params=""
+            
+        # Check for function preceded by doc comment
+        elif [[ $in_doc_comment == true && "$line" =~ ^[[:space:]]*function[[:space:]]+([A-Za-z_][A-Za-z0-9_]*) ]]; then
+            local func="${BASH_REMATCH[1]}"
+            local slot
+            slot=$(_bar_alloc_slot "_bar_completion_functions_freelist" "_bar_completion_functions")
+            _bar_completion_functions[slot]="$file_idx:$func"
+            _bar_completion_functions_path[$curdir]="${_bar_completion_functions_path[$curdir]:-} $slot"
+            
+            # Store parameters if we captured them
+            if [[ -n "$doc_params" ]]; then
+                _bar_completion_func_params[$func]="$doc_params"
+            fi
+            
+            # Check if this is a module-specific completer (pattern: <module>_<proto>_complete)
+            if [[ "$func" =~ ^([a-z_]+)_([a-z_]+)_complete$ ]]; then
+                local module="${BASH_REMATCH[1]}"
+                local proto="${BASH_REMATCH[2]}"
+                # Register in completion registry
+                _bar_completion_registry["${module}@${proto}"]="_bar_extcomplete $func"
+                # Store in module completers list
+                _bar_completion_module_completers+=("${module}:${func}")
+            fi
+            
+            in_doc_comment=false
+            doc_params=""
+            
         # Check for documented rule: ## [params] - description followed by rule name:
         elif [[ "$line" =~ ^##[[:space:]]*(.*)$ ]]; then
             in_doc_comment=true

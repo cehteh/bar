@@ -1,0 +1,21 @@
+#!/bash
+# Test Barf file for completion testing
+
+## <input> [output] - Test function with parameters
+function test_completion_func
+{
+    ## <input> - Input file to process
+    ## [output] - Optional output file
+    echo "Input: $1, Output: ${2:-stdout}"
+}
+
+## <target> [options..] - Build a target
+rule test_build:
+
+## Clean up build artifacts
+rule test_clean:
+
+function test_no_params ## Simple function without parameters
+{
+    echo "No parameters"
+}
