@@ -14,7 +14,17 @@
 _bar_complete()
 {
     local cur prev words cword
-    _init_completion || return
+    
+    # Initialize completion variables (works without bash-completion package)
+    if type _init_completion &>/dev/null; then
+        _init_completion || return
+    else
+        # Manual initialization
+        cur="${COMP_WORDS[COMP_CWORD]}"
+        prev="${COMP_WORDS[COMP_CWORD-1]}"
+        words=("${COMP_WORDS[@]}")
+        cword=$COMP_CWORD
+    fi
 
     # Determine the command (bar, please, or a path like ./bar)
     local cmd="${words[0]}"
@@ -27,17 +37,71 @@ _bar_complete()
         fi
     fi
     
-    # Call bar to generate completions
-    # bar complete <current_word> <previous_word>
-    local completions
-    if command -v bar >/dev/null 2>&1; then
-        completions=$(bar complete "$cur" "$prev" 2>/dev/null)
-    elif [[ -x "$cmd" ]]; then
-        completions=$("$cmd" complete "$cur" "$prev" 2>/dev/null)
+    # Find potential rulefiles in current directory
+    # These are files with 'function' or 'rule' or shebang with bar/please
+    local rulefiles=()
+    local file
+    for file in *; do
+        [[ -f "$file" && -r "$file" ]] || continue
+        if head -n1 "$file" 2>/dev/null | grep -q '^#!.*\(bar\|please\)'; then
+            rulefiles+=("$file")
+        elif grep -qE '^[[:space:]]*(function|rule)' "$file" 2>/dev/null; then
+            rulefiles+=("$file")
+        fi
+    done
+    
+    # Extract rules and functions from rulefiles and Bar.d modules
+    local rules_and_functions=()
+    
+    # Parse default Barf/Pleasef files if they exist
+    local barfs=("Barf" "barf" ".Barf" ".barf")
+    if [[ "$cmd" == *please* ]]; then
+        barfs=("Pleasef" "pleasef" ".Pleasef" ".pleasef" "$HOME/.Pleasef")
     fi
     
-    if [[ -n "$completions" ]]; then
-        mapfile -t COMPREPLY < <(echo "$completions")
+    for barf in "${barfs[@]}"; do
+        if [[ -f "$barf" && -r "$barf" ]]; then
+            # Extract rule names: look for "rule <name>:"
+            while IFS= read -r line; do
+                if [[ "$line" =~ ^[[:space:]]*rule[[:space:]]+([A-Za-z_][A-Za-z0-9_-]*): ]]; then
+                    rules_and_functions+=("${BASH_REMATCH[1]}")
+                elif [[ "$line" =~ ^[[:space:]]*function[[:space:]]+([A-Za-z_][A-Za-z0-9_]*) ]]; then
+                    rules_and_functions+=("${BASH_REMATCH[1]}")
+                fi
+            done < "$barf"
+            break
+        fi
+    done
+    
+    # Parse Bar.d modules if directory exists
+    local bar_d_dirs=("Bar.d" "bar.d" ".Bar.d" ".bar.d")
+    for bar_d in "${bar_d_dirs[@]}"; do
+        if [[ -d "$bar_d" ]]; then
+            for module in "$bar_d"/*; do
+                [[ -f "$module" && -r "$module" ]] || continue
+                while IFS= read -r line; do
+                    if [[ "$line" =~ ^[[:space:]]*rule[[:space:]]+([A-Za-z_][A-Za-z0-9_-]*): ]]; then
+                        rules_and_functions+=("${BASH_REMATCH[1]}")
+                    elif [[ "$line" =~ ^[[:space:]]*function[[:space:]]+([A-Za-z_][A-Za-z0-9_]*) ]]; then
+                        rules_and_functions+=("${BASH_REMATCH[1]}")
+                    fi
+                done < "$module"
+            done
+            break
+        fi
+    done
+    
+    # Combine all completions
+    local completions=()
+    for item in "${rulefiles[@]}" "${rules_and_functions[@]}"; do
+        if [[ "$item" == "$cur"* ]]; then
+            completions+=("$item")
+        fi
+    done
+    
+    # Remove duplicates and sort
+    if [[ ${#completions[@]} -gt 0 ]]; then
+        mapfile -t COMPREPLY < <(printf '%s\n' "${completions[@]}" | sort -u)
     fi
     
     return 0

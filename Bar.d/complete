@@ -3,69 +3,12 @@
 
 ### Bash completion support for bar
 
-function complete_find_rulefiles ## - Find user rule files in the current directory
-{
-    ## Finds files that contain 'function', 'rule' or start with a shebang pointing to bar or please.
-    local file
-    for file in *; do
-        [[ -f "$file" && -r "$file" ]] || continue
-        # Check if file starts with shebang pointing to bar or please
-        if head -n1 "$file" 2>/dev/null | grep -q '^#!.*\(bar\|please\)'; then
-            echo "$file"
-        # Or contains 'function' or 'rule'
-        elif grep -qE '^[[:space:]]*(function|rule)' "$file" 2>/dev/null; then
-            echo "$file"
-        fi
-    done
-}
-
-function complete_list_rules ## - List all available rules
-{
-    ## Lists rules from BAR_RULES associative array
-    local rule
-    for rule in "${!BAR_RULES[@]}"; do
-        echo "$rule"
-    done
-}
-
-function complete_list_functions ## - List all bash functions
-{
-    ## Lists all defined bash functions (filtered to user-defined ones)
-    compgen -A function | grep -v '^_' | head -100
-}
-
-function complete_list_rules_and_functions ## - List both rules and functions
-{
-    ## Combines rules and functions into a single list
-    {
-        complete_list_rules
-        complete_list_functions
-    } | sort -u
-}
-
-function complete_generate ## <word> <prev> - Generate completions for bar command
-{
-    ## Main completion function called by bash completion
-    ## <word> - The current word being completed
-    ## <prev> - The previous word
-    
-    local word="$1"
-    local prev="$2"
-    
-    # Determine completion context based on COMP_CWORD if available
-    # For first argument: could be rulefile or rule/function
-    # For subsequent arguments: typically files or rule-specific arguments
-    
-    # Try to complete with rulefiles and rules/functions
-    {
-        complete_find_rulefiles
-        complete_list_rules_and_functions
-    } | grep "^$word" | head -50 || true
-}
-
 ## Completion API - called by contrib/bar_complete
 ## Usage: bar complete <word> <prev>
 rule complete: -- '\
-    complete_generate "${RULE_ARGS[0]:-}" "${RULE_ARGS[1]:-}"\
+    # Simple completion - just list all rules
+    local rule
+    for rule in "${!BAR_RULES[@]}"; do
+        echo "$rule"
+    done | head -50
 '
-
