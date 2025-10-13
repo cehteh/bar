@@ -122,10 +122,10 @@ BASH COMPLETION
   Bar supports bash completion for rulefiles, rules, functions, and their arguments. Completion
   is automatically installed when you run 'bar init_install'.
 
-  The completion script is installed to '~/.bash_completion.d/bar_complete'. To enable it,
+  The completion script is installed to '~/.bash_completion/bar_complete'. To enable it,
   either source it in your .bashrc:
 
-    source ~/.bash_completion.d/bar_complete
+    source ~/.bash_completion/bar_complete
 
   Or if you have bash-completion package installed, it should be automatically loaded.
 

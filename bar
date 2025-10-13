@@ -78,7 +78,7 @@ function bar_main ## [rulefile] [[--bare] rule [arguments..]] - Loads a rulefile
 
     local maybe_barf=
     local initial_rule=
-    local bare_mode=
+    local bare_mode
     if [[ "$BAR_CALLED_AS" =~ \.?bar|please ]]; then
         maybe_barf="${1:-}"
     else

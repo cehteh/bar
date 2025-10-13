@@ -5,7 +5,7 @@
 # and provides intelligent completion with caching for performance.
 #
 # Installation:
-#   Link this file to ~/.bash_completion.d/bar_complete or source it in your .bashrc
+#   Link this file to ~/.bash_completion/bar_complete or source it in your .bashrc
 #   Or run: bar init_install (which will create the symlink automatically)
 #
 # Usage:
@@ -15,69 +15,152 @@
 #   - ./bar <TAB>     - completes rulefiles, rules, and functions
 
 # Cache arrays for completion data
-declare -ga _bar_completion_barf_files=()        # Indexed array: "mtime:filename"
-declare -gA _bar_completion_barf_path=()         # Associative: "path" -> "0 1 3" (indices into barf_files)
-declare -g  _bar_completion_barf_files_freelist="" # String of free indices for reuse
-declare -gA _bar_completion_rules=()             # Associative: "path:file" -> "rule1 rule2 ..."
-declare -gA _bar_completion_functions=()         # Associative: "path:file" -> "func1 func2 ..."
-declare -gA _bar_completion_dir_mtime=()         # Associative: "path" -> mtime for tracking changes
+# _bar_completion_barf_files: indexed array storing "mtime:filename" for all discovered rule files
+declare -ga _bar_completion_barf_files=()
+# _bar_completion_barf_path: associative array "basepath" -> "0 1 3" (indices into barf_files)
+declare -gA _bar_completion_barf_path=()
+# _bar_completion_barf_files_freelist: string of free indices for reuse
+declare -g  _bar_completion_barf_files_freelist=""
 
-# Helper: Get modification time of a file or directory
+# _bar_completion_rules: indexed array storing "fileindex:rulename" for all discovered rules
+declare -ga _bar_completion_rules=()
+# _bar_completion_rules_path: associative array "basepath" -> "0 1 3" (indices into rules)
+declare -gA _bar_completion_rules_path=()
+# _bar_completion_rules_freelist: string of free indices for reuse
+declare -g  _bar_completion_rules_freelist=""
+
+# _bar_completion_functions: indexed array storing "fileindex:funcname" for all discovered functions
+declare -ga _bar_completion_functions=()
+# _bar_completion_functions_path: associative array "basepath" -> "0 1 3" (indices into functions)
+declare -gA _bar_completion_functions_path=()
+# _bar_completion_functions_freelist: string of free indices for reuse
+declare -g  _bar_completion_functions_freelist=""
+
+# _bar_completion_dir_mtime: associative array "path" -> mtime for tracking directory changes
+# The goal: when in a basedir where we start bar, we can find recursively if any dir/file
+# has changed by mtime, if so then only the changed files need to be reparsed.
+declare -gA _bar_completion_dir_mtime=()
+
+# Helper: Get modification time of a file or directory with high resolution
 _bar_get_mtime()
 {
-    stat -c %Y "$1" 2>/dev/null || echo 0
+    # Use format %y to get timestamp with nanoseconds, then extract the time portion
+    local mtime_str
+    mtime_str=$(stat --format='%y' "$1" 2>/dev/null) || { echo 0; return; }
+    # Extract timestamp: "2025-10-13 16:49:38.517259371 +0000" -> "2025-10-13 16:49:38.517259371"
+    # Convert to epochseconds.nanoseconds for comparison
+    local datetime="${mtime_str% *}"
+    # Use date to convert to epoch with nanoseconds preserved
+    local epoch
+    epoch=$(date -d "$datetime" +%s.%N 2>/dev/null) || echo 0
+    echo "$epoch"
 }
 
-# Helper: Find free slot in barf_files array or append
+# Helper: Find free slot in an array or append
 _bar_alloc_slot()
 {
-    if [[ -n "$_bar_completion_barf_files_freelist" ]]; then
+    local freelist_var="$1"
+    local array_var="$2"
+    
+    # Get the freelist value
+    local freelist="${!freelist_var}"
+    
+    if [[ -n "$freelist" ]]; then
         local slot
-        read -r slot _bar_completion_barf_files_freelist <<< "$_bar_completion_barf_files_freelist"
+        read -r slot freelist <<< "$freelist"
+        # Update the freelist variable
+        printf -v "$freelist_var" '%s' "$freelist"
         echo "$slot"
     else
-        echo "${#_bar_completion_barf_files[@]}"
+        # Get array size using nameref
+        local -n arr="$array_var"
+        echo "${#arr[@]}"
     fi
 }
 
-# Helper: Free a slot in barf_files array
+# Helper: Free a slot in an array
 _bar_free_slot()
 {
-    local slot="$1"
-    _bar_completion_barf_files_freelist="$slot $_bar_completion_barf_files_freelist"
-    _bar_completion_barf_files[$slot]=""
+    local freelist_var="$1"
+    local array_var="$2"
+    local slot="$3"
+    
+    # Add slot to freelist
+    local freelist="${!freelist_var}"
+    printf -v "$freelist_var" '%s' "$slot $freelist"
+    
+    # Clear the array entry
+    local -n arr="$array_var"
+    arr[$slot]=""
 }
 
 # Parse a file for documented rules and functions
 _bar_parse_file()
 {
     local file="$1"
-    local key="$2"  # "path:file" key for storage
+    local file_idx="$2"  # Index in _bar_completion_barf_files
+    local curdir="$PWD"
     
     [[ ! -f "$file" || ! -r "$file" ]] && return
     
-    local rules=""
-    local functions=""
     local in_doc_comment=false
+    
+    # First, clear old entries for this file
+    # Find and free all rules from this file
+    local indices="${_bar_completion_rules_path[$curdir]:-}"
+    local new_rule_indices=""
+    for idx in $indices; do
+        local entry="${_bar_completion_rules[$idx]}"
+        local entry_file_idx="${entry%%:*}"
+        if [[ "$entry_file_idx" != "$file_idx" ]]; then
+            new_rule_indices="$new_rule_indices $idx"
+        else
+            _bar_free_slot "_bar_completion_rules_freelist" "_bar_completion_rules" "$idx"
+        fi
+    done
+    _bar_completion_rules_path[$curdir]="${new_rule_indices# }"
+    
+    # Find and free all functions from this file
+    indices="${_bar_completion_functions_path[$curdir]:-}"
+    local new_func_indices=""
+    for idx in $indices; do
+        local entry="${_bar_completion_functions[$idx]}"
+        local entry_file_idx="${entry%%:*}"
+        if [[ "$entry_file_idx" != "$file_idx" ]]; then
+            new_func_indices="$new_func_indices $idx"
+        else
+            _bar_free_slot "_bar_completion_functions_freelist" "_bar_completion_functions" "$idx"
+        fi
+    done
+    _bar_completion_functions_path[$curdir]="${new_func_indices# }"
     
     # Parse file line by line looking for documented entities
     while IFS= read -r line; do
         # Check for documented function: function name ##
         if [[ "$line" =~ ^[[:space:]]*function[[:space:]]+([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*## ]]; then
-            functions="$functions ${BASH_REMATCH[1]}"
+            local func="${BASH_REMATCH[1]}"
+            local slot
+            slot=$(_bar_alloc_slot "_bar_completion_functions_freelist" "_bar_completion_functions")
+            _bar_completion_functions[$slot]="$file_idx:$func"
+            _bar_completion_functions_path[$curdir]="${_bar_completion_functions_path[$curdir]:-} $slot"
         # Check for documented rule: ## followed by rule name:
         elif [[ "$line" =~ ^## ]]; then
             in_doc_comment=true
         elif [[ $in_doc_comment == true && "$line" =~ ^[[:space:]]*rule[[:space:]]+(--[a-z_-]*[[:space:]]+)*([A-Za-z_-][A-Za-z0-9_-]*): ]]; then
-            rules="$rules ${BASH_REMATCH[2]}"
+            local rule="${BASH_REMATCH[2]}"
+            local slot
+            slot=$(_bar_alloc_slot "_bar_completion_rules_freelist" "_bar_completion_rules")
+            _bar_completion_rules[$slot]="$file_idx:$rule"
+            _bar_completion_rules_path[$curdir]="${_bar_completion_rules_path[$curdir]:-} $slot"
             in_doc_comment=false
         elif [[ "$line" =~ ^[[:space:]]*rule[[:space:]] ]]; then
             in_doc_comment=false
         fi
     done < "$file"
     
-    _bar_completion_rules["$key"]="${rules# }"
-    _bar_completion_functions["$key"]="${functions# }"
+    # Trim leading spaces
+    _bar_completion_rules_path[$curdir]="${_bar_completion_rules_path[$curdir]# }"
+    _bar_completion_functions_path[$curdir]="${_bar_completion_functions_path[$curdir]# }"
 }
 
 # Update cache for current directory
@@ -146,19 +229,20 @@ _bar_update_cache()
     for file in "${current_files[@]}"; do
         local file_mtime
         file_mtime=$(_bar_get_mtime "$file")
-        local key="$curdir:$file"
         
         # Check if we have this file cached
         local cached=false
         local slot
         for idx in ${_bar_completion_barf_path[$curdir]:-}; do
-            if [[ "${_bar_completion_barf_files[$idx]}" == *":$file" ]]; then
+            local entry="${_bar_completion_barf_files[$idx]}"
+            local cached_mtime="${entry%%:*}"
+            local cached_file="${entry#*:}"
+            if [[ "$cached_file" == "$file" ]]; then
                 cached=true
                 slot=$idx
-                local cached_mtime="${_bar_completion_barf_files[$idx]%%:*}"
                 if [[ "$cached_mtime" != "$file_mtime" ]]; then
                     # File changed, reparse
-                    _bar_parse_file "$file" "$key"
+                    _bar_parse_file "$file" "$slot"
                     _bar_completion_barf_files[$idx]="$file_mtime:$file"
                 fi
                 break
@@ -167,10 +251,10 @@ _bar_update_cache()
         
         if [[ $cached == false ]]; then
             # New file, add to cache
-            slot=$(_bar_alloc_slot)
+            slot=$(_bar_alloc_slot "_bar_completion_barf_files_freelist" "_bar_completion_barf_files")
             _bar_completion_barf_files[$slot]="$file_mtime:$file"
             _bar_completion_barf_path[$curdir]="${_bar_completion_barf_path[$curdir]:-} $slot"
-            _bar_parse_file "$file" "$key"
+            _bar_parse_file "$file" "$slot"
             file_indices+=("$slot")
         else
             file_indices+=("$slot")
@@ -190,7 +274,7 @@ _bar_update_cache()
             done
             if [[ $found == false ]]; then
                 # File removed, free the slot
-                _bar_free_slot "$idx"
+                _bar_free_slot "_bar_completion_barf_files_freelist" "_bar_completion_barf_files" "$idx"
             else
                 new_indices="$new_indices $idx"
             fi
@@ -207,24 +291,21 @@ _bar_get_completions()
     
     local completions=()
     
-    # Get all rules and functions from cached files
-    for key in "${!_bar_completion_rules[@]}"; do
-        if [[ "$key" == "$curdir:"* ]]; then
-            for rule in ${_bar_completion_rules[$key]}; do
-                if [[ "$rule" == "$prefix"* ]]; then
-                    completions+=("$rule")
-                fi
-            done
+    # Get all rules from cached files
+    for idx in ${_bar_completion_rules_path[$curdir]:-}; do
+        local entry="${_bar_completion_rules[$idx]}"
+        local rule="${entry#*:}"
+        if [[ "$rule" == "$prefix"* ]]; then
+            completions+=("$rule")
         fi
     done
     
-    for key in "${!_bar_completion_functions[@]}"; do
-        if [[ "$key" == "$curdir:"* ]]; then
-            for func in ${_bar_completion_functions[$key]}; do
-                if [[ "$func" == "$prefix"* ]]; then
-                    completions+=("$func")
-                fi
-            done
+    # Get all functions from cached files
+    for idx in ${_bar_completion_functions_path[$curdir]:-}; do
+        local entry="${_bar_completion_functions[$idx]}"
+        local func="${entry#*:}"
+        if [[ "$func" == "$prefix"* ]]; then
+            completions+=("$func")
         fi
     done
     

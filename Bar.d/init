@@ -185,13 +185,13 @@ function init_install ## [prefix] - install links in [prefix] or '~/.local'
     fi
 
     # link bash completion
-    if [[ ! -d "$HOME/.bash_completion.d" ]]; then
-        mkdir -p "$HOME/.bash_completion.d"
+    if [[ ! -d "$HOME/.bash_completion" ]]; then
+        mkdir -p "$HOME/.bash_completion"
     fi
-    if [[ ! -f "$HOME/.bash_completion.d/bar_complete" ]]; then
-        ln -s "${origin%/*}/contrib/bar_complete" "$HOME/.bash_completion.d/bar_complete" || error "linking completion script"
-        info "linked ${origin%/*}/contrib/bar_complete to $HOME/.bash_completion.d/bar_complete"
-        note "To enable bash completion, source $HOME/.bash_completion.d/bar_complete in your .bashrc or restart your shell"
+    if [[ ! -f "$HOME/.bash_completion/bar_complete" ]]; then
+        ln -s "${origin%/*}/contrib/bar_complete" "$HOME/.bash_completion/bar_complete" || error "linking completion script"
+        info "linked ${origin%/*}/contrib/bar_complete to $HOME/.bash_completion/bar_complete"
+        note "To enable bash completion, source $HOME/.bash_completion/bar_complete in your .bashrc or restart your shell"
     fi
 }
 
