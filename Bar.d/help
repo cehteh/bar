@@ -267,6 +267,12 @@ RULE DEFINITION SYNTAX
       User defined rules that want to modify clause locals will need to be meta too.
       See 'try_cargo_toolchain' for an example.
 
+    --bare
+      Marks a rule as pure, meaning it only depends on its arguments and the current
+      directory, not on external state like environment variables, file contents, or
+      external commands. Pure rules are safe to run in bare mode (without SETUP,
+      PREPROCESS, POSTPROCESS, and CLEANUP).
+
   * [<name>:]
 
     A rule can have a optional name (suffixed with a colon).  When the name is not given it
