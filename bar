@@ -76,10 +76,29 @@ function bar_main ## [rulefile] [rule [arguments..]] - Loads a rulefile and exec
 
     local maybe_barf=
     local initial_rule=
-    if [[ "$BAR_CALLED_AS" =~ \.?bar|please ]]; then
-        maybe_barf="${1:-}"
-    else
-        initial_rule="$BAR_CALLED_AS"
+    local is_shebang_mode=
+    
+    # Check if bar is being used as a shebang interpreter
+    # In shebang mode: #!/path/to/bar causes kernel to invoke: /path/to/bar /path/to/script [args...]
+    # So $1 will be the script file that contains the shebang
+    if [[ -n "${1:-}" && -f "${1:-}" && -x "${1:-}" ]]; then
+        # Read first line of the file
+        local first_line
+        IFS= read -r first_line < "${1}"
+        # Check if it's a shebang pointing to bar
+        if [[ "$first_line" =~ ^#!.*bar([[:space:]]|$) ]]; then
+            is_shebang_mode=true
+            maybe_barf="$1"
+            shift
+        fi
+    fi
+    
+    if [[ -z "$is_shebang_mode" ]]; then
+        if [[ "$BAR_CALLED_AS" =~ \.?bar|please ]]; then
+            maybe_barf="${1:-}"
+        else
+            initial_rule="$BAR_CALLED_AS"
+        fi
     fi
 
     local barfs=("$BAR_TOPLEVEL/Barf" "$BAR_TOPLEVEL/barf" "$BAR_TOPLEVEL/.Barf" "$BAR_TOPLEVEL/.barf")
@@ -90,7 +109,7 @@ function bar_main ## [rulefile] [rule [arguments..]] - Loads a rulefile and exec
     for BARF_FILE in "$maybe_barf" "${barfs[@]}"; do
         if [[ -f "$BARF_FILE" ]]; then
             debug "using: $BARF_FILE"
-            [[ "$BARF_FILE" = "$maybe_barf" ]] && shift
+            [[ "$BARF_FILE" = "$maybe_barf" && -z "$is_shebang_mode" ]] && shift
             # shellcheck disable=SC1090 # dynamic source
             source "$BARF_FILE"
             break
