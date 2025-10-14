@@ -167,7 +167,7 @@ _bar_complete_predicate_local()
 # Checks if file is readable and contains rule or function statements
 _bar_complete_predicate_rulefile()
 {
-    [[ -f "$1" && -r "$1" ]] && grep -qE '^[[:space:]]*(rule|function)[[:space:]]' "$1" 2>/dev/null
+    [[ -f "$1" && -r "$1" ]] && grep -qE '^(rule|function)[[:space:]]' "$1" 2>/dev/null
 }
 
 # Complete file paths
@@ -177,28 +177,12 @@ _bar_complete_file()
     shift
     local -a predicates=("$@")
     
-    # If first arg looks like a predicate name (not a partial filename),
-    # treat it as a predicate and use empty string for cur
-    if [[ -z "$cur" ]] || _bar_complete_predicate_exists "$cur"; then
-        if [[ -n "$cur" ]]; then
-            # cur was actually a predicate, add it back to predicates
-            predicates=("$cur" "${predicates[@]}")
-            cur=""
-        fi
-    fi
-    
     # Use bash's built-in file completion
     if [[ ${#predicates[@]} -gt 0 ]]; then
         compgen -f -- "$cur" | _bar_apply_predicates "${predicates[@]}"
     else
         compgen -f -- "$cur"
     fi
-}
-
-# Helper to check if a predicate function exists
-_bar_complete_predicate_exists()
-{
-    declare -f "_bar_complete_predicate_$1" >/dev/null 2>&1
 }
 
 # Complete directory paths

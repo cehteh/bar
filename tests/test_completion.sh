@@ -86,17 +86,8 @@ test_completer_lookup() {
 test_predicate_filtering() {
     echo "Testing predicate filtering..."
     
-    # Test _bar_complete_file with rulefile predicate (no empty string)
-    local result
-    result=$(_bar_complete_file rulefile 2>/dev/null | wc -l)
-    if [[ "$result" -gt 0 ]]; then
-        echo "✓ _bar_complete_file rulefile works without empty string (found $result files)"
-    else
-        echo "✗ _bar_complete_file rulefile should return files"
-        return 1
-    fi
-    
     # Test _bar_complete_file with empty string and rulefile predicate
+    local result
     result=$(_bar_complete_file "" rulefile 2>/dev/null | wc -l)
     if [[ "$result" -gt 0 ]]; then
         echo "✓ _bar_complete_file \"\" rulefile works (found $result files)"
@@ -114,11 +105,11 @@ test_predicate_filtering() {
     fi
     
     # Test _bar_complete_file with multiple predicates
-    result=$(_bar_complete_file local rulefile 2>/dev/null | wc -l)
+    result=$(_bar_complete_file "" local rulefile 2>/dev/null | wc -l)
     if [[ "$result" -gt 0 ]]; then
-        echo "✓ _bar_complete_file local rulefile works (found $result files)"
+        echo "✓ _bar_complete_file \"\" local rulefile works (found $result files)"
     else
-        echo "✗ _bar_complete_file local rulefile should return files"
+        echo "✗ _bar_complete_file \"\" local rulefile should return files"
         return 1
     fi
 }
