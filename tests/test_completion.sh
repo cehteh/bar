@@ -76,7 +76,10 @@ test_completer_lookup() {
     assert_equals "_bar_complete_directory" "$result" "Lookup directory completer"
     
     result=$(_bar_get_completer "myfunction" "unknown")
-    assert_equals "_bar_complete_text" "$result" "Lookup unknown defaults to text"
+    assert_equals "" "$result" "Lookup unknown returns empty"
+    
+    result=$(_bar_get_completer "myfunction" "command_or_rule")
+    assert_equals "_bar_complete_command_or_rule" "$result" "Lookup command_or_rule completer"
 }
 
 # Run all tests

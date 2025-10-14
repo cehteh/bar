@@ -118,17 +118,64 @@ _bar_free_slot()
 
 # Generic completion functions
 
+# Apply predicate filters to completions
+_bar_apply_predicates()
+{
+    local -a predicates=("$@")
+    local item
+    
+    # Read items from stdin
+    while IFS= read -r item; do
+        local pass=true
+        local pred
+        for pred in "${predicates[@]}"; do
+            # Call predicate function to test item
+            if ! "_bar_complete_predicate_${pred}" "$item" 2>/dev/null; then
+                pass=false
+                break
+            fi
+        done
+        [[ $pass == true ]] && echo "$item"
+    done
+}
+
+# Predicate: file exists
+_bar_complete_predicate_existing()
+{
+    [[ -e "$1" ]]
+}
+
+# Predicate: file does not exist
+_bar_complete_predicate_nonexisting()
+{
+    [[ ! -e "$1" ]]
+}
+
+# Predicate: is in local directory
+_bar_complete_predicate_local()
+{
+    [[ "$1" != */* ]]
+}
+
+# Predicate: is a rulefile (text file containing 'rule' or 'function')
+_bar_complete_predicate_rulefile()
+{
+    [[ -f "$1" && -r "$1" ]] && grep -qE '^[[:space:]]*(rule|function)[[:space:]]' "$1" 2>/dev/null
+}
+
 # Complete file paths
 _bar_complete_file()
 {
     local cur="$1"
     shift
-    # shellcheck disable=SC2034
-    local predicates=("$@")
+    local -a predicates=("$@")
     
     # Use bash's built-in file completion
-    # Apply predicates if specified (future enhancement)
-    compgen -f -- "$cur"
+    if [[ ${#predicates[@]} -gt 0 ]]; then
+        compgen -f -- "$cur" | _bar_apply_predicates "${predicates[@]}"
+    else
+        compgen -f -- "$cur"
+    fi
 }
 
 # Complete directory paths
@@ -136,10 +183,13 @@ _bar_complete_directory()
 {
     local cur="$1"
     shift
-    # shellcheck disable=SC2034
-    local predicates=("$@")
+    local -a predicates=("$@")
     
-    compgen -d -- "$cur"
+    if [[ ${#predicates[@]} -gt 0 ]]; then
+        compgen -d -- "$cur" | _bar_apply_predicates "${predicates[@]}"
+    else
+        compgen -d -- "$cur"
+    fi
 }
 
 # Complete any path (file or directory)
@@ -147,51 +197,96 @@ _bar_complete_path()
 {
     local cur="$1"
     shift
-    # shellcheck disable=SC2034
-    local predicates=("$@")
+    local -a predicates=("$@")
     
-    compgen -f -- "$cur"
-}
-
-# Complete with any text (no suggestions, just allow anything)
-_bar_complete_text()
-{
-    local cur="$1"
-    # No completions for free text
-    return 0
-}
-
-# Complete with numbers
-_bar_complete_number()
-{
-    local cur="$1"
-    # No specific completions for numbers
-    return 0
+    if [[ ${#predicates[@]} -gt 0 ]]; then
+        compgen -f -- "$cur" | _bar_apply_predicates "${predicates[@]}"
+    else
+        compgen -f -- "$cur"
+    fi
 }
 
 # Complete with existing rule names
 _bar_complete_rule()
 {
     local cur="$1"
+    shift
+    local -a predicates=("$@")
     local curdir="$PWD"
     
     # Get all rules from cache
+    local -a rules=()
     for idx in ${_bar_completion_rules_path[$curdir]:-}; do
         local entry="${_bar_completion_rules[$idx]}"
         local rule="${entry#*:}"
         if [[ "$rule" == "$cur"* ]]; then
-            echo "$rule"
+            rules+=("$rule")
         fi
     done
+    
+    # Apply predicates if specified
+    if [[ ${#predicates[@]} -gt 0 ]]; then
+        printf '%s\n' "${rules[@]}" | _bar_apply_predicates "${predicates[@]}"
+    else
+        printf '%s\n' "${rules[@]}"
+    fi
 }
 
 # Complete with command/function names
 _bar_complete_command()
 {
     local cur="$1"
+    shift
+    local -a predicates=("$@")
     
     # Complete with functions and commands in PATH
-    compgen -c -- "$cur"
+    if [[ ${#predicates[@]} -gt 0 ]]; then
+        compgen -c -- "$cur" | _bar_apply_predicates "${predicates[@]}"
+    else
+        compgen -c -- "$cur"
+    fi
+}
+
+# Complete with command, function, or rule names
+_bar_complete_command_or_rule()
+{
+    local cur="$1"
+    shift
+    local -a predicates=("$@")
+    local curdir="$PWD"
+    
+    # Collect all candidates
+    local -a candidates=()
+    
+    # Get rules from cache
+    for idx in ${_bar_completion_rules_path[$curdir]:-}; do
+        local entry="${_bar_completion_rules[$idx]}"
+        local rule="${entry#*:}"
+        if [[ "$rule" == "$cur"* ]]; then
+            candidates+=("$rule")
+        fi
+    done
+    
+    # Get functions from cache
+    for idx in ${_bar_completion_functions_path[$curdir]:-}; do
+        local entry="${_bar_completion_functions[$idx]}"
+        local func="${entry#*:}"
+        if [[ "$func" == "$cur"* ]]; then
+            candidates+=("$func")
+        fi
+    done
+    
+    # Get commands from PATH
+    while IFS= read -r cmd; do
+        candidates+=("$cmd")
+    done < <(compgen -c -- "$cur")
+    
+    # Remove duplicates and apply predicates
+    if [[ ${#predicates[@]} -gt 0 ]]; then
+        printf '%s\n' "${candidates[@]}" | sort -u | _bar_apply_predicates "${predicates[@]}"
+    else
+        printf '%s\n' "${candidates[@]}" | sort -u
+    fi
 }
 
 # External completer - calls bar --bare <completer_name> to get completions
@@ -235,10 +330,9 @@ _bar_init_completion_registry()
     _bar_completion_registry[file]="_bar_complete_file"
     _bar_completion_registry[directory]="_bar_complete_directory"
     _bar_completion_registry[path]="_bar_complete_path"
-    _bar_completion_registry[text]="_bar_complete_text"
-    _bar_completion_registry[number]="_bar_complete_number"
     _bar_completion_registry[rule]="_bar_complete_rule"
     _bar_completion_registry[command]="_bar_complete_command"
+    _bar_completion_registry[command_or_rule]="_bar_complete_command_or_rule"
     
     # Add module-specific completers (populated during file parsing)
 }
@@ -294,8 +388,8 @@ _bar_get_completer()
         return 0
     fi
     
-    # Default to text completion
-    echo "_bar_complete_text"
+    # No completer found - return nothing (no completions)
+    return 1
 }
 
 # Complete parameters for a specific function or rule
@@ -332,6 +426,9 @@ _bar_complete_params()
         # Get completer for this prototype
         local completer
         completer=$(_bar_get_completer "$func_or_rule" "$proto")
+        
+        # Skip if no completer found
+        [[ -z "$completer" ]] && continue
         
         # Call the completer
         if [[ "$completer" == "_bar_extcomplete "* ]]; then
@@ -406,7 +503,7 @@ _bar_parse_file()
             fi
             
             # Check if this is a module-specific completer (pattern: <module>_<proto>_complete)
-            if [[ "$func" =~ ^([a-z_]+)_([a-z_]+)_complete$ ]]; then
+            if [[ "$func" =~ ^([a-z][a-z0-9]*)_([a-z][a-z0-9]*)_complete$ ]]; then
                 local module="${BASH_REMATCH[1]}"
                 local proto="${BASH_REMATCH[2]}"
                 # Register in completion registry
@@ -432,7 +529,7 @@ _bar_parse_file()
             fi
             
             # Check if this is a module-specific completer (pattern: <module>_<proto>_complete)
-            if [[ "$func" =~ ^([a-z_]+)_([a-z_]+)_complete$ ]]; then
+            if [[ "$func" =~ ^([a-z][a-z0-9]*)_([a-z][a-z0-9]*)_complete$ ]]; then
                 local module="${BASH_REMATCH[1]}"
                 local proto="${BASH_REMATCH[2]}"
                 # Register in completion registry
