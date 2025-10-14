@@ -177,12 +177,28 @@ _bar_complete_file()
     shift
     local -a predicates=("$@")
     
+    # If first arg looks like a predicate name (not a partial filename),
+    # treat it as a predicate and use empty string for cur
+    if [[ -z "$cur" ]] || _bar_complete_predicate_exists "$cur"; then
+        if [[ -n "$cur" ]]; then
+            # cur was actually a predicate, add it back to predicates
+            predicates=("$cur" "${predicates[@]}")
+            cur=""
+        fi
+    fi
+    
     # Use bash's built-in file completion
     if [[ ${#predicates[@]} -gt 0 ]]; then
         compgen -f -- "$cur" | _bar_apply_predicates "${predicates[@]}"
     else
         compgen -f -- "$cur"
     fi
+}
+
+# Helper to check if a predicate function exists
+_bar_complete_predicate_exists()
+{
+    declare -f "_bar_complete_predicate_$1" >/dev/null 2>&1
 }
 
 # Complete directory paths

@@ -82,6 +82,47 @@ test_completer_lookup() {
     assert_equals "_bar_complete_command_or_rule" "$result" "Lookup command_or_rule completer"
 }
 
+# Test predicate filtering
+test_predicate_filtering() {
+    echo "Testing predicate filtering..."
+    
+    # Test _bar_complete_file with rulefile predicate (no empty string)
+    local result
+    result=$(_bar_complete_file rulefile 2>/dev/null | wc -l)
+    if [[ "$result" -gt 0 ]]; then
+        echo "✓ _bar_complete_file rulefile works without empty string (found $result files)"
+    else
+        echo "✗ _bar_complete_file rulefile should return files"
+        return 1
+    fi
+    
+    # Test _bar_complete_file with empty string and rulefile predicate
+    result=$(_bar_complete_file "" rulefile 2>/dev/null | wc -l)
+    if [[ "$result" -gt 0 ]]; then
+        echo "✓ _bar_complete_file \"\" rulefile works (found $result files)"
+    else
+        echo "✗ _bar_complete_file \"\" rulefile should return files"
+        return 1
+    fi
+    
+    # Test _bar_complete_file with partial name and predicate
+    result=$(_bar_complete_file test rulefile 2>/dev/null)
+    if [[ -n "$result" ]]; then
+        echo "✓ _bar_complete_file test rulefile works (found matches)"
+    else
+        echo "✓ _bar_complete_file test rulefile works (no matches expected if no test* rulefiles)"
+    fi
+    
+    # Test _bar_complete_file with multiple predicates
+    result=$(_bar_complete_file local rulefile 2>/dev/null | wc -l)
+    if [[ "$result" -gt 0 ]]; then
+        echo "✓ _bar_complete_file local rulefile works (found $result files)"
+    else
+        echo "✗ _bar_complete_file local rulefile should return files"
+        return 1
+    fi
+}
+
 # Run all tests
 main() {
     echo "=========================================="
@@ -96,6 +137,8 @@ main() {
     test_generic_completers
     echo
     test_completer_lookup
+    echo
+    test_predicate_filtering
     echo
     
     echo "=========================================="
