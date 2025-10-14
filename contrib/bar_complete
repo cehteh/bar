@@ -14,6 +14,12 @@
 #   - please <TAB>    - completes rulefiles, rules, and functions
 #   - ./bar <TAB>     - completes rulefiles, rules, and functions
 
+# Debug logging function - set BAR_COMPLETE_DEBUG=1 to enable
+_bar_complete_dbg()
+{
+    [[ -n "$BAR_COMPLETE_DEBUG" ]] && echo "$*" >&2
+}
+
 # Cache arrays for completion data
 # _bar_completion_barf_files: indexed array storing "mtime:filename" for all discovered rule files
 declare -ga _bar_completion_barf_files=()
@@ -603,24 +609,62 @@ _bar_update_cache()
     local current_files=()
     local file_indices=()
 
-    # Find user rule files in current directory
+    # Find ALL potential rule files in current directory
+    # This includes conventional names and files with documentation/rules
     if [[ $need_rescan == true ]]; then
+        _bar_complete_dbg "Scanning directory for rule files..."
         for file in *; do
             [[ -f "$file" && -r "$file" ]] || continue
-            if head -n1 "$file" 2>/dev/null | grep -q '^#!.*\(bar\|please\)'; then
+            
+            # Check for conventional rulefile names
+            if [[ "$file" =~ ^(Barf|Pleasef|example)(\.[a-z]+)?$ ]] || \
+               [[ "$file" =~ ^[Bb]ar[Ff]\..*$ ]] || \
+               [[ "$file" =~ ^[Pp]leasef\..*$ ]]; then
+                _bar_complete_dbg "  Found conventional rulefile: $file"
                 current_files+=("$file")
-            elif grep -qE '^[[:space:]]*##' "$file" 2>/dev/null && \
-                 grep -qE '^[[:space:]]*(function|rule)' "$file" 2>/dev/null; then
+                continue
+            fi
+            
+            # Check if it's a bar/please script (shebang with bar or please)
+            if head -n1 "$file" 2>/dev/null | grep -q '^#!.*\(bar\|please\)'; then
+                _bar_complete_dbg "  Found bar/please shebang file: $file"
+                current_files+=("$file")
+                continue
+            fi
+            
+            # Check if it has bash shebang AND contains rules/functions
+            if head -n1 "$file" 2>/dev/null | grep -q '^#!/.*bash'; then
+                if grep -qE '^[[:space:]]*(function|rule)[[:space:]]' "$file" 2>/dev/null; then
+                    _bar_complete_dbg "  Found bash file with rules/functions: $file"
+                    current_files+=("$file")
+                    continue
+                fi
+            fi
+            
+            # Check if it contains documentation and rules/functions
+            if grep -qE '^[[:space:]]*##' "$file" 2>/dev/null && \
+               grep -qE '^[[:space:]]*(function|rule)' "$file" 2>/dev/null; then
+                _bar_complete_dbg "  Found documented file: $file"
                 current_files+=("$file")
             fi
         done
     fi
 
-    # Add default Barf/Pleasef if it exists
+    # Ensure all default Barf/Pleasef names are included if they exist
     for barf in "${default_barfs[@]}"; do
         if [[ -f "$barf" && -r "$barf" ]]; then
-            current_files+=("$barf")
-            break
+            # Check if not already in list
+            local already_added=false
+            for cf in "${current_files[@]}"; do
+                if [[ "$cf" == "$barf" ]]; then
+                    already_added=true
+                    break
+                fi
+            done
+            if [[ $already_added == false ]]; then
+                _bar_complete_dbg "  Adding default file: $barf"
+                current_files+=("$barf")
+            fi
         fi
     done
 
@@ -705,40 +749,56 @@ _bar_get_completions()
 {
     local curdir="$PWD"
     local prefix="$1"
+    
+    _bar_complete_dbg "Getting completions for prefix: '$prefix'"
+    _bar_complete_dbg "Current directory: $curdir"
 
     local completions=()
 
     # Get all rules from cached files
+    _bar_complete_dbg "Checking rules..."
     for idx in ${_bar_completion_rules_path[$curdir]:-}; do
         local entry="${_bar_completion_rules[$idx]}"
         local rule="${entry#*:}"
         if [[ "$rule" == "$prefix"* ]]; then
+            _bar_complete_dbg "  Adding rule: $rule"
             completions+=("$rule")
         fi
     done
 
     # Get all functions from cached files
+    _bar_complete_dbg "Checking functions..."
     for idx in ${_bar_completion_functions_path[$curdir]:-}; do
         local entry="${_bar_completion_functions[$idx]}"
         local func="${entry#*:}"
         if [[ "$func" == "$prefix"* ]]; then
+            _bar_complete_dbg "  Adding function: $func"
             completions+=("$func")
         fi
     done
 
     # Add rulefile names (from current directory)
+    _bar_complete_dbg "Checking rulefiles..."
+    _bar_complete_dbg "Barf path indices: ${_bar_completion_barf_path[$curdir]:-none}"
     for idx in ${_bar_completion_barf_path[$curdir]:-}; do
         local entry="${_bar_completion_barf_files[$idx]}"
         local file="${entry#*:}"
+        _bar_complete_dbg "  Checking file: $file"
         # Only include files from current directory (not Bar.d modules)
         if [[ "$file" != */* && "$file" == "$prefix"* ]]; then
+            _bar_complete_dbg "  Adding rulefile: $file"
             completions+=("$file")
+        else
+            _bar_complete_dbg "  Skipping file: $file (path filter or prefix mismatch)"
         fi
     done
 
     # Remove duplicates and sort
     if [[ ${#completions[@]} -gt 0 ]]; then
+        _bar_complete_dbg "Total completions found: ${#completions[@]}"
         printf '%s\n' "${completions[@]}" | sort -u
+    else
+        _bar_complete_dbg "No completions found"
     fi
 }
 
@@ -746,6 +806,8 @@ _bar_get_completions()
 _bar_complete()
 {
     local cur words cword
+    
+    _bar_complete_dbg "=== Bar completion triggered ==="
     
     # Initialize completion variables (works without bash-completion package)
     if type _init_completion &>/dev/null; then
@@ -757,6 +819,10 @@ _bar_complete()
         cword=$COMP_CWORD
     fi
     
+    _bar_complete_dbg "Command line: ${words[*]}"
+    _bar_complete_dbg "Current word index: $cword"
+    _bar_complete_dbg "Current word: '$cur'"
+    
     # Determine the command (bar, please, or a path like ./bar)
     local cmd="${words[0]}"
     
@@ -764,16 +830,19 @@ _bar_complete()
     if [[ "$cmd" == ./* || "$cmd" == ../* || "$cmd" == *"/bar" ]]; then
         # It's a path to bar
         if [[ ! -x "$cmd" ]]; then
+            _bar_complete_dbg "Command not executable: $cmd"
             return
         fi
     fi
     
     # Initialize completion registry if not done yet
     if [[ ${#_bar_completion_registry[@]} -eq 0 ]]; then
+        _bar_complete_dbg "Initializing completion registry..."
         _bar_init_completion_registry
     fi
     
     # Update cache for current directory
+    _bar_complete_dbg "Updating cache for command: $cmd"
     _bar_update_cache "$cmd"
     
     # Determine completion context
@@ -818,13 +887,16 @@ _bar_complete()
     fi
     
     # Generate completions based on context
+    _bar_complete_dbg "Completion context: $completing_what"
     case "$completing_what" in
         rule_or_file)
             # Complete with files and rules/functions
+            _bar_complete_dbg "Completing with rulefiles, rules, and functions"
             mapfile -t COMPREPLY < <(_bar_get_completions "$cur")
             ;;
         rule_or_function)
             # Complete with rules and functions only (not files)
+            _bar_complete_dbg "Completing with rules and functions only"
             local completions=()
             local curdir="$PWD"
             
