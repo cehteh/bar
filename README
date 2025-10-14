@@ -383,6 +383,86 @@ RULE ENVIRONMENT
   results.
 
 
+WRITING DOCUMENTATION
+
+  Bar uses a structured documentation format that serves both human readers and automated
+  tools like help generation and bash completion. Documentation uses '##' comment markers.
+
+  File-Level Documentation:
+    Use '###' at the start of a file to describe the module/file:
+
+      ### This module provides cargo/rust support.
+
+  Variable Documentation:
+    Variables declared with 'declare' can be documented on the same line:
+
+      declare -g MYVAR="value" ## Description of the variable
+
+  Function Documentation:
+    Functions should have documentation in the form:
+
+      function name ## [--opt] <required> [optional..] - Short description
+
+    The parameter list uses a formal syntax:
+    - <param>   - Mandatory parameter
+    - [param]   - Optional parameter
+    - param..   - One or more occurrences (suffix ..)
+    - [param..] - Zero or more occurrences
+    - --flag    - Flag option
+    - -f        - Short flag option
+    - foo|bar   - Alternatives (foo or bar)
+    - --        - Standalone delimiter for literal parameters
+
+    Parameter identifiers start with an alphabetic character followed by [[:alnum:]-_].
+    These serve as prototypes for completion and are refined in following documentation.
+
+    Multi-line documentation continues on following lines starting with '##':
+
+      function foo ## [--verbose|-v] <input> [output] - Process files
+      {
+          ## [--verbose|-v] - Enable verbose output
+          ## <input>         - Input file to process
+          ## [output]        - Optional output file (defaults to stdout)
+          ...
+      }
+
+    For complex option groups, you can use indirection:
+
+      function foo ## [--opts] <input> - Process files
+      {
+          ## [--opts] -
+          ##     --verbose - Enable verbose output
+          ##     --quiet   - Suppress output
+          ## <input> - Input file to process
+          ...
+      }
+
+  Rule Documentation:
+    Rules are documented with '##' lines before the rule definition:
+
+      ## <target> - Build the specified target
+      rule build:
+
+    For rules with parameters, use the same formal syntax as functions:
+
+      ## [--toolchain] <target> [options..] - Build target
+      rule build:
+
+  Documentation Prototypes for Completion:
+    Parameter identifiers map to completion functions. Common prototypes include:
+
+    - <file>      - Any file on filesystem
+    - <directory> - Any directory
+    - <path>      - Any valid path
+    - <text>      - Any text input
+    - <number>    - Numeric input
+    - <rule>      - Existing rule name
+    - <command>   - Command or function name
+
+    Module-specific prototypes can be defined (e.g., <toolchain> in cargo module).
+    See contrib/bar_complete for completion implementation details.
+
+
 MODULES
 
   Modules are shell snippets normally located in '$BAR_DIR' ('Bar.d/', 'bar.d/', '.Bar.d/' or
@@ -547,6 +627,11 @@ MODULE API/RULES
 
       is_cargo_toolchain_available [+toolchain]
         Check if a toolchain is available
+
+      cargo_toolchain_complete 
+        List available cargo toolchains for completion
+        This function is called by bar_complete to provide completions for +toolchain parameters.
+        It lists installed Rust toolchains using rustup.
 
       cargo_fix 
         Run 'cargo fix'.
@@ -829,6 +914,10 @@ MODULE API/RULES
       git_branch_name 
         Returns the branch name that is checked out, dies when not in a git branch.
 
+      git_branch_complete 
+        List all git branches for completion
+        This function is called by bar_complete to provide completions for branch parameters.
+
       git_branch_find [patterns]..
         lists branches matching the given patterns
 
@@ -951,19 +1040,45 @@ MODULE API/RULES
     Variable definitions that use the 'declare' keyword can use '##' at the end of the same
     line to document the variable.
     
-    Functions can be documented in the form 'function name ## arguments - description'.
-    Any lines following that start with optional white spaces followed by '##' and then
-    documentation text will append to the functions documentation.
+    Functions use formal parameter syntax: 'function name ## [--opt] <required> [optional] - description'
+    Parameters use: <mandatory>, [optional], param.., [param..], --flags, foo|bar alternatives.
+    Multi-line documentation continues on following lines starting with optional whitespace
+    followed by '##' and parameter explanations.
     
-    Rules are documented by lines starting with '##' followed by documentation text,
-    eventually followed by a rule/clause definition.
+    Rules are documented by '##' lines before the rule definition, using the same formal
+    parameter syntax when the rule accepts parameters.
     
     Only variables, functions and rules that have doc comments are included in the output.
 
+    Variables:
+
+      MYVAR (g)
+        Description of the variable
+        Default: value
+
     Functions:
 
-      name arguments
-        description'.
+      name [--opt] <required> [optional]
+        description'
+        This module provides cargo/rust support.
+
+      name [--opt] <required> [optional..]
+        Short description
+
+      foo [--verbose|-v] <input> [output]
+        Process files
+        [--verbose|-v] - Enable verbose output
+        <input>         - Input file to process
+        [output]        - Optional output file (defaults to stdout)
+
+      foo [--opts] <input>
+        Process files
+        [--opts] -
+            --verbose - Enable verbose output
+            --quiet   - Suppress output
+        <input> - Input file to process
+        <target> - Build the specified target
+        [--toolchain] <target> [options..] - Build target
 
   init - Module to install, initialize and update bar itself.
 
@@ -1708,11 +1823,11 @@ MODULE API/RULES
     Rules:
 
       watch:
-        Evaluates a rule or MAIN whenever a versioned files changed in the current directory.
+        [rule [arguments..]] - Evaluates a rule or MAIN whenever a versioned files changed in the current directory.
         File watchers hook into this rule.
 
       watch_git_index:
-        Evaluates a rule or MAIN whenever a the git index changed.
+        [rule [arguments..]] - Evaluates a rule or MAIN whenever a the git index changed.
         File watchers hook into this rule.
 
 

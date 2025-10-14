@@ -3,7 +3,7 @@
 
 ### Continious supervision by a file watcher
 
-## Evaluates a rule or MAIN whenever a versioned files changed in the current directory.
+## [rule [arguments..]] - Evaluates a rule or MAIN whenever a versioned files changed in the current directory.
 ## File watchers hook into this rule.
 rule --disjunct --always watch: -- '
      debug "Selecting file watcher.."
@@ -14,7 +14,7 @@ rule watch: --default -- '
      false
 '
 
-## Evaluates a rule or MAIN whenever a the git index changed.
+## [rule [arguments..]] - Evaluates a rule or MAIN whenever a the git index changed.
 ## File watchers hook into this rule.
 rule --disjunct --always watch_git_index: -- '
      debug "Selecting git index file watcher.."
