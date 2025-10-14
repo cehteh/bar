@@ -607,7 +607,7 @@ _bar_update_cache()
         _bar_complete_dbg "Scanning directory for rule files using predicates..."
         
         # Use _bar_complete_file with predicates to find all rulefiles
-        mapfile -t current_files < <(_bar_complete_file "" local rulefile)
+        mapfile -t current_files < <(_bar_complete_file "" rulefile)
         
         # Debug output
         local file
