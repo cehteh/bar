@@ -587,14 +587,6 @@ _bar_update_cache()
     local curdir="$PWD"
     local cmd="${1:-bar}"
 
-    # Determine which files to look for
-    local default_barfs=()
-    if [[ "$cmd" == *please* ]]; then
-        default_barfs=("Pleasef" "pleasef" ".Pleasef" ".pleasef" "$HOME/.Pleasef")
-    else
-        default_barfs=("Barf" "barf" ".Barf" ".barf")
-    fi
-
     # Check if directory mtime has changed (need to rescan for new files)
     local dir_mtime
     dir_mtime=$(_bar_get_mtime "$curdir")
@@ -615,38 +607,14 @@ _bar_update_cache()
         _bar_complete_dbg "Scanning directory for rule files using predicates..."
         
         # Use _bar_complete_file with predicates to find all rulefiles
-        # Get all files in current directory
-        local -a all_files
-        mapfile -t all_files < <(compgen -f)
+        mapfile -t current_files < <(_bar_complete_file "" local rulefile)
         
-        # Filter using predicates: local AND rulefile
-        for file in "${all_files[@]}"; do
-            if _bar_complete_predicate_local "$file"; then
-                if _bar_complete_predicate_rulefile "$file"; then
-                    _bar_complete_dbg "  Found rulefile: $file"
-                    current_files+=("$file")
-                fi
-            fi
+        # Debug output
+        local file
+        for file in "${current_files[@]}"; do
+            _bar_complete_dbg "  Found rulefile: $file"
         done
     fi
-
-    # Ensure all default Barf/Pleasef names are included if they exist
-    for barf in "${default_barfs[@]}"; do
-        if [[ -f "$barf" && -r "$barf" ]]; then
-            # Check if not already in list
-            local already_added=false
-            for cf in "${current_files[@]}"; do
-                if [[ "$cf" == "$barf" ]]; then
-                    already_added=true
-                    break
-                fi
-            done
-            if [[ $already_added == false ]]; then
-                _bar_complete_dbg "  Adding default file: $barf"
-                current_files+=("$barf")
-            fi
-        fi
-    done
 
     # Add Bar.d modules if directory exists
     local bar_d_dirs=()
