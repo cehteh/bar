@@ -163,10 +163,47 @@ _bar_complete_predicate_local()
     [[ "$1" != */* ]]
 }
 
-# Predicate: is a rulefile (text file containing 'rule' or 'function')
+# Predicate: is a rulefile
+# Checks for:
+# 1. Conventional names: Barf*, Pleasef*, example*
+# 2. Bar/please shebangs: #!/.*bar or #!/.*please
+# 3. Bash scripts with rules: #!/.*bash + contains rule/function
+# 4. Documented files: Contains ## + rule/function
 _bar_complete_predicate_rulefile()
 {
-    [[ -f "$1" && -r "$1" ]] && grep -qE '^[[:space:]]*(rule|function)[[:space:]]' "$1" 2>/dev/null
+    local file="$1"
+    [[ -f "$file" && -r "$file" ]] || return 1
+    
+    # Check for conventional rulefile names
+    if [[ "$file" =~ ^(Barf|Pleasef|example)(\.[a-z]+)?$ ]] || \
+       [[ "$file" =~ ^[Bb]ar[Ff]\..*$ ]] || \
+       [[ "$file" =~ ^[Pp]leasef\..*$ ]]; then
+        return 0
+    fi
+    
+    # Check shebang and content
+    local shebang
+    shebang=$(head -n1 "$file" 2>/dev/null)
+    
+    # Bar/please shebang
+    if [[ "$shebang" =~ ^#!.*(bar|please) ]]; then
+        return 0
+    fi
+    
+    # Bash shebang + contains rules/functions
+    if [[ "$shebang" =~ ^#!/.*bash ]]; then
+        if grep -qE '^[[:space:]]*(function|rule)[[:space:]]' "$file" 2>/dev/null; then
+            return 0
+        fi
+    fi
+    
+    # Documented file with rules/functions
+    if grep -qE '^[[:space:]]*##' "$file" 2>/dev/null && \
+       grep -qE '^[[:space:]]*(function|rule)' "$file" 2>/dev/null; then
+        return 0
+    fi
+    
+    return 1
 }
 
 # Complete file paths
@@ -609,43 +646,22 @@ _bar_update_cache()
     local current_files=()
     local file_indices=()
 
-    # Find ALL potential rule files in current directory
-    # This includes conventional names and files with documentation/rules
+    # Find ALL potential rule files in current directory using predicate-based filtering
     if [[ $need_rescan == true ]]; then
-        _bar_complete_dbg "Scanning directory for rule files..."
-        for file in *; do
-            [[ -f "$file" && -r "$file" ]] || continue
-            
-            # Check for conventional rulefile names
-            if [[ "$file" =~ ^(Barf|Pleasef|example)(\.[a-z]+)?$ ]] || \
-               [[ "$file" =~ ^[Bb]ar[Ff]\..*$ ]] || \
-               [[ "$file" =~ ^[Pp]leasef\..*$ ]]; then
-                _bar_complete_dbg "  Found conventional rulefile: $file"
-                current_files+=("$file")
-                continue
-            fi
-            
-            # Check if it's a bar/please script (shebang with bar or please)
-            if head -n1 "$file" 2>/dev/null | grep -q '^#!.*\(bar\|please\)'; then
-                _bar_complete_dbg "  Found bar/please shebang file: $file"
-                current_files+=("$file")
-                continue
-            fi
-            
-            # Check if it has bash shebang AND contains rules/functions
-            if head -n1 "$file" 2>/dev/null | grep -q '^#!/.*bash'; then
-                if grep -qE '^[[:space:]]*(function|rule)[[:space:]]' "$file" 2>/dev/null; then
-                    _bar_complete_dbg "  Found bash file with rules/functions: $file"
+        _bar_complete_dbg "Scanning directory for rule files using predicates..."
+        
+        # Use _bar_complete_file with predicates to find all rulefiles
+        # Get all files in current directory
+        local -a all_files
+        mapfile -t all_files < <(compgen -f)
+        
+        # Filter using predicates: local AND rulefile
+        for file in "${all_files[@]}"; do
+            if _bar_complete_predicate_local "$file"; then
+                if _bar_complete_predicate_rulefile "$file"; then
+                    _bar_complete_dbg "  Found rulefile: $file"
                     current_files+=("$file")
-                    continue
                 fi
-            fi
-            
-            # Check if it contains documentation and rules/functions
-            if grep -qE '^[[:space:]]*##' "$file" 2>/dev/null && \
-               grep -qE '^[[:space:]]*(function|rule)' "$file" 2>/dev/null; then
-                _bar_complete_dbg "  Found documented file: $file"
-                current_files+=("$file")
             fi
         done
     fi
