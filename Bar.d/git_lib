@@ -3,6 +3,8 @@
 
 ### Git support library
 
+# prototype: "branch" = "ext git_branch_complete"
+
 ## Returns the path to the toplevel git repository.
 function git_toplevel
 {

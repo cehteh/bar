@@ -3,6 +3,8 @@
 
 ### Rust/cargo support.
 
+# prototype: "toolchain" = "ext cargo_toolchain_complete"
+
 require run
 
 declare -xg CARGO_TOOLCHAIN="${CARGO_TOOLCHAIN:-}" ## The rust toolchain that is used for most operations.
