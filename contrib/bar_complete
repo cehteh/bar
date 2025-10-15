@@ -40,8 +40,8 @@ declare -gA _bar_completion_rule_params=()
 
 # _bar_complete_protoregistry: associative array "prototype" -> "completer_function [predicates]"
 # Maps parameter prototypes to their completion functions
-# Examples: registry["file"]="_bar_complete_comp_file"
-#           registry["cargo@toolchain"]="_bar_complete_ext cargo_toolchain_complete"
+# Examples: registry["file"]="file"
+#           registry["cargo@toolchain"]="ext cargo_toolchain_complete"
 declare -gA _bar_complete_protoregistry=()
 
 # _bar_completion_actions: associative array "prototype" -> "action_function"
@@ -368,21 +368,21 @@ _bar_complete_ext()
 _bar_init_completion_registry()
 {
     # Generic completers
-    _bar_complete_protoregistry[file]="_bar_complete_comp_file"
-    _bar_complete_protoregistry[directory]="_bar_complete_comp_directory"
-    _bar_complete_protoregistry[path]="_bar_complete_comp_path"
-    _bar_complete_protoregistry[rule]="_bar_complete_comp_rule_or_function"
-    _bar_complete_protoregistry[command]="_bar_complete_comp_command"
-    _bar_complete_protoregistry[command_or_rule]="_bar_complete_comp_command_or_rule"
+    _bar_complete_protoregistry[file]="file"
+    _bar_complete_protoregistry[directory]="directory"
+    _bar_complete_protoregistry[path]="path"
+    _bar_complete_protoregistry[rule]="rule_or_function"
+    _bar_complete_protoregistry[command]="command"
+    _bar_complete_protoregistry[command_or_rule]="command_or_rule"
     
     # Rulefile completer - uses file completer with rulefile predicate
-    _bar_complete_protoregistry[rulefile]="_bar_complete_comp_file rulefile"
+    _bar_complete_protoregistry[rulefile]="file rulefile"
     
     # Literal completers - register specific literals
-    _bar_complete_protoregistry[--bare]="_bar_complete_comp_literal --bare"
+    _bar_complete_protoregistry[--bare]="literal --bare"
     
     # Arguments completer - default file completion
-    _bar_complete_protoregistry[arguments]="_bar_complete_comp_file"
+    _bar_complete_protoregistry[arguments]="file"
     
     # Add module-specific completers (populated during file parsing)
 }
@@ -462,26 +462,46 @@ _bar_parse_protos()
 
 # Get completer for a prototype
 # Looks up: func@proto, then proto
+# Returns expanded completer spec (with _bar_complete_comp_ or _bar_complete_ext prefix)
 _bar_get_completer()
 {
     local func_or_rule="$1"
     local proto="$2"
+    local spec=""
     
     # Try hierarchical lookup: func@proto first
     local key="${func_or_rule}@${proto}"
     if [[ -v _bar_complete_protoregistry["$key"] ]]; then
-        echo "${_bar_complete_protoregistry[$key]}"
-        return 0
+        spec="${_bar_complete_protoregistry[$key]}"
+    elif [[ -v _bar_complete_protoregistry["$proto"] ]]; then
+        # Try just the prototype
+        spec="${_bar_complete_protoregistry[$proto]}"
+    else
+        # No completer found - return nothing (no completions)
+        return 1
     fi
     
-    # Try just the prototype
-    if [[ -v _bar_complete_protoregistry["$proto"] ]]; then
-        echo "${_bar_complete_protoregistry[$proto]}"
-        return 0
+    # Expand the spec: if it starts with "ext " keep it as "_bar_complete_ext "
+    # otherwise expand with "_bar_complete_comp_"
+    if [[ "$spec" == "ext "* ]]; then
+        # External completer - already has the right format
+        echo "_bar_complete_${spec}"
+    else
+        # Internal completer - expand first word with _bar_complete_comp_ prefix
+        local -a spec_parts
+        read -ra spec_parts <<< "$spec"
+        local comp_name="${spec_parts[0]}"
+        local -a comp_args=("${spec_parts[@]:1}")
+        
+        # Construct the expanded completer
+        if [[ ${#comp_args[@]} -gt 0 ]]; then
+            echo "_bar_complete_comp_${comp_name} ${comp_args[*]}"
+        else
+            echo "_bar_complete_comp_${comp_name}"
+        fi
     fi
     
-    # No completer found - return nothing (no completions)
-    return 1
+    return 0
 }
 
 # Complete parameters for a specific function or rule using dynamic protos
@@ -652,7 +672,7 @@ _bar_complete_parse_file()
                 local module="${BASH_REMATCH[1]}"
                 local proto="${BASH_REMATCH[2]}"
                 # Register in completion registry
-                _bar_complete_protoregistry["${module}@${proto}"]="_bar_complete_ext $func"
+                _bar_complete_protoregistry["${module}@${proto}"]="ext $func"
                 # Store in module completers list
                 _bar_completion_module_completers+=("${module}:${func}")
             fi
@@ -675,7 +695,7 @@ _bar_complete_parse_file()
                 local module="${BASH_REMATCH[1]}"
                 local proto="${BASH_REMATCH[2]}"
                 # Register in completion registry
-                _bar_complete_protoregistry["${module}@${proto}"]="_bar_complete_ext $func"
+                _bar_complete_protoregistry["${module}@${proto}"]="ext $func"
                 # Store in module completers list
                 _bar_completion_module_completers+=("${module}:${func}")
             fi
