@@ -339,7 +339,7 @@ _bar_complete_comp_literal()
 }
 
 # External completer - calls bar --bare <completer_name> to get completions
-_bar_complete_ext()
+_bar_complete_comp_ext()
 {
     local completer_name="$1"
     local cur="$2"
@@ -470,7 +470,7 @@ _bar_parse_protos()
 
 # Get completer for a prototype
 # Looks up: module@proto (if module known), then func@proto, then proto
-# Returns expanded completer spec (with _bar_complete_comp_ or _bar_complete_ext prefix)
+# Returns expanded completer spec (with _bar_complete_comp_ prefix)
 _bar_get_completer()
 {
     local func_or_rule="$1"
@@ -511,11 +511,12 @@ _bar_get_completer()
         fi
     fi
     
-    # Expand the spec: if it starts with "ext " keep it as "_bar_complete_ext "
+    # Expand the spec: if it starts with "ext " convert to "_bar_complete_comp_ext "
     # otherwise expand with "_bar_complete_comp_"
     if [[ "$spec" == "ext "* ]]; then
-        # External completer - already has the right format
-        echo "_bar_complete_${spec}"
+        # External completer - convert "ext funcname" to "_bar_complete_comp_ext funcname"
+        local ext_func="${spec#ext }"
+        echo "_bar_complete_comp_ext $ext_func"
     else
         # Internal completer - expand first word with _bar_complete_comp_ prefix
         local -a spec_parts
@@ -624,9 +625,9 @@ _bar_complete_params()
             
             if [[ -n "$completer" ]]; then
                 # Call the completer
-                if [[ "$completer" == "_bar_complete_ext "* ]]; then
-                    local ext_name="${completer#_bar_complete_ext }"
-                    _bar_complete_ext "$ext_name" "$cur"
+                if [[ "$completer" == "_bar_complete_comp_ext "* ]]; then
+                    local ext_name="${completer#_bar_complete_comp_ext }"
+                    _bar_complete_comp_ext "$ext_name" "$cur"
                 else
                     $completer "$cur"
                 fi
@@ -647,10 +648,10 @@ _bar_complete_params()
     fi
     
     # Call the completer
-    if [[ "$completer" == "_bar_complete_ext "* ]]; then
+    if [[ "$completer" == "_bar_complete_comp_ext "* ]]; then
         # External completer
-        local ext_name="${completer#_bar_complete_ext }"
-        _bar_complete_ext "$ext_name" "$cur"
+        local ext_name="${completer#_bar_complete_comp_ext }"
+        _bar_complete_comp_ext "$ext_name" "$cur"
     else
         # Internal completer
         $completer "$cur"
@@ -698,7 +699,8 @@ _bar_complete_parse_file()
     
     while IFS= read -r line; do
         # Check for prototype definition: # prototype: "name" = "completer_spec"
-        if [[ "$line" =~ ^[[:space:]]*#[[:space:]]*prototype:[[:space:]]*\"([^\"]+)\"[[:space:]]*=[[:space:]]*\"([^\"]+)\"[[:space:]]*$ ]]; then
+        # Must start at column 0 (no leading whitespace)
+        if [[ "$line" =~ ^#[[:space:]]*prototype:[[:space:]]*\"([^\"]+)\"[[:space:]]*=[[:space:]]*\"([^\"]+)\"[[:space:]]*$ ]]; then
             local proto_name="${BASH_REMATCH[1]}"
             local completer_spec="${BASH_REMATCH[2]}"
             
@@ -1173,12 +1175,12 @@ _bar_complete()
                 local -a new_comps=()
                 
                 # Call the completer based on its type
-                if [[ "$completer" == "_bar_complete_ext "* ]]; then
-                    local ext_name="${completer#_bar_complete_ext }"
+                if [[ "$completer" == "_bar_complete_comp_ext "* ]]; then
+                    local ext_name="${completer#_bar_complete_comp_ext }"
                     while IFS= read -r comp; do
                         new_comps+=("$comp")
                         all_completions+=("$comp")
-                    done < <(_bar_complete_ext "$ext_name" "$cur")
+                    done < <(_bar_complete_comp_ext "$ext_name" "$cur")
                 elif [[ "$completer" == "_bar_complete_comp_literal "* ]]; then
                     # Literal completer - extract the literal and complete it
                     local literal="${completer#_bar_complete_comp_literal }"

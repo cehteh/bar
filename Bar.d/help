@@ -505,7 +505,8 @@ WRITING DOCUMENTATION
     See contrib/bar_complete for completion implementation details.
     
   Defining Custom Completion Prototypes:
-    Modules can define custom prototypes for parameter completion using single-hash comments:
+    Modules can define custom prototypes for parameter completion using single-hash comments
+    that must start at column 0 (no leading whitespace):
     
       # prototype: "mytype" = "file"
       # prototype: "myfile" = "file existing local"
@@ -518,6 +519,8 @@ WRITING DOCUMENTATION
     - A built-in completer name (file, directory, path, rule, command, etc.)
     - A completer with predicates (e.g., "file existing local")
     - "ext function_name" for external/custom completers
+    
+    Note: The '# prototype:' comment must start at the beginning of the line (column 0).
     
     These are registered as "module@prototype" in the completion registry, allowing
     module-specific completion behavior while maintaining fallback to global prototypes.
