@@ -614,6 +614,31 @@ _bar_complete_params()
         proto_name="${BASH_REMATCH[1]}"
     fi
     
+    # Handle literal punctuation (e.g., +toolchain, rule:)
+    local -a punct_parts
+    mapfile -t punct_parts < <(_bar_extract_literal_punct "$proto_name")
+    local proto_clean="${punct_parts[0]}"
+    local literal_prefix="${punct_parts[1]}"
+    local literal_suffix="${punct_parts[2]}"
+    
+    # If we have literal prefix, handle it
+    if [[ -n "$literal_prefix" ]]; then
+        # Check if current input already has the literal prefix
+        if [[ "$cur" == "$literal_prefix"* ]]; then
+            # User has typed the literal, strip it for prototype completion
+            cur="${cur#"$literal_prefix"}"
+            proto_name="$proto_clean"
+        else
+            # User hasn't typed the literal yet, complete the literal
+            if [[ "$literal_prefix" == "$cur"* ]]; then
+                echo "$literal_prefix"
+            fi
+            return 0
+        fi
+    else
+        proto_name="$proto_clean"
+    fi
+    
     # Handle alternatives (a|b|c)
     if [[ "$proto_name" == *'|'* ]]; then
         IFS='|' read -ra alternatives <<< "$proto_name"
@@ -656,6 +681,54 @@ _bar_complete_params()
         # Internal completer
         $completer "$cur"
     fi
+}
+
+# Helper function to extract literal punctuation from prototype
+# Input: proto like "+toolchain" or "rule:"
+# Returns: proto_clean literal_prefix literal_suffix (one per line)
+_bar_extract_literal_punct()
+{
+    local proto="$1"
+    local literal_prefix=""
+    local literal_suffix=""
+    
+    # Extract leading literal punctuation (not -- or - followed by letter)
+    # Punctuation is anything that's not alphanumeric, underscore, or hyphen
+    while [[ -n "$proto" ]]; do
+        # Check if starts with -- or -[a-zA-Z] (these are NOT literals)
+        if [[ "$proto" =~ ^-- ]] || [[ "$proto" =~ ^-[a-zA-Z] ]]; then
+            break
+        fi
+        
+        # Check if starts with punctuation
+        if [[ "$proto" =~ ^([^a-zA-Z0-9_-])(.*)$ ]]; then
+            literal_prefix="${literal_prefix}${BASH_REMATCH[1]}"
+            proto="${BASH_REMATCH[2]}"
+        else
+            break
+        fi
+    done
+    
+    # Extract trailing literal punctuation (not ..)
+    while [[ -n "$proto" ]]; do
+        # Check if ends with .. (this is NOT literal, it's for repetition)
+        if [[ "$proto" =~ \.\.$ ]]; then
+            break
+        fi
+        
+        # Check if ends with punctuation
+        if [[ "$proto" =~ ^(.*)([^a-zA-Z0-9_])$ ]]; then
+            proto="${BASH_REMATCH[1]}"
+            literal_suffix="${BASH_REMATCH[2]}${literal_suffix}"
+        else
+            break
+        fi
+    done
+    
+    # Return values via echo (one per line)
+    echo "$proto"
+    echo "$literal_prefix"
+    echo "$literal_suffix"
 }
 
 # Parse a file for documented rules and functions

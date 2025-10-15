@@ -107,14 +107,64 @@ else
 fi
 
 echo ""
-echo "Test 4: Testing literal punctuation with actual prototypes"
+echo "Test 4: Testing literal punctuation extraction"
 
-# The literal + should be handled separately from the prototype
-# When we have <+toolchain>, it should be split into literal "+" and prototype "toolchain"
-# This needs to be implemented in the parser
+# Test _bar_extract_literal_punct function
+echo "  Testing _bar_extract_literal_punct with '+toolchain'..."
+result=$(_bar_extract_literal_punct "+toolchain")
+result_array=()
+while IFS= read -r line; do
+    result_array+=("$line")
+done <<< "$result"
 
-echo "  Current implementation extracts full content including punctuation"
-echo "  TODO: Implement splitting of literal punctuation from prototypes"
+if [[ "${result_array[0]}" == "toolchain" && "${result_array[1]}" == "+" && "${result_array[2]}" == "" ]]; then
+    echo "✓ PASS: '+toolchain' → proto='toolchain', prefix='+', suffix=''"
+else
+    echo "✗ FAIL: Expected proto='toolchain', prefix='+', suffix=''"
+    echo "  Got: proto='${result_array[0]}', prefix='${result_array[1]}', suffix='${result_array[2]}'"
+fi
+
+echo "  Testing _bar_extract_literal_punct with 'rule:'..."
+result=$(_bar_extract_literal_punct "rule:")
+result_array=()
+while IFS= read -r line; do
+    result_array+=("$line")
+done <<< "$result"
+
+if [[ "${result_array[0]}" == "rule" && "${result_array[1]}" == "" && "${result_array[2]}" == ":" ]]; then
+    echo "✓ PASS: 'rule:' → proto='rule', prefix='', suffix=':'"
+else
+    echo "✗ FAIL: Expected proto='rule', prefix='', suffix=':'"
+    echo "  Got: proto='${result_array[0]}', prefix='${result_array[1]}', suffix='${result_array[2]}'"
+fi
+
+echo "  Testing _bar_extract_literal_punct with '--flag'..."
+result=$(_bar_extract_literal_punct "--flag")
+result_array=()
+while IFS= read -r line; do
+    result_array+=("$line")
+done <<< "$result"
+
+if [[ "${result_array[0]}" == "--flag" && "${result_array[1]}" == "" && "${result_array[2]}" == "" ]]; then
+    echo "✓ PASS: '--flag' → proto='--flag' (-- not stripped)"
+else
+    echo "✗ FAIL: Expected proto='--flag' with no literals"
+    echo "  Got: proto='${result_array[0]}', prefix='${result_array[1]}', suffix='${result_array[2]}'"
+fi
+
+echo "  Testing _bar_extract_literal_punct with 'name..'..."
+result=$(_bar_extract_literal_punct "name..")
+result_array=()
+while IFS= read -r line; do
+    result_array+=("$line")
+done <<< "$result"
+
+if [[ "${result_array[0]}" == "name.." && "${result_array[1]}" == "" && "${result_array[2]}" == "" ]]; then
+    echo "✓ PASS: 'name..' → proto='name..' (.. not stripped)"
+else
+    echo "✗ FAIL: Expected proto='name..' with no literals"
+    echo "  Got: proto='${result_array[0]}', prefix='${result_array[1]}', suffix='${result_array[2]}'"
+fi
 
 echo ""
 echo "External completer tests complete"
