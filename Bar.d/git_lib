@@ -4,7 +4,7 @@
 ### Git support library
 
 # prototype: "branch" = "ext git_branch_complete"
-# prototype: "gitargs" = "extcomp git"
+# prototype: "git-ls-files-opts" = "extcomp git ls-files --cached --exclude-standard"
 
 ## Returns the path to the toplevel git repository.
 function git_toplevel
@@ -37,7 +37,7 @@ function git_dir ## Returns the absolute path to the 'GIT_DIR' (.git/).
     memo git rev-parse --absolute-git-dir
 }
 
-function git_ls_files # [git-ls-files-opts].. - Sorted list of files in the git repository.
+function git_ls_files ## [git-ls-files-opts].. - Sorted list of files in the git repository.
 {
     ## git-ls-files '--cached' and '--exclude-standard' are always implied.  Notable options
     ## are '-z' for zero terminated output and '--others' to show untracked files.
@@ -105,7 +105,7 @@ function git_add_ignore ## [patterns..] - Adds new ignore patterns to '.gitignor
     done
 }
 
-function git_parse_worktrees # [main [dirs [branches [heads]]]] - Parses git worktrees into variables provided by the caller
+function git_parse_worktrees ## [main [dirs [branches [heads]]]] - Parses git worktrees into variables provided by the caller
 {
     ## - main:     variable storing the main worktree (dir)
     ## - dirs:     associative array storing 'branch:directory'
