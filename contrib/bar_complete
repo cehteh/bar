@@ -935,6 +935,7 @@ _bar_complete()
     local cur cword
     local -a protos  # Dynamic array of prototype specs
     local proto_idx=0
+    local -a cache   # Cache for current position completions
     
     _bar_complete_dbg "=== Bar completion triggered ==="
     
@@ -1143,29 +1144,68 @@ _bar_complete()
         if [[ -n "$completer" ]]; then
             _bar_complete_dbg "  Found completer for '$proto_name': $completer"
             
-            # Call the completer based on its type
-            if [[ "$completer" == "_bar_complete_ext "* ]]; then
-                local ext_name="${completer#_bar_complete_ext }"
-                while IFS= read -r comp; do
-                    all_completions+=("$comp")
-                done < <(_bar_complete_ext "$ext_name" "$cur")
-            elif [[ "$completer" == "_bar_complete_comp_literal "* ]]; then
-                # Literal completer - extract the literal and complete it
-                local literal="${completer#_bar_complete_comp_literal }"
-                if [[ "$literal" == "$cur"* ]]; then
-                    all_completions+=("$literal")
+            # Check cache first
+            local cache_key="${completer}:${cur}"
+            local use_cache=false
+            local cache_idx=0
+            
+            # Search cache for this completer+cur combination
+            for ((cache_idx=0; cache_idx<${#cache[@]}; cache_idx++)); do
+                if [[ "${cache[$cache_idx]}" == "$cache_key"* ]]; then
+                    use_cache=true
+                    break
                 fi
-            else
-                # Split completer into function and arguments, then call
-                # e.g., "_bar_complete_comp_file rulefile" -> function=_bar_complete_comp_file, args=rulefile
-                local -a completer_parts
-                read -ra completer_parts <<< "$completer"
-                local comp_func="${completer_parts[0]}"
-                local -a comp_args=("${completer_parts[@]:1}")
+            done
+            
+            if [[ $use_cache == true ]]; then
+                # Use cached results
+                _bar_complete_dbg "  Using cached results for $cache_key"
+                local cached_results="${cache[$cache_idx]#*:}"
+                cached_results="${cached_results#*:}"  # Skip the second colon
                 
-                while IFS= read -r comp; do
-                    all_completions+=("$comp")
-                done < <("$comp_func" "$cur" "${comp_args[@]}")
+                # Split cached results and add to completions
+                IFS=$'\n' read -rd '' -a cached_comps <<< "$cached_results" || true
+                for comp in "${cached_comps[@]}"; do
+                    [[ -n "$comp" ]] && all_completions+=("$comp")
+                done
+            else
+                # Call the completer and cache results
+                local -a new_comps=()
+                
+                # Call the completer based on its type
+                if [[ "$completer" == "_bar_complete_ext "* ]]; then
+                    local ext_name="${completer#_bar_complete_ext }"
+                    while IFS= read -r comp; do
+                        new_comps+=("$comp")
+                        all_completions+=("$comp")
+                    done < <(_bar_complete_ext "$ext_name" "$cur")
+                elif [[ "$completer" == "_bar_complete_comp_literal "* ]]; then
+                    # Literal completer - extract the literal and complete it
+                    local literal="${completer#_bar_complete_comp_literal }"
+                    if [[ "$literal" == "$cur"* ]]; then
+                        new_comps+=("$literal")
+                        all_completions+=("$literal")
+                    fi
+                else
+                    # Split completer into function and arguments, then call
+                    # e.g., "_bar_complete_comp_file rulefile" -> function=_bar_complete_comp_file, args=rulefile
+                    local -a completer_parts
+                    read -ra completer_parts <<< "$completer"
+                    local comp_func="${completer_parts[0]}"
+                    local -a comp_args=("${completer_parts[@]:1}")
+                    
+                    while IFS= read -r comp; do
+                        new_comps+=("$comp")
+                        all_completions+=("$comp")
+                    done < <("$comp_func" "$cur" "${comp_args[@]}")
+                fi
+                
+                # Cache the results
+                if [[ ${#new_comps[@]} -gt 0 ]]; then
+                    local cache_value
+                    cache_value="${cache_key}:$(printf '%s\n' "${new_comps[@]}")"
+                    cache+=("$cache_value")
+                fi
             fi
         else
             # No completer found, use file completion as fallback
