@@ -87,8 +87,9 @@ This file contains development guidelines for GitHub Copilot when working on the
 The completion system works through multiple layers:
 
 1. **Registry System**: The `_bar_complete_protoregistry` is an associative array that maps
-   prototype names (like "file", "rule", "command") to their completer functions. Completers
-   are functions that generate completion candidates.
+   prototype names to completer specifications. Instead of storing full function names like
+   `_bar_complete_comp_file`, it stores simplified specs like `"file"` or `"file existing"`.
+   The `_bar_get_completer` function expands these specs when retrieving them.
 
 2. **Prototype Syntax**: Documentation uses a formal parameter syntax:
    - `<param>` for mandatory parameters
@@ -96,26 +97,52 @@ The completion system works through multiple layers:
    - `param..` for repeating parameters (one or more)
    - `<a|b>` for alternatives
 
-3. **Module-Specific Completers**: Modules can define specialized completers following the
-   pattern `<module>_<prototype>_complete`. These are automatically discovered when parsing
-   module files and registered as `module@prototype` in the registry.
+3. **Module-Specific Completers**: 
+   - Modules can define specialized completers following the pattern `<module>_<prototype>_complete`
+   - These are automatically discovered when parsing module files and registered as `module@prototype`
+   - Modules can also define prototypes via comments: `# prototype: "name" = "completer_spec"`
+   - Example: `# prototype: "toolchain" = "ext cargo_toolchain_complete"`
 
-4. **Completion Flow**:
+4. **Module Tracking**:
+   - Functions and rules are tracked to their source module via `_bar_completion_func_module`
+     and `_bar_completion_rule_module` associative arrays
+   - When parsing files in Bar.d/, the module name is automatically derived from the filename
+   - This enables module-specific completion behavior
+
+5. **Completion Flow**:
    - Parse command line to determine current completion position
    - Match previous words against parameter prototypes
    - Determine which prototype we're completing
-   - Look up completer in registry (try `proto@module` first, then `proto`)
+   - Look up completer in registry with hierarchical fallback:
+     1. Try `module@proto` (if module known for current rule/function)
+     2. Try `func@proto` (for function/rule-specific completers)
+     3. Fall back to `proto` (global completers)
    - Call completer with current prefix and any predicate filters
+   - Cache results to avoid duplicate work within same completion session
    - Return filtered, sorted results
 
-5. **Predicate Filters**: Completers can be constrained by predicates (like "existing",
+6. **Completer Specification Format**:
+   - Registry stores simplified specs: `"file"`, `"file existing"`, `"ext funcname"`
+   - When retrieved via `_bar_get_completer`, specs are expanded:
+     - `"file"` → `_bar_complete_comp_file`
+     - `"file existing"` → `_bar_complete_comp_file existing`
+     - `"ext funcname"` → `_bar_complete_ext funcname`
+
+7. **Predicate Filters**: Completers can be constrained by predicates (like "existing",
    "nonexisting", "local", "rulefile") that filter the completion results.
 
-6. **Caching**: External completers (those that call `bar --bare`) cache their results to
-   avoid repeated expensive calls during the same completion session.
+8. **Caching**: 
+   - External completers (those that call `bar --bare`) cache their results in
+     `_bar_completion_extcomplete_cache` to avoid repeated expensive calls
+   - Position-level caching: Within a single completion session, completer results are cached
+     by completer+prefix key in a local `cache` array to avoid redundant calls
 
-7. **Module Tracking**: When completing parameters for rules/functions, the system tracks
-   which module they originated from to enable module-specific prototype resolution.
+9. **Naming Conventions**:
+   - All completion-related global functions and variables use `_bar_complete` prefix
+   - `_bar_complete_protoregistry` - the main registry
+   - `_bar_complete_ext` - external completer caller
+   - `_bar_complete_parse_file` - file parser
+   - `_bar_complete_comp_*` - built-in completers
 
 
 ### Module-Specific Completers

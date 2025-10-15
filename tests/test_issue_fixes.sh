@@ -1,7 +1,7 @@
 #!/bin/bash
 # Test fixes for the three reported issues
 
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/.." || exit
 source contrib/bar_complete
 
 echo "=== Testing Fixes for Reported Issues ==="

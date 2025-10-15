@@ -1,7 +1,7 @@
 #!/bin/bash
 # Test --public mode for _bar_complete_parse_file
 
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/.." || exit
 source contrib/bar_complete
 
 echo "=== Testing --public Mode ==="
@@ -26,7 +26,7 @@ _bar_completion_functions=()
 _bar_complete_parse_file --public "example"
 if [ ${#_bar_completion_rules[@]} -gt 20 ]; then
     echo "  ✓ PASS: Found ${#_bar_completion_rules[@]} rules (including undocumented)"
-    echo "  Sample rules: ${_bar_completion_rules[@]:0:5}"
+    echo "  Sample rules: ${_bar_completion_rules[*]:0:5}"
 else
     echo "  ✗ FAIL: Found only ${#_bar_completion_rules[@]} rules (expected >20)"
 fi
