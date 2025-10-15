@@ -51,9 +51,9 @@ test_registry_init() {
     _bar_init_completion_registry
     
     # Check that basic completers are registered
-    [[ -v _bar_completion_registry[file] ]] && echo "✓ file completer registered" || echo "✗ file completer not registered"
-    [[ -v _bar_completion_registry[directory] ]] && echo "✓ directory completer registered" || echo "✗ directory completer not registered"
-    [[ -v _bar_completion_registry[rule] ]] && echo "✓ rule completer registered" || echo "✗ rule completer not registered"
+    [[ -v _bar_complete_protoregistry[file] ]] && echo "✓ file completer registered" || echo "✗ file completer not registered"
+    [[ -v _bar_complete_protoregistry[directory] ]] && echo "✓ directory completer registered" || echo "✗ directory completer not registered"
+    [[ -v _bar_complete_protoregistry[rule] ]] && echo "✓ rule completer registered" || echo "✗ rule completer not registered"
 }
 
 # Test generic completers

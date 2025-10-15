@@ -1,5 +1,5 @@
 #!/bin/bash
-# Test --public mode for _bar_parse_file
+# Test --public mode for _bar_complete_parse_file
 
 cd "$(dirname "$0")/.."
 source contrib/bar_complete
@@ -11,7 +11,7 @@ echo ""
 echo "Test 1: Parse example without --public (only documented rules)"
 _bar_completion_rules=()
 _bar_completion_functions=()
-_bar_parse_file "example"
+_bar_complete_parse_file "example"
 if [ ${#_bar_completion_rules[@]} -eq 0 ]; then
     echo "  ✓ PASS: No undocumented rules found (0 rules)"
 else
@@ -23,7 +23,7 @@ echo ""
 echo "Test 2: Parse example with --public (all rules)"
 _bar_completion_rules=()
 _bar_completion_functions=()
-_bar_parse_file --public "example"
+_bar_complete_parse_file --public "example"
 if [ ${#_bar_completion_rules[@]} -gt 20 ]; then
     echo "  ✓ PASS: Found ${#_bar_completion_rules[@]} rules (including undocumented)"
     echo "  Sample rules: ${_bar_completion_rules[@]:0:5}"
@@ -37,7 +37,7 @@ echo "Test 3: Parse Bar.d/git_rules without --public"
 _bar_completion_rules=()
 _bar_completion_functions=()
 if [ -f "Bar.d/git_rules" ]; then
-    _bar_parse_file "Bar.d/git_rules"
+    _bar_complete_parse_file "Bar.d/git_rules"
     if [ ${#_bar_completion_rules[@]} -gt 0 ]; then
         echo "  ✓ PASS: Found ${#_bar_completion_rules[@]} documented git rules"
     else

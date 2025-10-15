@@ -38,11 +38,11 @@ declare -gA _bar_completion_func_params=()
 # _bar_completion_rule_params: associative array "rulename" -> "param_list"
 declare -gA _bar_completion_rule_params=()
 
-# _bar_completion_registry: associative array "prototype" -> "completer_function [predicates]"
+# _bar_complete_protoregistry: associative array "prototype" -> "completer_function [predicates]"
 # Maps parameter prototypes to their completion functions
 # Examples: registry["file"]="_bar_complete_comp_file"
-#           registry["cargo@toolchain"]="_bar_extcomplete cargo_toolchain_complete"
-declare -gA _bar_completion_registry=()
+#           registry["cargo@toolchain"]="_bar_complete_ext cargo_toolchain_complete"
+declare -gA _bar_complete_protoregistry=()
 
 # _bar_completion_actions: associative array "prototype" -> "action_function"
 # Maps prototypes to actions that should be executed when that prototype is matched
@@ -331,7 +331,7 @@ _bar_complete_comp_literal()
 }
 
 # External completer - calls bar --bare <completer_name> to get completions
-_bar_extcomplete()
+_bar_complete_ext()
 {
     local completer_name="$1"
     local cur="$2"
@@ -368,21 +368,21 @@ _bar_extcomplete()
 _bar_init_completion_registry()
 {
     # Generic completers
-    _bar_completion_registry[file]="_bar_complete_comp_file"
-    _bar_completion_registry[directory]="_bar_complete_comp_directory"
-    _bar_completion_registry[path]="_bar_complete_comp_path"
-    _bar_completion_registry[rule]="_bar_complete_comp_rule_or_function"
-    _bar_completion_registry[command]="_bar_complete_comp_command"
-    _bar_completion_registry[command_or_rule]="_bar_complete_comp_command_or_rule"
+    _bar_complete_protoregistry[file]="_bar_complete_comp_file"
+    _bar_complete_protoregistry[directory]="_bar_complete_comp_directory"
+    _bar_complete_protoregistry[path]="_bar_complete_comp_path"
+    _bar_complete_protoregistry[rule]="_bar_complete_comp_rule_or_function"
+    _bar_complete_protoregistry[command]="_bar_complete_comp_command"
+    _bar_complete_protoregistry[command_or_rule]="_bar_complete_comp_command_or_rule"
     
     # Rulefile completer - uses file completer with rulefile predicate
-    _bar_completion_registry[rulefile]="_bar_complete_comp_file rulefile"
+    _bar_complete_protoregistry[rulefile]="_bar_complete_comp_file rulefile"
     
     # Literal completers - register specific literals
-    _bar_completion_registry[--bare]="_bar_complete_comp_literal --bare"
+    _bar_complete_protoregistry[--bare]="_bar_complete_comp_literal --bare"
     
     # Arguments completer - default file completion
-    _bar_completion_registry[arguments]="_bar_complete_comp_file"
+    _bar_complete_protoregistry[arguments]="_bar_complete_comp_file"
     
     # Add module-specific completers (populated during file parsing)
 }
@@ -469,14 +469,14 @@ _bar_get_completer()
     
     # Try hierarchical lookup: func@proto first
     local key="${func_or_rule}@${proto}"
-    if [[ -v _bar_completion_registry["$key"] ]]; then
-        echo "${_bar_completion_registry[$key]}"
+    if [[ -v _bar_complete_protoregistry["$key"] ]]; then
+        echo "${_bar_complete_protoregistry[$key]}"
         return 0
     fi
     
     # Try just the prototype
-    if [[ -v _bar_completion_registry["$proto"] ]]; then
-        echo "${_bar_completion_registry[$proto]}"
+    if [[ -v _bar_complete_protoregistry["$proto"] ]]; then
+        echo "${_bar_complete_protoregistry[$proto]}"
         return 0
     fi
     
@@ -574,9 +574,9 @@ _bar_complete_params()
             
             if [[ -n "$completer" ]]; then
                 # Call the completer
-                if [[ "$completer" == "_bar_extcomplete "* ]]; then
-                    local ext_name="${completer#_bar_extcomplete }"
-                    _bar_extcomplete "$ext_name" "$cur"
+                if [[ "$completer" == "_bar_complete_ext "* ]]; then
+                    local ext_name="${completer#_bar_complete_ext }"
+                    _bar_complete_ext "$ext_name" "$cur"
                 else
                     $completer "$cur"
                 fi
@@ -597,10 +597,10 @@ _bar_complete_params()
     fi
     
     # Call the completer
-    if [[ "$completer" == "_bar_extcomplete "* ]]; then
+    if [[ "$completer" == "_bar_complete_ext "* ]]; then
         # External completer
-        local ext_name="${completer#_bar_extcomplete }"
-        _bar_extcomplete "$ext_name" "$cur"
+        local ext_name="${completer#_bar_complete_ext }"
+        _bar_complete_ext "$ext_name" "$cur"
     else
         # Internal completer
         $completer "$cur"
@@ -608,7 +608,7 @@ _bar_complete_params()
 }
 
 # Parse a file for documented rules and functions
-_bar_parse_file()
+_bar_complete_parse_file()
 {
     local public_mode=false
     
@@ -652,7 +652,7 @@ _bar_parse_file()
                 local module="${BASH_REMATCH[1]}"
                 local proto="${BASH_REMATCH[2]}"
                 # Register in completion registry
-                _bar_completion_registry["${module}@${proto}"]="_bar_extcomplete $func"
+                _bar_complete_protoregistry["${module}@${proto}"]="_bar_complete_ext $func"
                 # Store in module completers list
                 _bar_completion_module_completers+=("${module}:${func}")
             fi
@@ -675,7 +675,7 @@ _bar_parse_file()
                 local module="${BASH_REMATCH[1]}"
                 local proto="${BASH_REMATCH[2]}"
                 # Register in completion registry
-                _bar_completion_registry["${module}@${proto}"]="_bar_extcomplete $func"
+                _bar_complete_protoregistry["${module}@${proto}"]="_bar_complete_ext $func"
                 # Store in module completers list
                 _bar_completion_module_completers+=("${module}:${func}")
             fi
@@ -765,7 +765,7 @@ _bar_scan_files()
     for barf in "${default_barfs[@]}"; do
         if [[ -f "$barf" && -r "$barf" ]]; then
             _bar_completion_rulefiles+=("$barf")
-            _bar_parse_file --public "$barf"
+            _bar_complete_parse_file --public "$barf"
             break
         fi
     done
@@ -782,7 +782,7 @@ _bar_scan_files()
         if [[ -d "$bar_d" ]]; then
             for module in "$bar_d"/*; do
                 [[ -f "$module" && -r "$module" ]] || continue
-                _bar_parse_file "$module"
+                _bar_complete_parse_file "$module"
             done
             break
         fi
@@ -869,7 +869,7 @@ _bar_complete()
     fi
     
     # Initialize completion registry if not done yet
-    if [[ ${#_bar_completion_registry[@]} -eq 0 ]]; then
+    if [[ ${#_bar_complete_protoregistry[@]} -eq 0 ]]; then
         _bar_complete_dbg "Initializing completion registry..."
         _bar_init_completion_registry
     fi
@@ -917,8 +917,8 @@ _bar_complete()
         fi
         
         # Check if this matches a literal (check in registry if it has _bar_complete_comp_literal)
-        if [[ -v _bar_completion_registry["$proto_name"] ]]; then
-            local completer="${_bar_completion_registry[$proto_name]}"
+        if [[ -v _bar_complete_protoregistry["$proto_name"] ]]; then
+            local completer="${_bar_complete_protoregistry[$proto_name]}"
             if [[ "$completer" == "_bar_complete_comp_literal "* ]]; then
                 # This is a literal prototype - check for exact match
                 local literal="${completer#_bar_complete_comp_literal }"
@@ -986,7 +986,7 @@ _bar_complete()
                     matched=true
                     proto_idx=$((proto_idx + 1))
                     # Action: parse this specific rulefile to discover its rules (with --public)
-                    _bar_parse_file --public "$word"
+                    _bar_complete_parse_file --public "$word"
                 fi
             fi
         fi
@@ -1049,11 +1049,11 @@ _bar_complete()
             _bar_complete_dbg "  Found completer for '$proto_name': $completer"
             
             # Call the completer based on its type
-            if [[ "$completer" == "_bar_extcomplete "* ]]; then
-                local ext_name="${completer#_bar_extcomplete }"
+            if [[ "$completer" == "_bar_complete_ext "* ]]; then
+                local ext_name="${completer#_bar_complete_ext }"
                 while IFS= read -r comp; do
                     all_completions+=("$comp")
-                done < <(_bar_extcomplete "$ext_name" "$cur")
+                done < <(_bar_complete_ext "$ext_name" "$cur")
             elif [[ "$completer" == "_bar_complete_comp_literal "* ]]; then
                 # Literal completer - extract the literal and complete it
                 local literal="${completer#_bar_complete_comp_literal }"

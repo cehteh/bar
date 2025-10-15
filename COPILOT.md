@@ -84,6 +84,39 @@ This file contains development guidelines for GitHub Copilot when working on the
 
 ### Design
 
+The completion system works through multiple layers:
+
+1. **Registry System**: The `_bar_complete_protoregistry` is an associative array that maps
+   prototype names (like "file", "rule", "command") to their completer functions. Completers
+   are functions that generate completion candidates.
+
+2. **Prototype Syntax**: Documentation uses a formal parameter syntax:
+   - `<param>` for mandatory parameters
+   - `[param]` for optional parameters
+   - `param..` for repeating parameters (one or more)
+   - `<a|b>` for alternatives
+
+3. **Module-Specific Completers**: Modules can define specialized completers following the
+   pattern `<module>_<prototype>_complete`. These are automatically discovered when parsing
+   module files and registered as `module@prototype` in the registry.
+
+4. **Completion Flow**:
+   - Parse command line to determine current completion position
+   - Match previous words against parameter prototypes
+   - Determine which prototype we're completing
+   - Look up completer in registry (try `proto@module` first, then `proto`)
+   - Call completer with current prefix and any predicate filters
+   - Return filtered, sorted results
+
+5. **Predicate Filters**: Completers can be constrained by predicates (like "existing",
+   "nonexisting", "local", "rulefile") that filter the completion results.
+
+6. **Caching**: External completers (those that call `bar --bare`) cache their results to
+   avoid repeated expensive calls during the same completion session.
+
+7. **Module Tracking**: When completing parameters for rules/functions, the system tracks
+   which module they originated from to enable module-specific prototype resolution.
+
 
 ### Module-Specific Completers
 - Pattern: `<module>_<prototype>_complete` in `Bar.d/` modules

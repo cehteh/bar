@@ -67,9 +67,9 @@ test_integration() {
 
     # Test 6: Check cargo module completer detection
     echo "Test 6: Checking module-specific completers..."
-    if [[ -v _bar_completion_registry["cargo@toolchain"] ]]; then
+    if [[ -v _bar_complete_protoregistry["cargo@toolchain"] ]]; then
         echo "✓ cargo@toolchain completer registered"
-        echo "  Completer: ${_bar_completion_registry[cargo@toolchain]}"
+        echo "  Completer: ${_bar_complete_protoregistry[cargo@toolchain]}"
     else
         echo "ℹ cargo@toolchain completer not found (cargo module not loaded)"
     fi
