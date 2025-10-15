@@ -334,8 +334,11 @@ _bar_init_completion_registry()
     # Rulefile completer - uses file completer with rulefile predicate
     _bar_completion_registry[rulefile]="_bar_complete_comp_file rulefile"
     
-    # Literal completers will be registered dynamically as needed
-    # (e.g., --bare will use _bar_complete_comp_literal)
+    # Literal completers - register specific literals
+    _bar_completion_registry[--bare]="_bar_complete_comp_literal --bare"
+    
+    # Arguments completer - default file completion
+    _bar_completion_registry[arguments]="_bar_complete_comp_file"
     
     # Add module-specific completers (populated during file parsing)
 }
@@ -786,8 +789,8 @@ _bar_complete()
     # Build initial protos array based on bar invocation syntax:
     # bar [rulefile] [--bare] [rule [arguments..]]
     # All are optional, so completion collects from all
-    # Note: prototypes are in <name> format, literals are plain text
-    protos=("[<rulefile>]" "[--bare]" "[<rule>]")
+    # Note: Everything in [] or <> is a prototype
+    protos=("[rulefile]" "[--bare]" "[rule [arguments..]]")
     
     # Process previous words to determine current position
     local word_idx=1
@@ -807,71 +810,91 @@ _bar_complete()
         local matched=false
         local proto="${protos[$proto_idx]}"
         
-        # Extract prototype name from proto spec (remove brackets, etc.)
+        # Extract prototype name from proto spec (remove brackets)
         local proto_name="$proto"
         proto_name="${proto_name#[}"
         proto_name="${proto_name%]}"
         
-        # Extract from <> if present
-        if [[ "$proto_name" =~ \<([^>]+)\> ]]; then
-            proto_name="${BASH_REMATCH[1]}"
-        fi
-        
         _bar_complete_dbg "  Trying to match '$word' against proto '$proto_name'"
         
-        # Check if this matches a literal (plain text without <>)
-        if [[ "$proto" != *'<'* && "$proto_name" == "$word" ]]; then
-            # Exact match for literal
-            matched=true
-            _bar_complete_dbg "  Matched literal: $proto_name"
-            proto_idx=$((proto_idx + 1))
-        elif [[ "$proto_name" == "rule"* ]] || [[ "$proto_name" == "rule" ]]; then
-            # This proto expects a rule - check if word is a known rule/function
-            local is_rule=false
-            for rule in "${_bar_completion_rules[@]}"; do
-                if [[ "$rule" == "$word" ]]; then
-                    is_rule=true
-                    break
+        # Check for nested prototypes like "[rule [arguments..]]"
+        # For now, extract just the first part
+        if [[ "$proto_name" =~ ^([a-zA-Z_-]+)[[:space:]] ]]; then
+            local first_part="${BASH_REMATCH[1]}"
+            _bar_complete_dbg "  Nested proto detected, first part: $first_part"
+        fi
+        
+        # Check if this matches a literal (check in registry if it has _bar_complete_comp_literal)
+        if [[ -v _bar_completion_registry["$proto_name"] ]]; then
+            local completer="${_bar_completion_registry[$proto_name]}"
+            if [[ "$completer" == "_bar_complete_comp_literal "* ]]; then
+                # This is a literal prototype - check for exact match
+                local literal="${completer#_bar_complete_comp_literal }"
+                if [[ "$literal" == "$word" ]]; then
+                    matched=true
+                    _bar_complete_dbg "  Matched literal prototype: $proto_name"
+                    proto_idx=$((proto_idx + 1))
                 fi
-            done
-            if [[ $is_rule == false ]]; then
-                for func in "${_bar_completion_functions[@]}"; do
-                    if [[ "$func" == "$word" ]]; then
+            fi
+        fi
+        
+        # If not matched yet, check for special prototype types
+        if [[ $matched == false ]]; then
+            if [[ "$proto_name" =~ ^rule[[:space:]] ]] || [[ "$proto_name" == "rule" ]]; then
+                # This proto expects a rule - check if word is a known rule/function
+                local is_rule=false
+                for rule in "${_bar_completion_rules[@]}"; do
+                    if [[ "$rule" == "$word" ]]; then
                         is_rule=true
                         break
                     fi
                 done
-            fi
-            
-            if [[ $is_rule == true ]]; then
-                _bar_complete_dbg "  Matched rule/function: $word"
-                
-                # Get parameter spec for this rule/function
-                local param_spec=""
-                if [[ -v _bar_completion_func_params["$word"] ]]; then
-                    param_spec="${_bar_completion_func_params[$word]}"
-                elif [[ -v _bar_completion_rule_params["$word"] ]]; then
-                    param_spec="${_bar_completion_rule_params[$word]}"
+                if [[ $is_rule == false ]]; then
+                    for func in "${_bar_completion_functions[@]}"; do
+                        if [[ "$func" == "$word" ]]; then
+                            is_rule=true
+                            break
+                        fi
+                    done
                 fi
                 
-                if [[ -n "$param_spec" ]]; then
-                    # Replace remaining protos with the rule's parameter spec
-                    mapfile -t protos < <(_bar_parse_protos "$param_spec")
-                    proto_idx=0
-                else
-                    # No param spec, clear protos (any arguments accepted)
-                    protos=()
-                    proto_idx=0
+                if [[ $is_rule == true ]]; then
+                    _bar_complete_dbg "  Matched rule/function: $word"
+                    
+                    # Get parameter spec for this rule/function
+                    local param_spec=""
+                    if [[ -v _bar_completion_func_params["$word"] ]]; then
+                        param_spec="${_bar_completion_func_params[$word]}"
+                    elif [[ -v _bar_completion_rule_params["$word"] ]]; then
+                        param_spec="${_bar_completion_rule_params[$word]}"
+                    fi
+                    
+                    if [[ -n "$param_spec" ]]; then
+                        # Replace remaining protos with the rule's parameter spec
+                        mapfile -t protos < <(_bar_parse_protos "$param_spec")
+                        proto_idx=0
+                    else
+                        # No param spec - check if current proto has nested [arguments..]
+                        if [[ "$proto_name" =~ \[arguments\.\.?\] ]]; then
+                            # Promote to [arguments..]
+                            protos=("[arguments..]")
+                            proto_idx=0
+                        else
+                            # Clear protos (any arguments accepted)
+                            protos=()
+                            proto_idx=0
+                        fi
+                    fi
+                    matched=true
                 fi
-                matched=true
-            fi
-        elif [[ "$proto_name" == "rulefile" ]]; then
-            # Check if this word is a file
-            if [[ -f "$word" ]]; then
-                _bar_complete_dbg "  Matched rulefile: $word"
-                matched=true
-                proto_idx=$((proto_idx + 1))
-                # Action: parse the rulefile (already done in _bar_scan_files)
+            elif [[ "$proto_name" == "rulefile" ]]; then
+                # Check if this word is a file
+                if [[ -f "$word" ]]; then
+                    _bar_complete_dbg "  Matched rulefile: $word"
+                    matched=true
+                    proto_idx=$((proto_idx + 1))
+                    # Action: parse the rulefile (already done in _bar_scan_files)
+                fi
             fi
         fi
         
@@ -914,67 +937,47 @@ _bar_complete()
         local proto_name="$proto"
         proto_name="${proto_name#[}"
         proto_name="${proto_name%]}"
-        proto_name="${proto_name%..\$}"
         
-        # Handle literals (exact string matches)
-        if [[ "$proto_name" != *'<'* && "$proto_name" != *'['* ]]; then
-            # This is a literal - use the literal completer
-            if [[ "$proto_name" == "$cur"* ]]; then
-                all_completions+=("$proto_name")
+        # Handle nested prototypes - extract first part for now
+        if [[ "$proto_name" =~ ^([a-zA-Z_-]+)[[:space:]] ]]; then
+            proto_name="${BASH_REMATCH[1]}"
+            _bar_complete_dbg "  Nested proto, using first part: $proto_name"
+        fi
+        
+        # Remove trailing .. if present
+        proto_name="${proto_name%..\$}"
+        proto_name="${proto_name%..}"
+        
+        # Get completer for this prototype from registry
+        local completer
+        completer=$(_bar_get_completer "" "$proto_name")
+        
+        if [[ -n "$completer" ]]; then
+            _bar_complete_dbg "  Found completer for '$proto_name': $completer"
+            
+            # Call the completer based on its type
+            if [[ "$completer" == "_bar_extcomplete "* ]]; then
+                local ext_name="${completer#_bar_extcomplete }"
+                while IFS= read -r comp; do
+                    all_completions+=("$comp")
+                done < <(_bar_extcomplete "$ext_name" "$cur")
+            elif [[ "$completer" == "_bar_complete_comp_literal "* ]]; then
+                # Literal completer - extract the literal and complete it
+                local literal="${completer#_bar_complete_comp_literal }"
+                if [[ "$literal" == "$cur"* ]]; then
+                    all_completions+=("$literal")
+                fi
+            else
+                while IFS= read -r comp; do
+                    all_completions+=("$comp")
+                done < <($completer "$cur")
             fi
         else
-            # Extract prototype from <prototype> if needed
-            if [[ "$proto_name" =~ \<([^>]+)\> ]]; then
-                proto_name="${BASH_REMATCH[1]}"
-            fi
-            
-            # Handle alternatives (a|b|c)
-            if [[ "$proto_name" == *'|'* ]]; then
-                IFS='|' read -ra alternatives <<< "$proto_name"
-                local alt
-                for alt in "${alternatives[@]}"; do
-                    # Get completer for this alternative
-                    local completer
-                    completer=$(_bar_get_completer "" "$alt")
-                    
-                    if [[ -n "$completer" ]]; then
-                        # Call the completer and collect results
-                        if [[ "$completer" == "_bar_extcomplete "* ]]; then
-                            local ext_name="${completer#_bar_extcomplete }"
-                            while IFS= read -r comp; do
-                                all_completions+=("$comp")
-                            done < <(_bar_extcomplete "$ext_name" "$cur")
-                        else
-                            while IFS= read -r comp; do
-                                all_completions+=("$comp")
-                            done < <($completer "$cur")
-                        fi
-                    fi
-                done
-            else
-                # Single prototype - get its completer
-                local completer
-                completer=$(_bar_get_completer "" "$proto_name")
-                
-                if [[ -n "$completer" ]]; then
-                    # Call the completer and collect results
-                    if [[ "$completer" == "_bar_extcomplete "* ]]; then
-                        local ext_name="${completer#_bar_extcomplete }"
-                        while IFS= read -r comp; do
-                            all_completions+=("$comp")
-                        done < <(_bar_extcomplete "$ext_name" "$cur")
-                    else
-                        while IFS= read -r comp; do
-                            all_completions+=("$comp")
-                        done < <($completer "$cur")
-                    fi
-                else
-                    # No completer found, use file completion as fallback
-                    while IFS= read -r comp; do
-                        all_completions+=("$comp")
-                    done < <(_bar_complete_comp_file "$cur")
-                fi
-            fi
+            # No completer found, use file completion as fallback
+            _bar_complete_dbg "  No completer found for '$proto_name', using file completion"
+            while IFS= read -r comp; do
+                all_completions+=("$comp")
+            done < <(_bar_complete_comp_file "$cur")
         fi
         
         # If this proto is not optional, stop collecting
