@@ -433,14 +433,27 @@ WRITING DOCUMENTATION
       function name ## [--opt] <required> [optional..] - Short description
 
     The parameter list uses a formal syntax:
-    - <param>   - Mandatory parameter
-    - [param]   - Optional parameter
-    - param..   - One or more occurrences (suffix ..)
-    - [param..] - Zero or more occurrences
-    - --flag    - Flag option
-    - -f        - Short flag option
-    - foo|bar   - Alternatives (foo or bar)
-    - --        - Standalone delimiter for literal parameters
+    - <param>    - Mandatory parameter (prototype)
+    - [param]    - Optional parameter (prototype)
+    - <param..>  - One or more occurrences (suffix .. after closing >)
+    - <param>..  - One or more occurrences (suffix .. after closing >)
+    - [param..]  - Zero or more occurrences (suffix .. after closing ])
+    - [param]..  - Zero or more occurrences (suffix .. after closing ])
+    - <> and []  - Can be nested
+    - word       - Anything not in <> or [] is a literal (like 'as', 'into', ':')
+    - --flag     - Literal flag (can be in <--flag> for prototype completion)
+    - -f         - Literal short flag
+    - a|b        - Alternatives where a and b can be any of the above
+                   (a|b|c|d etc. any number allowed)
+                   Note: <a..|b> is at least one 'a' or a single 'b'
+                         <a|b>.. is at least one of 'a' or 'b'
+    - param      - Parameter names serve as prototypes for completion
+
+    Examples:
+    - function rename ## <this> as|into <that> - rename this as/into that
+      Requires literal 'as' or 'into' at the 2nd position.
+    - function process ## <input>: <output> - process input to output
+      The colon ':' after <input> is a literal character.
 
     Parameter identifiers start with an alphabetic character followed by [[:alnum:]-_].
     These serve as prototypes for completion and are refined in following documentation.
