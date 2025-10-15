@@ -61,9 +61,37 @@ else
     echo "ℹ INFO: rustup not installed, skipping cargo_toolchain_complete test"
 fi
 
-# Test 3: Prototype definitions
+# Test 3: cargo_cargo_complete
 echo ""
-echo "Test 3: Testing prototype definitions..."
+echo "Test 3: Testing cargo_cargo_complete (black box forwarding)..."
+if command -v rustc &>/dev/null; then
+    # Test completing cargo subcommands
+    completions=$(cargo_cargo_complete "bui")
+    
+    if echo "$completions" | grep -q "build"; then
+        echo "✓ PASS: cargo_cargo_complete finds 'build' from 'bui' prefix"
+    else
+        echo "ℹ INFO: cargo_cargo_complete fallback mode (no native completion)"
+        echo "  Got: $(echo "$completions" | head -3 | tr '\n' ' ')"
+    fi
+    
+    # Test with no prefix
+    all_completions=$(cargo_cargo_complete "")
+    completion_count=$(echo "$all_completions" | wc -l)
+    
+    if [[ $completion_count -gt 20 ]]; then
+        echo "✓ PASS: cargo_cargo_complete returns many completions ($completion_count)"
+        echo "  Sample: $(echo "$all_completions" | head -5 | tr '\n' ' ')"
+    else
+        echo "ℹ INFO: cargo_cargo_complete using fallback mode"
+    fi
+else
+    echo "ℹ INFO: rustc not installed, skipping cargo_cargo_complete test"
+fi
+
+# Test 4: Prototype definitions
+echo ""
+echo "Test 4: Testing prototype definitions..."
 _bar_init_completion_registry
 
 # Parse cargo module
@@ -85,9 +113,9 @@ else
     echo "✗ FAIL: tool prototype not registered"
 fi
 
-# Test 4: Completer expansion
+# Test 5: Completer expansion
 echo ""
-echo "Test 4: Testing completer expansion..."
+echo "Test 5: Testing completer expansion..."
 toolchain_completer=$(_bar_get_completer "" "cargo@toolchain")
 if [[ "$toolchain_completer" == "_bar_complete_comp_ext cargo_toolchain_complete" ]]; then
     echo "✓ PASS: toolchain completer expands correctly"

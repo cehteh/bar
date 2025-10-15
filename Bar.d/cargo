@@ -70,15 +70,71 @@ function cargo_tool_complete ## List available cargo tools/subcommands for compl
     cargo --list 2>/dev/null | awk '/^    [a-z]/{print $1}' | grep -v '^[[:space:]]*$'
 }
 
-function cargo_cargo_complete ## Generic cargo completion that forwards to cargo
+function cargo_cargo_complete ## Generic cargo completion that forwards to cargo's bash completion
 {
-    ## This function provides intelligent completion for cargo commands.
-    ## Usage: Called by completion system with cargo subcommand and current prefix
-    ## It uses cargo's own completion if available, or falls back to basic completion.
+    ## This function provides intelligent completion for cargo commands by invoking
+    ## cargo's native bash completion function as a black box.
+    ## Usage: Called by completion system with current word to complete
     
-    # For now, provide basic file completion
-    # TODO: Investigate if cargo has native completion support we can leverage
-    compgen -f -- "${1:-}"
+    # Check if we can use cargo's completion
+    if ! command -v rustc >/dev/null 2>&1; then
+        # Fallback to file completion
+        compgen -f -- "${1:-}"
+        return
+    fi
+    
+    local cargo_completion
+    cargo_completion="$(rustc --print sysroot)/etc/bash_completion.d/cargo"
+    if [[ ! -f "$cargo_completion" ]]; then
+        # Fallback to file completion
+        compgen -f -- "${1:-}"
+        return
+    fi
+    
+    # Source bash-completion helpers if available
+    if [[ ! $(type -t _get_comp_words_by_ref) == function ]]; then
+        if [[ -f /usr/share/bash-completion/bash_completion ]]; then
+            source /usr/share/bash-completion/bash_completion 2>/dev/null || true
+        elif [[ -f /etc/bash_completion ]]; then
+            source /etc/bash_completion 2>/dev/null || true
+        fi
+    fi
+    
+    # Source cargo completion if not already loaded
+    if [[ ! $(type -t _cargo) == function ]]; then
+        source "$cargo_completion" 2>/dev/null || {
+            compgen -f -- "${1:-}"
+            return
+        }
+    fi
+    
+    # Set up completion environment
+    # We need to simulate being at the right position in the command line
+    local cur="${1:-}"
+    
+    # Build COMP_WORDS from CARGO_TOOLCHAIN and current context
+    local -a comp_words=(cargo)
+    [[ -n "${CARGO_TOOLCHAIN}" ]] && comp_words+=("${CARGO_TOOLCHAIN}")
+    
+    # Add any additional context from the calling environment
+    # For now, just add the current word
+    comp_words+=("$cur")
+    
+    COMP_WORDS=("${comp_words[@]}")
+    COMP_CWORD=$((${#COMP_WORDS[@]} - 1))
+    COMP_LINE="${COMP_WORDS[*]}"
+    COMP_POINT=${#COMP_LINE}
+    COMPREPLY=()
+    
+    # Call cargo's completion function
+    _cargo 2>/dev/null || true
+    
+    # Filter results by current prefix
+    if [[ -n "$cur" ]]; then
+        printf '%s\n' "${COMPREPLY[@]}" | grep "^${cur}"
+    else
+        printf '%s\n' "${COMPREPLY[@]}"
+    fi
 }
 
 
