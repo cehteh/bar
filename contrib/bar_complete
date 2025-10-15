@@ -574,6 +574,21 @@ _bar_complete_params()
 # Parse a file for documented rules and functions
 _bar_parse_file()
 {
+    local public_mode=false
+    
+    # Parse options
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --public)
+                public_mode=true
+                shift
+                ;;
+            *)
+                break
+                ;;
+        esac
+    done
+    
     local file="$1"
 
     [[ ! -f "$file" || ! -r "$file" ]] && return
@@ -632,6 +647,21 @@ _bar_parse_file()
             in_doc_comment=false
             doc_params=""
             
+        # In public mode, also capture undocumented functions
+        elif [[ $public_mode == true && "$line" =~ ^[[:space:]]*function[[:space:]]+([A-Za-z_][A-Za-z0-9_]*) ]]; then
+            local func="${BASH_REMATCH[1]}"
+            # Only add if not already added (documented ones are already in)
+            local already_added=false
+            for existing in "${_bar_completion_functions[@]}"; do
+                if [[ "$existing" == "$func" ]]; then
+                    already_added=true
+                    break
+                fi
+            done
+            if [[ $already_added == false ]]; then
+                _bar_completion_functions+=("$func")
+            fi
+            
         # Check for documented rule: ## [params] - description followed by rule name:
         elif [[ "$line" =~ ^##[[:space:]]*(.*)$ ]]; then
             in_doc_comment=true
@@ -649,6 +679,24 @@ _bar_parse_file()
                 _bar_completion_rule_params[$rule]="$doc_params"
             fi
             
+            in_doc_comment=false
+            doc_params=""
+        elif [[ "$line" =~ ^[[:space:]]*rule[[:space:]]+(--[a-z_-]*[[:space:]]+)*([A-Za-z_-][A-Za-z0-9_-]*): ]]; then
+            # In public mode, also capture undocumented rules
+            if [[ $public_mode == true ]]; then
+                local rule="${BASH_REMATCH[2]}"
+                # Only add if not already added (documented ones are already in)
+                local already_added=false
+                for existing in "${_bar_completion_rules[@]}"; do
+                    if [[ "$existing" == "$rule" ]]; then
+                        already_added=true
+                        break
+                    fi
+                done
+                if [[ $already_added == false ]]; then
+                    _bar_completion_rules+=("$rule")
+                fi
+            fi
             in_doc_comment=false
             doc_params=""
         elif [[ "$line" =~ ^[[:space:]]*rule[[:space:]] ]]; then
@@ -681,7 +729,7 @@ _bar_scan_files()
     for barf in "${default_barfs[@]}"; do
         if [[ -f "$barf" && -r "$barf" ]]; then
             _bar_completion_rulefiles+=("$barf")
-            _bar_parse_file "$barf"
+            _bar_parse_file --public "$barf"
             break
         fi
     done
@@ -901,7 +949,8 @@ _bar_complete()
                     _bar_complete_dbg "  Matched rulefile: $word"
                     matched=true
                     proto_idx=$((proto_idx + 1))
-                    # Action: parse the rulefile (already done in _bar_scan_files)
+                    # Action: parse this specific rulefile to discover its rules (with --public)
+                    _bar_parse_file --public "$word"
                 fi
             fi
         fi
