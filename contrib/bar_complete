@@ -38,6 +38,14 @@ declare -gA _bar_completion_func_params=()
 # _bar_completion_rule_params: associative array "rulename" -> "param_list"
 declare -gA _bar_completion_rule_params=()
 
+# _bar_completion_func_module: associative array "funcname" -> "module"
+# Tracks which module a function came from for module-specific completers
+declare -gA _bar_completion_func_module=()
+
+# _bar_completion_rule_module: associative array "rulename" -> "module"  
+# Tracks which module a rule came from for module-specific completers
+declare -gA _bar_completion_rule_module=()
+
 # _bar_complete_protoregistry: associative array "prototype" -> "completer_function [predicates]"
 # Maps parameter prototypes to their completion functions
 # Examples: registry["file"]="file"
@@ -461,7 +469,7 @@ _bar_parse_protos()
 }
 
 # Get completer for a prototype
-# Looks up: func@proto, then proto
+# Looks up: module@proto (if module known), then func@proto, then proto
 # Returns expanded completer spec (with _bar_complete_comp_ or _bar_complete_ext prefix)
 _bar_get_completer()
 {
@@ -469,16 +477,38 @@ _bar_get_completer()
     local proto="$2"
     local spec=""
     
-    # Try hierarchical lookup: func@proto first
-    local key="${func_or_rule}@${proto}"
-    if [[ -v _bar_complete_protoregistry["$key"] ]]; then
-        spec="${_bar_complete_protoregistry[$key]}"
-    elif [[ -v _bar_complete_protoregistry["$proto"] ]]; then
-        # Try just the prototype
-        spec="${_bar_complete_protoregistry[$proto]}"
-    else
-        # No completer found - return nothing (no completions)
-        return 1
+    # Try to get module for this func/rule
+    local module=""
+    if [[ -v _bar_completion_func_module["$func_or_rule"] ]]; then
+        module="${_bar_completion_func_module[$func_or_rule]}"
+    elif [[ -v _bar_completion_rule_module["$func_or_rule"] ]]; then
+        module="${_bar_completion_rule_module[$func_or_rule]}"
+    fi
+    
+    # Try module@proto lookup first if we know the module
+    if [[ -n "$module" ]]; then
+        local key="${module}@${proto}"
+        if [[ -v _bar_complete_protoregistry["$key"] ]]; then
+            spec="${_bar_complete_protoregistry[$key]}"
+        fi
+    fi
+    
+    # If not found, try hierarchical lookup: func@proto
+    if [[ -z "$spec" && -n "$func_or_rule" ]]; then
+        local key="${func_or_rule}@${proto}"
+        if [[ -v _bar_complete_protoregistry["$key"] ]]; then
+            spec="${_bar_complete_protoregistry[$key]}"
+        fi
+    fi
+    
+    # If still not found, try just the prototype
+    if [[ -z "$spec" ]]; then
+        if [[ -v _bar_complete_protoregistry["$proto"] ]]; then
+            spec="${_bar_complete_protoregistry[$proto]}"
+        else
+            # No completer found - return nothing (no completions)
+            return 1
+        fi
     fi
     
     # Expand the spec: if it starts with "ext " keep it as "_bar_complete_ext "
@@ -631,6 +661,7 @@ _bar_complete_params()
 _bar_complete_parse_file()
 {
     local public_mode=false
+    local module=""
     
     # Parse options
     while [[ $# -gt 0 ]]; do
@@ -638,6 +669,10 @@ _bar_complete_parse_file()
             --public)
                 public_mode=true
                 shift
+                ;;
+            --module)
+                module="$2"
+                shift 2
                 ;;
             *)
                 break
@@ -648,6 +683,14 @@ _bar_complete_parse_file()
     local file="$1"
 
     [[ ! -f "$file" || ! -r "$file" ]] && return
+    
+    # If module not specified, extract from filename
+    if [[ -z "$module" ]]; then
+        # For files in Bar.d/, use the basename as module name
+        if [[ "$file" == *"Bar.d/"* || "$file" == *"bar.d/"* ]]; then
+            module=$(basename "$file")
+        fi
+    fi
 
     local in_doc_comment=false
     local doc_params=""
@@ -660,6 +703,11 @@ _bar_complete_parse_file()
             local doc="${BASH_REMATCH[2]}"
             _bar_completion_functions+=("$func")
             
+            # Track module for this function
+            if [[ -n "$module" ]]; then
+                _bar_completion_func_module[$func]="$module"
+            fi
+            
             # Extract parameters from documentation
             # Format: [params] - description OR just description
             if [[ "$doc" =~ ^(.+)[[:space:]]+-[[:space:]] ]]; then
@@ -669,12 +717,12 @@ _bar_complete_parse_file()
             
             # Check if this is a module-specific completer (pattern: <module>_<proto>_complete)
             if [[ "$func" =~ ^([a-z][a-z0-9]*)_([a-z][a-z0-9]*)_complete$ ]]; then
-                local module="${BASH_REMATCH[1]}"
+                local mod="${BASH_REMATCH[1]}"
                 local proto="${BASH_REMATCH[2]}"
                 # Register in completion registry
-                _bar_complete_protoregistry["${module}@${proto}"]="ext $func"
+                _bar_complete_protoregistry["${mod}@${proto}"]="ext $func"
                 # Store in module completers list
-                _bar_completion_module_completers+=("${module}:${func}")
+                _bar_completion_module_completers+=("${mod}:${func}")
             fi
             
             in_doc_comment=false
@@ -685,6 +733,11 @@ _bar_complete_parse_file()
             local func="${BASH_REMATCH[1]}"
             _bar_completion_functions+=("$func")
             
+            # Track module for this function
+            if [[ -n "$module" ]]; then
+                _bar_completion_func_module[$func]="$module"
+            fi
+            
             # Store parameters if we captured them
             if [[ -n "$doc_params" ]]; then
                 _bar_completion_func_params[$func]="$doc_params"
@@ -692,12 +745,12 @@ _bar_complete_parse_file()
             
             # Check if this is a module-specific completer (pattern: <module>_<proto>_complete)
             if [[ "$func" =~ ^([a-z][a-z0-9]*)_([a-z][a-z0-9]*)_complete$ ]]; then
-                local module="${BASH_REMATCH[1]}"
+                local mod="${BASH_REMATCH[1]}"
                 local proto="${BASH_REMATCH[2]}"
                 # Register in completion registry
-                _bar_complete_protoregistry["${module}@${proto}"]="ext $func"
+                _bar_complete_protoregistry["${mod}@${proto}"]="ext $func"
                 # Store in module completers list
-                _bar_completion_module_completers+=("${module}:${func}")
+                _bar_completion_module_completers+=("${mod}:${func}")
             fi
             
             in_doc_comment=false
@@ -730,6 +783,11 @@ _bar_complete_parse_file()
             local rule="${BASH_REMATCH[2]}"
             _bar_completion_rules+=("$rule")
             
+            # Track module for this rule
+            if [[ -n "$module" ]]; then
+                _bar_completion_rule_module[$rule]="$module"
+            fi
+            
             # Store parameters if we captured them
             if [[ -n "$doc_params" ]]; then
                 _bar_completion_rule_params[$rule]="$doc_params"
@@ -751,6 +809,10 @@ _bar_complete_parse_file()
                 done
                 if [[ $already_added == false ]]; then
                     _bar_completion_rules+=("$rule")
+                    # Track module for undocumented rules too
+                    if [[ -n "$module" ]]; then
+                        _bar_completion_rule_module[$rule]="$module"
+                    fi
                 fi
             fi
             in_doc_comment=false
