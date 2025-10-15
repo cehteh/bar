@@ -503,6 +503,24 @@ WRITING DOCUMENTATION
 
     Module-specific prototypes can be defined (e.g., <toolchain> in cargo module).
     See contrib/bar_complete for completion implementation details.
+    
+  Defining Custom Completion Prototypes:
+    Modules can define custom prototypes for parameter completion using single-hash comments:
+    
+      # prototype: "mytype" = "file"
+      # prototype: "myfile" = "file existing local"
+      # prototype: "mycommand" = "command"
+    
+    These definitions register a prototype with a completer. The format is:
+      # prototype: "prototype_name" = "completer_spec"
+    
+    Where completer_spec is either:
+    - A built-in completer name (file, directory, path, rule, command, etc.)
+    - A completer with predicates (e.g., "file existing local")
+    - "ext function_name" for external/custom completers
+    
+    These are registered as "module@prototype" in the completion registry, allowing
+    module-specific completion behavior while maintaining fallback to global prototypes.
 
 
 MODULES

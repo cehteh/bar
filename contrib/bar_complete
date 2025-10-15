@@ -697,8 +697,21 @@ _bar_complete_parse_file()
     local last_doc_line=""
     
     while IFS= read -r line; do
+        # Check for prototype definition: # prototype: "name" = "completer_spec"
+        if [[ "$line" =~ ^[[:space:]]*#[[:space:]]*prototype:[[:space:]]*\"([^\"]+)\"[[:space:]]*=[[:space:]]*\"([^\"]+)\"[[:space:]]*$ ]]; then
+            local proto_name="${BASH_REMATCH[1]}"
+            local completer_spec="${BASH_REMATCH[2]}"
+            
+            # Register the prototype with module prefix if module is known
+            if [[ -n "$module" ]]; then
+                _bar_complete_protoregistry["${module}@${proto_name}"]="$completer_spec"
+            else
+                # No module context, register as global
+                _bar_complete_protoregistry["$proto_name"]="$completer_spec"
+            fi
+            
         # Check for documented function: function name ## [params] - description
-        if [[ "$line" =~ ^[[:space:]]*function[[:space:]]+([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*##[[:space:]]*(.*)$ ]]; then
+        elif [[ "$line" =~ ^[[:space:]]*function[[:space:]]+([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*##[[:space:]]*(.*)$ ]]; then
             local func="${BASH_REMATCH[1]}"
             local doc="${BASH_REMATCH[2]}"
             _bar_completion_functions+=("$func")
