@@ -306,35 +306,77 @@ _bar_init_completion_registry()
     # Add module-specific completers (populated during file parsing)
 }
 
-# Parse parameter spec and extract individual parameters
-# Input: "[--opt] <file> [output..]"
-# Output: array of parameters (without decorators)
-_bar_parse_params()
+# Parse parameter spec into protos array
+# Input: param_spec like "[--opt] <file> [output]"
+# Output: protos array with parsed prototypes
+_bar_parse_protos()
 {
     local param_spec="$1"
-    local -a params=()
+    local -a protos=()
     
-    # Simple tokenization - split on spaces, handling brackets and angle brackets
-    # This is a simplified parser; a full implementation would need better parsing
-    local token
-    for token in $param_spec; do
-        # Remove decorators and extract identifier
-        local clean_token="$token"
-        # Remove leading/trailing brackets, angles, dots
-        clean_token="${clean_token#[}"
-        clean_token="${clean_token#<}"
-        clean_token="${clean_token%]}"
-        clean_token="${clean_token%>}"
-        clean_token="${clean_token%..}"
+    # Tokenize the parameter spec
+    # This is a simplified parser for the formal parameter syntax
+    local in_bracket=false
+    local in_angle=false
+    local current_token=""
+    local is_optional=false
+    
+    local i
+    for ((i=0; i<${#param_spec}; i++)); do
+        local char="${param_spec:$i:1}"
         
-        # Skip empty tokens and special markers
-        [[ -z "$clean_token" || "$clean_token" == "-" || "$clean_token" == "--" ]] && continue
-        
-        # Store the token
-        params+=("$clean_token")
+        case "$char" in
+            '[')
+                in_bracket=true
+                is_optional=true
+                ;;
+            '<')
+                in_angle=true
+                current_token=""
+                ;;
+            ']'|'>')
+                if [[ -n "$current_token" ]]; then
+                    # Check for .. suffix
+                    local repeating=false
+                    if [[ "${param_spec:$((i+1)):2}" == ".." ]]; then
+                        repeating=true
+                        i=$((i+2))
+                    fi
+                    
+                    # Store the prototype
+                    local proto_entry="$current_token"
+                    [[ $is_optional == true ]] && proto_entry="[$proto_entry]"
+                    [[ $repeating == true ]] && proto_entry="${proto_entry}.."
+                    protos+=("$proto_entry")
+                    current_token=""
+                fi
+                in_bracket=false
+                in_angle=false
+                is_optional=false
+                ;;
+            ' '|$'\t')
+                # Space separates tokens
+                if [[ -n "$current_token" && $in_bracket == false && $in_angle == false ]]; then
+                    # Literal word
+                    protos+=("$current_token")
+                    current_token=""
+                fi
+                ;;
+            *)
+                current_token="${current_token}${char}"
+                ;;
+        esac
     done
     
-    printf '%s\n' "${params[@]}"
+    # Handle any remaining token
+    if [[ -n "$current_token" ]]; then
+        protos+=("$current_token")
+    fi
+    
+    # Add empty terminator
+    protos+=("")
+    
+    printf '%s\n' "${protos[@]}"
 }
 
 # Get completer for a prototype
@@ -361,7 +403,7 @@ _bar_get_completer()
     return 1
 }
 
-# Complete parameters for a specific function or rule
+# Complete parameters for a specific function or rule using dynamic protos
 _bar_complete_params()
 {
     local func_or_rule="$1"
@@ -384,31 +426,104 @@ _bar_complete_params()
         return 0
     fi
     
-    # Parse the parameter spec to get list of parameter prototypes
-    local -a params
-    mapfile -t params < <(_bar_parse_params "$param_spec")
+    # Parse the parameter spec to get protos array
+    local -a protos
+    mapfile -t protos < <(_bar_parse_protos "$param_spec")
     
-    # Simple completion: offer completions for each parameter type
-    # A more sophisticated implementation would track which parameters have been used
-    local proto
-    for proto in "${params[@]}"; do
-        # Get completer for this prototype
-        local completer
-        completer=$(_bar_get_completer "$func_or_rule" "$proto")
+    # Determine which proto index we're completing
+    # We need to match prev_words against protos to find current position
+    local proto_idx=0
+    local word_idx=0
+    
+    # Simple matching: advance through protos as we match prev_words
+    # This is a simplified version - a full implementation would handle
+    # alternatives, optionals, and repeating parameters more thoroughly
+    while [[ $word_idx -lt ${#prev_words[@]} ]]; do
+        local proto="${protos[$proto_idx]}"
+        [[ -z "$proto" ]] && break  # Reached end of protos
         
-        # Skip if no completer found
-        [[ -z "$completer" ]] && continue
+        # Check if this proto is optional (starts with [)
+        local is_optional=false
+        [[ "$proto" =~ ^\[ ]] && is_optional=true
         
-        # Call the completer
-        if [[ "$completer" == "_bar_extcomplete "* ]]; then
-            # External completer
-            local ext_name="${completer#_bar_extcomplete }"
-            _bar_extcomplete "$ext_name" "$cur"
-        else
-            # Internal completer
-            $completer "$cur"
+        # Check if this proto is repeating (ends with ..)
+        local is_repeating=false
+        [[ "$proto" =~ \.\.$ ]] && is_repeating=true
+        
+        # If not repeating, advance proto_idx
+        if [[ $is_repeating == false ]]; then
+            proto_idx=$((proto_idx + 1))
         fi
+        
+        word_idx=$((word_idx + 1))
     done
+    
+    # Now proto_idx points to where we should complete
+    local proto="${protos[$proto_idx]}"
+    [[ -z "$proto" ]] && proto="${protos[0]}"  # Fallback to first proto
+    
+    # Extract the prototype name (remove brackets, .., etc.)
+    local proto_name="$proto"
+    proto_name="${proto_name#[}"
+    proto_name="${proto_name%]}"
+    proto_name="${proto_name%..\$}"
+    
+    # Check for literals (words not in <> or [])
+    if [[ "$proto_name" != *'<'* && "$proto_name" != *'['* ]]; then
+        # This is a literal - complete with the literal itself
+        if [[ "$proto_name" == "$cur"* ]]; then
+            echo "$proto_name"
+        fi
+        return 0
+    fi
+    
+    # Extract prototype from <prototype>
+    if [[ "$proto_name" =~ \<([^>]+)\> ]]; then
+        proto_name="${BASH_REMATCH[1]}"
+    fi
+    
+    # Handle alternatives (a|b|c)
+    if [[ "$proto_name" == *'|'* ]]; then
+        IFS='|' read -ra alternatives <<< "$proto_name"
+        local alt
+        for alt in "${alternatives[@]}"; do
+            # Get completer for this alternative
+            local completer
+            completer=$(_bar_get_completer "$func_or_rule" "$alt")
+            
+            if [[ -n "$completer" ]]; then
+                # Call the completer
+                if [[ "$completer" == "_bar_extcomplete "* ]]; then
+                    local ext_name="${completer#_bar_extcomplete }"
+                    _bar_extcomplete "$ext_name" "$cur"
+                else
+                    $completer "$cur"
+                fi
+            fi
+        done
+        return 0
+    fi
+    
+    # Get completer for this prototype
+    local completer
+    completer=$(_bar_get_completer "$func_or_rule" "$proto_name")
+    
+    # Skip if no completer found
+    if [[ -z "$completer" ]]; then
+        # Default to file completion
+        _bar_complete_comp_file "$cur"
+        return 0
+    fi
+    
+    # Call the completer
+    if [[ "$completer" == "_bar_extcomplete "* ]]; then
+        # External completer
+        local ext_name="${completer#_bar_extcomplete }"
+        _bar_extcomplete "$ext_name" "$cur"
+    else
+        # Internal completer
+        $completer "$cur"
+    fi
 }
 
 # Parse a file for documented rules and functions
