@@ -225,6 +225,42 @@ _bar_complete_comp_rule()
     fi
 }
 
+# Complete with rule or function names (no system commands)
+_bar_complete_comp_rule_or_function()
+{
+    local cur="$1"
+    shift
+    local -a predicates=("$@")
+    
+    # Collect all candidates
+    local -a candidates=()
+    
+    # Get rules
+    for rule in "${_bar_completion_rules[@]}"; do
+        if [[ "$rule" == "$cur"* ]]; then
+            candidates+=("$rule")
+        fi
+    done
+    
+    # Get functions
+    for func in "${_bar_completion_functions[@]}"; do
+        if [[ "$func" == "$cur"* ]]; then
+            candidates+=("$func")
+        fi
+    done
+    
+    # Apply predicates if specified
+    if [[ ${#predicates[@]} -gt 0 ]]; then
+        if [[ ${#candidates[@]} -gt 0 ]]; then
+            printf '%s\n' "${candidates[@]}" | _bar_apply_predicates "${predicates[@]}"
+        fi
+    else
+        if [[ ${#candidates[@]} -gt 0 ]]; then
+            printf '%s\n' "${candidates[@]}"
+        fi
+    fi
+}
+
 # Complete with command/function names
 _bar_complete_comp_command()
 {
@@ -335,7 +371,7 @@ _bar_init_completion_registry()
     _bar_completion_registry[file]="_bar_complete_comp_file"
     _bar_completion_registry[directory]="_bar_complete_comp_directory"
     _bar_completion_registry[path]="_bar_complete_comp_path"
-    _bar_completion_registry[rule]="_bar_complete_comp_rule"
+    _bar_completion_registry[rule]="_bar_complete_comp_rule_or_function"
     _bar_completion_registry[command]="_bar_complete_comp_command"
     _bar_completion_registry[command_or_rule]="_bar_complete_comp_command_or_rule"
     
