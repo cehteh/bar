@@ -2,7 +2,7 @@
 # Bash completion script for bar, please and ./bar
 #
 # This script parses documented rules and functions (those with ## doc comments)
-# and provides intelligent completion with caching for performance.
+# and provides intelligent completion.
 #
 # Installation:
 #   Link this file to ~/.bash_completion/bar_complete or source it in your .bashrc
@@ -20,32 +20,15 @@ _bar_complete_dbg()
     [[ -n "$BAR_COMPLETE_DEBUG" ]] && echo "$*" >&2
 }
 
-# Cache arrays for completion data
-# _bar_completion_barf_files: indexed array storing "mtime:filename" for all discovered rule files
-declare -ga _bar_completion_barf_files=()
-# _bar_completion_barf_path: associative array "basepath" -> "0 1 3" (indices into barf_files)
-declare -gA _bar_completion_barf_path=()
-# _bar_completion_barf_files_freelist: string of free indices for reuse
-declare -g  _bar_completion_barf_files_freelist=""
-
-# _bar_completion_rules: indexed array storing "fileindex:rulename" for all discovered rules
+# Data structures for completion
+# _bar_completion_rules: array storing rule names
 declare -ga _bar_completion_rules=()
-# _bar_completion_rules_path: associative array "basepath" -> "0 1 3" (indices into rules)
-declare -gA _bar_completion_rules_path=()
-# _bar_completion_rules_freelist: string of free indices for reuse
-declare -g  _bar_completion_rules_freelist=""
 
-# _bar_completion_functions: indexed array storing "fileindex:funcname" for all discovered functions
+# _bar_completion_functions: array storing function names
 declare -ga _bar_completion_functions=()
-# _bar_completion_functions_path: associative array "basepath" -> "0 1 3" (indices into functions)
-declare -gA _bar_completion_functions_path=()
-# _bar_completion_functions_freelist: string of free indices for reuse
-declare -g  _bar_completion_functions_freelist=""
 
-# _bar_completion_dir_mtime: associative array "path" -> mtime for tracking directory changes
-# The goal: when in a basedir where we start bar, we can find recursively if any dir/file
-# has changed by mtime, if so then only the changed files need to be reparsed.
-declare -gA _bar_completion_dir_mtime=()
+# _bar_completion_rulefiles: array storing rulefile names
+declare -ga _bar_completion_rulefiles=()
 
 # Parameter completion data structures
 # _bar_completion_func_params: associative array "funcname" -> "param_list"
@@ -57,9 +40,14 @@ declare -gA _bar_completion_rule_params=()
 
 # _bar_completion_registry: associative array "prototype" -> "completer_function [predicates]"
 # Maps parameter prototypes to their completion functions
-# Examples: registry["file"]="_bar_complete_file"
+# Examples: registry["file"]="_bar_complete_comp_file"
 #           registry["cargo@toolchain"]="_bar_extcomplete cargo_toolchain_complete"
 declare -gA _bar_completion_registry=()
+
+# _bar_completion_actions: associative array "prototype" -> "action_function"
+# Maps prototypes to actions that should be executed when that prototype is matched
+# Examples: actions["rulefile"]="_bar_action_parse_rulefile"
+declare -gA _bar_completion_actions=()
 
 # _bar_completion_extcomplete_cache: associative array "completer_name" -> "cached_results"
 # Cache for external completion results
@@ -69,22 +57,8 @@ declare -gA _bar_completion_extcomplete_cache=()
 # Format: "module:completer_name"
 declare -ga _bar_completion_module_completers=()
 
-# Helper: Get modification time of a file or directory with high resolution
-_bar_get_mtime()
-{
-    # Use format %y to get timestamp with nanoseconds, then extract the time portion
-    local mtime_str
-    mtime_str=$(stat --format='%y' "$1" 2>/dev/null) || { echo 0; return; }
-    # Extract timestamp: "2025-10-13 16:49:38.517259371 +0000" -> "2025-10-13 16:49:38.517259371"
-    # Convert to epochseconds.nanoseconds for comparison
-    local datetime="${mtime_str% *}"
-    # Use date to convert to epoch with nanoseconds preserved
-    local epoch
-    epoch=$(date -d "$datetime" +%s.%N 2>/dev/null) || echo 0
-    echo "$epoch"
-}
-
 # Helper: Find free slot in an array or append
+# Kept for future use, currently not actively used
 _bar_alloc_slot()
 {
     local freelist_var="$1"
@@ -107,6 +81,7 @@ _bar_alloc_slot()
 }
 
 # Helper: Free a slot in an array
+# Kept for future use, currently not actively used
 _bar_free_slot()
 {
     local freelist_var="$1"
@@ -136,7 +111,7 @@ _bar_apply_predicates()
         local pred
         for pred in "${predicates[@]}"; do
             # Call predicate function to test item
-            if ! "_bar_complete_predicate_${pred}" "$item" 2>/dev/null; then
+            if ! "_bar_complete_pred_${pred}" "$item" 2>/dev/null; then
                 pass=false
                 break
             fi
@@ -146,32 +121,42 @@ _bar_apply_predicates()
 }
 
 # Predicate: file exists
-_bar_complete_predicate_existing()
+_bar_complete_pred_existing()
 {
     [[ -e "$1" ]]
 }
 
 # Predicate: file does not exist
-_bar_complete_predicate_nonexisting()
+_bar_complete_pred_nonexisting()
 {
     [[ ! -e "$1" ]]
 }
 
 # Predicate: is in local directory
-_bar_complete_predicate_local()
+_bar_complete_pred_local()
 {
     [[ "$1" != */* ]]
 }
 
 # Predicate: is a rulefile
-# Checks if file is readable and contains rule or function statements
-_bar_complete_predicate_rulefile()
+# Checks if file is readable and has a shebang AND contains rule or function statements
+_bar_complete_pred_rulefile()
 {
-    [[ -f "$1" && -r "$1" ]] && grep -qE '^(rule|function)[[:space:]]' "$1" 2>/dev/null
+    if [[ -f "$1" && -r "$1" ]]; then
+        # Check for shebang in first line AND rule/function statements
+        local first_line
+        read -r first_line < "$1" 2>/dev/null
+        if [[ "$first_line" != '#!/'* ]]; then
+            return 1
+        fi
+        grep -qE '^(rule|function)[[:space:]]' "$1" 2>/dev/null
+    else
+        return 1
+    fi
 }
 
 # Complete file paths
-_bar_complete_file()
+_bar_complete_comp_file()
 {
     local cur="$1"
     shift
@@ -186,7 +171,7 @@ _bar_complete_file()
 }
 
 # Complete directory paths
-_bar_complete_directory()
+_bar_complete_comp_directory()
 {
     local cur="$1"
     shift
@@ -200,7 +185,7 @@ _bar_complete_directory()
 }
 
 # Complete any path (file or directory)
-_bar_complete_path()
+_bar_complete_comp_path()
 {
     local cur="$1"
     shift
@@ -214,18 +199,15 @@ _bar_complete_path()
 }
 
 # Complete with existing rule names
-_bar_complete_rule()
+_bar_complete_comp_rule()
 {
     local cur="$1"
     shift
     local -a predicates=("$@")
-    local curdir="$PWD"
     
-    # Get all rules from cache
+    # Get all rules
     local -a rules=()
-    for idx in ${_bar_completion_rules_path[$curdir]:-}; do
-        local entry="${_bar_completion_rules[$idx]}"
-        local rule="${entry#*:}"
+    for rule in "${_bar_completion_rules[@]}"; do
         if [[ "$rule" == "$cur"* ]]; then
             rules+=("$rule")
         fi
@@ -233,14 +215,54 @@ _bar_complete_rule()
     
     # Apply predicates if specified
     if [[ ${#predicates[@]} -gt 0 ]]; then
-        printf '%s\n' "${rules[@]}" | _bar_apply_predicates "${predicates[@]}"
+        if [[ ${#rules[@]} -gt 0 ]]; then
+            printf '%s\n' "${rules[@]}" | _bar_apply_predicates "${predicates[@]}"
+        fi
     else
-        printf '%s\n' "${rules[@]}"
+        if [[ ${#rules[@]} -gt 0 ]]; then
+            printf '%s\n' "${rules[@]}"
+        fi
+    fi
+}
+
+# Complete with rule or function names (no system commands)
+_bar_complete_comp_rule_or_function()
+{
+    local cur="$1"
+    shift
+    local -a predicates=("$@")
+    
+    # Collect all candidates
+    local -a candidates=()
+    
+    # Get rules
+    for rule in "${_bar_completion_rules[@]}"; do
+        if [[ "$rule" == "$cur"* ]]; then
+            candidates+=("$rule")
+        fi
+    done
+    
+    # Get functions
+    for func in "${_bar_completion_functions[@]}"; do
+        if [[ "$func" == "$cur"* ]]; then
+            candidates+=("$func")
+        fi
+    done
+    
+    # Apply predicates if specified
+    if [[ ${#predicates[@]} -gt 0 ]]; then
+        if [[ ${#candidates[@]} -gt 0 ]]; then
+            printf '%s\n' "${candidates[@]}" | _bar_apply_predicates "${predicates[@]}"
+        fi
+    else
+        if [[ ${#candidates[@]} -gt 0 ]]; then
+            printf '%s\n' "${candidates[@]}"
+        fi
     fi
 }
 
 # Complete with command/function names
-_bar_complete_command()
+_bar_complete_comp_command()
 {
     local cur="$1"
     shift
@@ -255,29 +277,24 @@ _bar_complete_command()
 }
 
 # Complete with command, function, or rule names
-_bar_complete_command_or_rule()
+_bar_complete_comp_command_or_rule()
 {
     local cur="$1"
     shift
     local -a predicates=("$@")
-    local curdir="$PWD"
     
     # Collect all candidates
     local -a candidates=()
     
-    # Get rules from cache
-    for idx in ${_bar_completion_rules_path[$curdir]:-}; do
-        local entry="${_bar_completion_rules[$idx]}"
-        local rule="${entry#*:}"
+    # Get rules
+    for rule in "${_bar_completion_rules[@]}"; do
         if [[ "$rule" == "$cur"* ]]; then
             candidates+=("$rule")
         fi
     done
     
-    # Get functions from cache
-    for idx in ${_bar_completion_functions_path[$curdir]:-}; do
-        local entry="${_bar_completion_functions[$idx]}"
-        local func="${entry#*:}"
+    # Get functions
+    for func in "${_bar_completion_functions[@]}"; do
         if [[ "$func" == "$cur"* ]]; then
             candidates+=("$func")
         fi
@@ -290,9 +307,26 @@ _bar_complete_command_or_rule()
     
     # Remove duplicates and apply predicates
     if [[ ${#predicates[@]} -gt 0 ]]; then
-        printf '%s\n' "${candidates[@]}" | sort -u | _bar_apply_predicates "${predicates[@]}"
+        if [[ ${#candidates[@]} -gt 0 ]]; then
+            printf '%s\n' "${candidates[@]}" | sort -u | _bar_apply_predicates "${predicates[@]}"
+        fi
     else
-        printf '%s\n' "${candidates[@]}" | sort -u
+        if [[ ${#candidates[@]} -gt 0 ]]; then
+            printf '%s\n' "${candidates[@]}" | sort -u
+        fi
+    fi
+}
+
+# Complete with a literal keyword
+# This completer is bound to a prototype and completes to that literal
+_bar_complete_comp_literal()
+{
+    local cur="$1"
+    local literal="$2"  # The literal keyword to complete
+    
+    # If the literal starts with the current prefix, offer it as completion
+    if [[ "$literal" == "$cur"* ]]; then
+        echo "$literal"
     fi
 }
 
@@ -334,45 +368,96 @@ _bar_extcomplete()
 _bar_init_completion_registry()
 {
     # Generic completers
-    _bar_completion_registry[file]="_bar_complete_file"
-    _bar_completion_registry[directory]="_bar_complete_directory"
-    _bar_completion_registry[path]="_bar_complete_path"
-    _bar_completion_registry[rule]="_bar_complete_rule"
-    _bar_completion_registry[command]="_bar_complete_command"
-    _bar_completion_registry[command_or_rule]="_bar_complete_command_or_rule"
+    _bar_completion_registry[file]="_bar_complete_comp_file"
+    _bar_completion_registry[directory]="_bar_complete_comp_directory"
+    _bar_completion_registry[path]="_bar_complete_comp_path"
+    _bar_completion_registry[rule]="_bar_complete_comp_rule_or_function"
+    _bar_completion_registry[command]="_bar_complete_comp_command"
+    _bar_completion_registry[command_or_rule]="_bar_complete_comp_command_or_rule"
+    
+    # Rulefile completer - uses file completer with rulefile predicate
+    _bar_completion_registry[rulefile]="_bar_complete_comp_file rulefile"
+    
+    # Literal completers - register specific literals
+    _bar_completion_registry[--bare]="_bar_complete_comp_literal --bare"
+    
+    # Arguments completer - default file completion
+    _bar_completion_registry[arguments]="_bar_complete_comp_file"
     
     # Add module-specific completers (populated during file parsing)
 }
 
-# Parse parameter spec and extract individual parameters
-# Input: "[--opt] <file> [output..]"
-# Output: array of parameters (without decorators)
-_bar_parse_params()
+# Parse parameter spec into protos array
+# Input: param_spec like "[--opt] <file> [output]"
+# Output: protos array with parsed prototypes
+_bar_parse_protos()
 {
     local param_spec="$1"
-    local -a params=()
+    local -a protos=()
     
-    # Simple tokenization - split on spaces, handling brackets and angle brackets
-    # This is a simplified parser; a full implementation would need better parsing
-    local token
-    for token in $param_spec; do
-        # Remove decorators and extract identifier
-        local clean_token="$token"
-        # Remove leading/trailing brackets, angles, dots
-        clean_token="${clean_token#[}"
-        clean_token="${clean_token#<}"
-        clean_token="${clean_token%]}"
-        clean_token="${clean_token%>}"
-        clean_token="${clean_token%..}"
+    # Tokenize the parameter spec
+    # This is a simplified parser for the formal parameter syntax
+    local in_bracket=false
+    local in_angle=false
+    local current_token=""
+    local is_optional=false
+    
+    local i
+    for ((i=0; i<${#param_spec}; i++)); do
+        local char="${param_spec:$i:1}"
         
-        # Skip empty tokens and special markers
-        [[ -z "$clean_token" || "$clean_token" == "-" || "$clean_token" == "--" ]] && continue
-        
-        # Store the token
-        params+=("$clean_token")
+        case "$char" in
+            '[')
+                in_bracket=true
+                is_optional=true
+                ;;
+            '<')
+                in_angle=true
+                current_token=""
+                ;;
+            ']'|'>')
+                if [[ -n "$current_token" ]]; then
+                    # Check for .. suffix
+                    local repeating=false
+                    if [[ "${param_spec:$((i+1)):2}" == ".." ]]; then
+                        repeating=true
+                        i=$((i+2))
+                    fi
+                    
+                    # Store the prototype
+                    local proto_entry="$current_token"
+                    [[ $is_optional == true ]] && proto_entry="[$proto_entry]"
+                    [[ $repeating == true ]] && proto_entry="${proto_entry}.."
+                    protos+=("$proto_entry")
+                    current_token=""
+                fi
+                in_bracket=false
+                in_angle=false
+                is_optional=false
+                ;;
+            ' '|$'\t')
+                # Space separates tokens
+                if [[ -n "$current_token" && $in_bracket == false && $in_angle == false ]]; then
+                    # Literal word
+                    protos+=("$current_token")
+                    current_token=""
+                fi
+                ;;
+            *)
+                current_token="${current_token}${char}"
+                ;;
+        esac
     done
     
-    printf '%s\n' "${params[@]}"
+    # Handle any remaining token
+    if [[ -n "$current_token" ]]; then
+        protos+=("$current_token")
+    fi
+    
+    # Add empty terminator
+    protos+=("")
+    
+    printf '%s\n' "${protos[@]}"
 }
 
 # Get completer for a prototype
@@ -399,7 +484,7 @@ _bar_get_completer()
     return 1
 }
 
-# Complete parameters for a specific function or rule
+# Complete parameters for a specific function or rule using dynamic protos
 _bar_complete_params()
 {
     local func_or_rule="$1"
@@ -418,89 +503,142 @@ _bar_complete_params()
     # If no parameter spec, try generic completions
     if [[ -z "$param_spec" ]]; then
         # Default to file completion
-        _bar_complete_file "$cur"
+        _bar_complete_comp_file "$cur"
         return 0
     fi
     
-    # Parse the parameter spec to get list of parameter prototypes
-    local -a params
-    mapfile -t params < <(_bar_parse_params "$param_spec")
+    # Parse the parameter spec to get protos array
+    local -a protos
+    mapfile -t protos < <(_bar_parse_protos "$param_spec")
     
-    # Simple completion: offer completions for each parameter type
-    # A more sophisticated implementation would track which parameters have been used
-    local proto
-    for proto in "${params[@]}"; do
-        # Get completer for this prototype
-        local completer
-        completer=$(_bar_get_completer "$func_or_rule" "$proto")
+    # Determine which proto index we're completing
+    # We need to match prev_words against protos to find current position
+    local proto_idx=0
+    local word_idx=0
+    
+    # Simple matching: advance through protos as we match prev_words
+    # This is a simplified version - a full implementation would handle
+    # alternatives, optionals, and repeating parameters more thoroughly
+    while [[ $word_idx -lt ${#prev_words[@]} ]]; do
+        local proto="${protos[$proto_idx]}"
+        [[ -z "$proto" ]] && break  # Reached end of protos
         
-        # Skip if no completer found
-        [[ -z "$completer" ]] && continue
+        # Check if this proto is optional (starts with [)
+        local is_optional=false
+        [[ "$proto" =~ ^\[ ]] && is_optional=true
         
-        # Call the completer
-        if [[ "$completer" == "_bar_extcomplete "* ]]; then
-            # External completer
-            local ext_name="${completer#_bar_extcomplete }"
-            _bar_extcomplete "$ext_name" "$cur"
-        else
-            # Internal completer
-            $completer "$cur"
+        # Check if this proto is repeating (ends with ..)
+        local is_repeating=false
+        [[ "$proto" =~ \.\.$ ]] && is_repeating=true
+        
+        # If not repeating, advance proto_idx
+        if [[ $is_repeating == false ]]; then
+            proto_idx=$((proto_idx + 1))
         fi
+        
+        word_idx=$((word_idx + 1))
     done
+    
+    # Now proto_idx points to where we should complete
+    local proto="${protos[$proto_idx]}"
+    [[ -z "$proto" ]] && proto="${protos[0]}"  # Fallback to first proto
+    
+    # Extract the prototype name (remove brackets, .., etc.)
+    local proto_name="$proto"
+    proto_name="${proto_name#[}"
+    proto_name="${proto_name%]}"
+    proto_name="${proto_name%..\$}"
+    
+    # Check for literals (words not in <> or [])
+    if [[ "$proto_name" != *'<'* && "$proto_name" != *'['* ]]; then
+        # This is a literal - complete with the literal itself
+        if [[ "$proto_name" == "$cur"* ]]; then
+            echo "$proto_name"
+        fi
+        return 0
+    fi
+    
+    # Extract prototype from <prototype>
+    if [[ "$proto_name" =~ \<([^>]+)\> ]]; then
+        proto_name="${BASH_REMATCH[1]}"
+    fi
+    
+    # Handle alternatives (a|b|c)
+    if [[ "$proto_name" == *'|'* ]]; then
+        IFS='|' read -ra alternatives <<< "$proto_name"
+        local alt
+        for alt in "${alternatives[@]}"; do
+            # Get completer for this alternative
+            local completer
+            completer=$(_bar_get_completer "$func_or_rule" "$alt")
+            
+            if [[ -n "$completer" ]]; then
+                # Call the completer
+                if [[ "$completer" == "_bar_extcomplete "* ]]; then
+                    local ext_name="${completer#_bar_extcomplete }"
+                    _bar_extcomplete "$ext_name" "$cur"
+                else
+                    $completer "$cur"
+                fi
+            fi
+        done
+        return 0
+    fi
+    
+    # Get completer for this prototype
+    local completer
+    completer=$(_bar_get_completer "$func_or_rule" "$proto_name")
+    
+    # Skip if no completer found
+    if [[ -z "$completer" ]]; then
+        # Default to file completion
+        _bar_complete_comp_file "$cur"
+        return 0
+    fi
+    
+    # Call the completer
+    if [[ "$completer" == "_bar_extcomplete "* ]]; then
+        # External completer
+        local ext_name="${completer#_bar_extcomplete }"
+        _bar_extcomplete "$ext_name" "$cur"
+    else
+        # Internal completer
+        $completer "$cur"
+    fi
 }
 
 # Parse a file for documented rules and functions
 _bar_parse_file()
 {
+    local public_mode=false
+    
+    # Parse options
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --public)
+                public_mode=true
+                shift
+                ;;
+            *)
+                break
+                ;;
+        esac
+    done
+    
     local file="$1"
-    local file_idx="$2"  # Index in _bar_completion_barf_files
-    local curdir="$PWD"
 
     [[ ! -f "$file" || ! -r "$file" ]] && return
 
     local in_doc_comment=false
-
-    # First, clear old entries for this file
-    # Find and free all rules from this file
-    local indices="${_bar_completion_rules_path[$curdir]:-}"
-    local new_rule_indices=""
-    for idx in $indices; do
-        local entry="${_bar_completion_rules[$idx]}"
-        local entry_file_idx="${entry%%:*}"
-        if [[ "$entry_file_idx" != "$file_idx" ]]; then
-            new_rule_indices="$new_rule_indices $idx"
-        else
-            _bar_free_slot "_bar_completion_rules_freelist" "_bar_completion_rules" "$idx"
-        fi
-    done
-    _bar_completion_rules_path[$curdir]="${new_rule_indices# }"
-
-    # Find and free all functions from this file
-    indices="${_bar_completion_functions_path[$curdir]:-}"
-    local new_func_indices=""
-    for idx in $indices; do
-        local entry="${_bar_completion_functions[$idx]}"
-        local entry_file_idx="${entry%%:*}"
-        if [[ "$entry_file_idx" != "$file_idx" ]]; then
-            new_func_indices="$new_func_indices $idx"
-        else
-            _bar_free_slot "_bar_completion_functions_freelist" "_bar_completion_functions" "$idx"
-        fi
-    done
-    _bar_completion_functions_path[$curdir]="${new_func_indices# }"
-
-    # Parse file line by line looking for documented entities
     local doc_params=""
     local last_doc_line=""
+    
     while IFS= read -r line; do
         # Check for documented function: function name ## [params] - description
         if [[ "$line" =~ ^[[:space:]]*function[[:space:]]+([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*##[[:space:]]*(.*)$ ]]; then
             local func="${BASH_REMATCH[1]}"
             local doc="${BASH_REMATCH[2]}"
-            local slot
-            slot=$(_bar_alloc_slot "_bar_completion_functions_freelist" "_bar_completion_functions")
-            _bar_completion_functions[slot]="$file_idx:$func"
-            _bar_completion_functions_path[$curdir]="${_bar_completion_functions_path[$curdir]:-} $slot"
+            _bar_completion_functions+=("$func")
             
             # Extract parameters from documentation
             # Format: [params] - description OR just description
@@ -525,10 +663,7 @@ _bar_parse_file()
         # Check for function preceded by doc comment
         elif [[ $in_doc_comment == true && "$line" =~ ^[[:space:]]*function[[:space:]]+([A-Za-z_][A-Za-z0-9_]*) ]]; then
             local func="${BASH_REMATCH[1]}"
-            local slot
-            slot=$(_bar_alloc_slot "_bar_completion_functions_freelist" "_bar_completion_functions")
-            _bar_completion_functions[slot]="$file_idx:$func"
-            _bar_completion_functions_path[$curdir]="${_bar_completion_functions_path[$curdir]:-} $slot"
+            _bar_completion_functions+=("$func")
             
             # Store parameters if we captured them
             if [[ -n "$doc_params" ]]; then
@@ -548,6 +683,21 @@ _bar_parse_file()
             in_doc_comment=false
             doc_params=""
             
+        # In public mode, also capture undocumented functions
+        elif [[ $public_mode == true && "$line" =~ ^[[:space:]]*function[[:space:]]+([A-Za-z_][A-Za-z0-9_]*) ]]; then
+            local func="${BASH_REMATCH[1]}"
+            # Only add if not already added (documented ones are already in)
+            local already_added=false
+            for existing in "${_bar_completion_functions[@]}"; do
+                if [[ "$existing" == "$func" ]]; then
+                    already_added=true
+                    break
+                fi
+            done
+            if [[ $already_added == false ]]; then
+                _bar_completion_functions+=("$func")
+            fi
+            
         # Check for documented rule: ## [params] - description followed by rule name:
         elif [[ "$line" =~ ^##[[:space:]]*(.*)$ ]]; then
             in_doc_comment=true
@@ -558,10 +708,7 @@ _bar_parse_file()
             fi
         elif [[ $in_doc_comment == true && "$line" =~ ^[[:space:]]*rule[[:space:]]+(--[a-z_-]*[[:space:]]+)*([A-Za-z_-][A-Za-z0-9_-]*): ]]; then
             local rule="${BASH_REMATCH[2]}"
-            local slot
-            slot=$(_bar_alloc_slot "_bar_completion_rules_freelist" "_bar_completion_rules")
-            _bar_completion_rules[slot]="$file_idx:$rule"
-            _bar_completion_rules_path[$curdir]="${_bar_completion_rules_path[$curdir]:-} $slot"
+            _bar_completion_rules+=("$rule")
             
             # Store parameters if we captured them
             if [[ -n "$doc_params" ]]; then
@@ -570,52 +717,59 @@ _bar_parse_file()
             
             in_doc_comment=false
             doc_params=""
+        elif [[ "$line" =~ ^[[:space:]]*rule[[:space:]]+(--[a-z_-]*[[:space:]]+)*([A-Za-z_-][A-Za-z0-9_-]*): ]]; then
+            # In public mode, also capture undocumented rules
+            if [[ $public_mode == true ]]; then
+                local rule="${BASH_REMATCH[2]}"
+                # Only add if not already added (documented ones are already in)
+                local already_added=false
+                for existing in "${_bar_completion_rules[@]}"; do
+                    if [[ "$existing" == "$rule" ]]; then
+                        already_added=true
+                        break
+                    fi
+                done
+                if [[ $already_added == false ]]; then
+                    _bar_completion_rules+=("$rule")
+                fi
+            fi
+            in_doc_comment=false
+            doc_params=""
         elif [[ "$line" =~ ^[[:space:]]*rule[[:space:]] ]]; then
             in_doc_comment=false
             doc_params=""
         fi
     done < "$file"
-
-    # Trim leading spaces
-    _bar_completion_rules_path[$curdir]="${_bar_completion_rules_path[$curdir]# }"
-    _bar_completion_functions_path[$curdir]="${_bar_completion_functions_path[$curdir]# }"
 }
 
-# Update cache for current directory
-_bar_update_cache()
+# Scan for rule files and parse them
+_bar_scan_files()
 {
-    local curdir="$PWD"
     local cmd="${1:-bar}"
-
-    # Check if directory mtime has changed (need to rescan for new files)
-    local dir_mtime
-    dir_mtime=$(_bar_get_mtime "$curdir")
-    local cached_dir_mtime="${_bar_completion_dir_mtime[$curdir]:-0}"
-
-    local need_rescan=false
-    if [[ "$dir_mtime" != "$cached_dir_mtime" ]]; then
-        need_rescan=true
-        _bar_completion_dir_mtime["$curdir"]="$dir_mtime"
+    
+    # Clear existing data
+    _bar_completion_rules=()
+    _bar_completion_functions=()
+    _bar_completion_rulefiles=()
+    
+    # Determine which files to look for
+    local default_barfs=()
+    if [[ "$cmd" == *please* ]]; then
+        default_barfs=("Pleasef" "pleasef" ".Pleasef" ".pleasef" "$HOME/.Pleasef")
+    else
+        default_barfs=("Barf" "barf" ".Barf" ".barf")
     fi
-
-    # Build list of current barf files and check their mtimes
-    local current_files=()
-    local file_indices=()
-
-    # Find ALL potential rule files in current directory using predicate-based filtering
-    if [[ $need_rescan == true ]]; then
-        _bar_complete_dbg "Scanning directory for rule files using predicates..."
-        
-        # Use _bar_complete_file with predicates to find all rulefiles
-        mapfile -t current_files < <(_bar_complete_file "" rulefile)
-        
-        # Debug output
-        local file
-        for file in "${current_files[@]}"; do
-            _bar_complete_dbg "  Found rulefile: $file"
-        done
-    fi
-
+    
+    # Find the main rulefile
+    local barf
+    for barf in "${default_barfs[@]}"; do
+        if [[ -f "$barf" && -r "$barf" ]]; then
+            _bar_completion_rulefiles+=("$barf")
+            _bar_parse_file --public "$barf"
+            break
+        fi
+    done
+    
     # Add Bar.d modules if directory exists
     local bar_d_dirs=()
     if [[ "$cmd" == *please* ]]; then
@@ -628,116 +782,46 @@ _bar_update_cache()
         if [[ -d "$bar_d" ]]; then
             for module in "$bar_d"/*; do
                 [[ -f "$module" && -r "$module" ]] || continue
-                current_files+=("$module")
+                _bar_parse_file "$module"
             done
             break
         fi
     done
-
-    # Process each file and update cache if needed
-    for file in "${current_files[@]}"; do
-        local file_mtime
-        file_mtime=$(_bar_get_mtime "$file")
-
-        # Check if we have this file cached
-        local cached=false
-        local slot
-        for idx in ${_bar_completion_barf_path[$curdir]:-}; do
-            local entry="${_bar_completion_barf_files[$idx]}"
-            local cached_mtime="${entry%%:*}"
-            local cached_file="${entry#*:}"
-            if [[ "$cached_file" == "$file" ]]; then
-                cached=true
-                slot=$idx
-                if [[ "$cached_mtime" != "$file_mtime" ]]; then
-                    # File changed, reparse
-                    _bar_parse_file "$file" "$slot"
-                    _bar_completion_barf_files[idx]="$file_mtime:$file"
-                fi
-                break
-            fi
-        done
-
-        if [[ $cached == false ]]; then
-            # New file, add to cache
-            slot=$(_bar_alloc_slot "_bar_completion_barf_files_freelist" "_bar_completion_barf_files")
-            _bar_completion_barf_files[slot]="$file_mtime:$file"
-            _bar_completion_barf_path[$curdir]="${_bar_completion_barf_path[$curdir]:-} $slot"
-            _bar_parse_file "$file" "$slot"
-            file_indices+=("$slot")
-        else
-            file_indices+=("$slot")
-        fi
-    done
-
-    # Clean up removed files from cache
-    if [[ -n "${_bar_completion_barf_path[$curdir]:-}" ]]; then
-        local new_indices=""
-        for idx in ${_bar_completion_barf_path[$curdir]}; do
-            local found=false
-            for check_idx in "${file_indices[@]}"; do
-                if [[ "$idx" == "$check_idx" ]]; then
-                    found=true
-                    break
-                fi
-            done
-            if [[ $found == false ]]; then
-                # File removed, free the slot
-                _bar_free_slot "_bar_completion_barf_files_freelist" "_bar_completion_barf_files" "$idx"
-            else
-                new_indices="$new_indices $idx"
-            fi
-        done
-        _bar_completion_barf_path[$curdir]="${new_indices# }"
-    fi
 }
 
-# Get completions from cache
+# Get completions
 _bar_get_completions()
 {
-    local curdir="$PWD"
     local prefix="$1"
     
     _bar_complete_dbg "Getting completions for prefix: '$prefix'"
-    _bar_complete_dbg "Current directory: $curdir"
 
     local completions=()
 
-    # Get all rules from cached files
+    # Get all rules
     _bar_complete_dbg "Checking rules..."
-    for idx in ${_bar_completion_rules_path[$curdir]:-}; do
-        local entry="${_bar_completion_rules[$idx]}"
-        local rule="${entry#*:}"
+    for rule in "${_bar_completion_rules[@]}"; do
         if [[ "$rule" == "$prefix"* ]]; then
             _bar_complete_dbg "  Adding rule: $rule"
             completions+=("$rule")
         fi
     done
 
-    # Get all functions from cached files
+    # Get all functions
     _bar_complete_dbg "Checking functions..."
-    for idx in ${_bar_completion_functions_path[$curdir]:-}; do
-        local entry="${_bar_completion_functions[$idx]}"
-        local func="${entry#*:}"
+    for func in "${_bar_completion_functions[@]}"; do
         if [[ "$func" == "$prefix"* ]]; then
             _bar_complete_dbg "  Adding function: $func"
             completions+=("$func")
         fi
     done
 
-    # Add rulefile names (from current directory)
+    # Add rulefile names
     _bar_complete_dbg "Checking rulefiles..."
-    _bar_complete_dbg "Barf path indices: ${_bar_completion_barf_path[$curdir]:-none}"
-    for idx in ${_bar_completion_barf_path[$curdir]:-}; do
-        local entry="${_bar_completion_barf_files[$idx]}"
-        local file="${entry#*:}"
-        _bar_complete_dbg "  Checking file: $file"
-        # Only include files from current directory (not Bar.d modules)
-        if [[ "$file" != */* && "$file" == "$prefix"* ]]; then
+    for file in "${_bar_completion_rulefiles[@]}"; do
+        if [[ "$file" == "$prefix"* ]]; then
             _bar_complete_dbg "  Adding rulefile: $file"
             completions+=("$file")
-        else
-            _bar_complete_dbg "  Skipping file: $file (path filter or prefix mismatch)"
         fi
     done
 
@@ -753,7 +837,9 @@ _bar_get_completions()
 # Main completion function
 _bar_complete()
 {
-    local cur words cword
+    local cur cword
+    local -a protos  # Dynamic array of prototype specs
+    local proto_idx=0
     
     _bar_complete_dbg "=== Bar completion triggered ==="
     
@@ -763,16 +849,15 @@ _bar_complete()
     else
         # Manual initialization
         cur="${COMP_WORDS[COMP_CWORD]}"
-        words=("${COMP_WORDS[@]}")
         cword=$COMP_CWORD
     fi
     
-    _bar_complete_dbg "Command line: ${words[*]}"
+    _bar_complete_dbg "Command line: ${COMP_WORDS[*]}"
     _bar_complete_dbg "Current word index: $cword"
     _bar_complete_dbg "Current word: '$cur'"
     
     # Determine the command (bar, please, or a path like ./bar)
-    local cmd="${words[0]}"
+    local cmd="${COMP_WORDS[0]}"
     
     # For ./bar or similar, check if it's a bar executable
     if [[ "$cmd" == ./* || "$cmd" == ../* || "$cmd" == *"/bar" ]]; then
@@ -789,108 +874,224 @@ _bar_complete()
         _bar_init_completion_registry
     fi
     
-    # Update cache for current directory
-    _bar_complete_dbg "Updating cache for command: $cmd"
-    _bar_update_cache "$cmd"
+    # Scan for files
+    _bar_complete_dbg "Scanning for files with command: $cmd"
+    _bar_scan_files "$cmd"
     
-    # Determine completion context
-    # words[0] = bar/please/./bar
-    # words[1] = might be rulefile or --bare or rule/function name
-    # words[2+] = might be arguments to the rule/function
+    # Build initial protos array based on bar invocation syntax:
+    # bar [rulefile] [--bare] [rule [arguments..]]
+    # All are optional, so completion collects from all
+    # Note: Everything in [] or <> is a prototype
+    protos=("[rulefile]" "[--bare]" "[rule [arguments..]]")
     
-    local completing_what=""
-    local func_or_rule=""
+    # Process previous words to determine current position
+    local word_idx=1
     
-    # Analyze command line structure
-    if [[ $cword -eq 1 ]]; then
-        # First argument - could be rulefile, --bare, or rule/function
-        completing_what="rule_or_file"
-    elif [[ "${words[1]}" == "--bare" ]]; then
-        if [[ $cword -eq 2 ]]; then
-            # Second argument after --bare - rule/function name
-            completing_what="rule_or_function"
-        else
-            # Arguments to the rule/function
-            func_or_rule="${words[2]}"
-            completing_what="params"
+    while [[ $word_idx -lt $cword ]]; do
+        local word="${COMP_WORDS[$word_idx]}"
+        _bar_complete_dbg "Processing word[$word_idx]: '$word' at proto_idx=$proto_idx"
+        
+        # If we've run out of protos, stay at last known position
+        if [[ $proto_idx -ge ${#protos[@]} ]]; then
+            _bar_complete_dbg "Beyond protos array, staying at last position"
+            word_idx=$((word_idx + 1))
+            continue
         fi
-    elif [[ -f "${words[1]}" ]]; then
-        # First arg is a file (rulefile)
-        if [[ $cword -eq 2 ]]; then
-            # Second argument - rule/function name
-            completing_what="rule_or_function"
-        else
-            # Arguments to the rule/function
-            func_or_rule="${words[2]}"
-            completing_what="params"
+        
+        # Try to match the word against current proto
+        local matched=false
+        local proto="${protos[$proto_idx]}"
+        
+        # Extract prototype name from proto spec (remove brackets)
+        local proto_name="$proto"
+        proto_name="${proto_name#[}"
+        proto_name="${proto_name%]}"
+        
+        _bar_complete_dbg "  Trying to match '$word' against proto '$proto_name'"
+        
+        # Check for nested prototypes like "[rule [arguments..]]"
+        # For now, extract just the first part
+        if [[ "$proto_name" =~ ^([a-zA-Z_-]+)[[:space:]] ]]; then
+            local first_part="${BASH_REMATCH[1]}"
+            _bar_complete_dbg "  Nested proto detected, first part: $first_part"
         fi
-    else
-        # First arg is likely a rule/function name
-        if [[ $cword -eq 1 ]]; then
-            completing_what="rule_or_function"
-        else
-            func_or_rule="${words[1]}"
-            completing_what="params"
-        fi
-    fi
-    
-    # Generate completions based on context
-    _bar_complete_dbg "Completion context: $completing_what"
-    case "$completing_what" in
-        rule_or_file)
-            # Complete with files and rules/functions
-            _bar_complete_dbg "Completing with rulefiles, rules, and functions"
-            mapfile -t COMPREPLY < <(_bar_get_completions "$cur")
-            ;;
-        rule_or_function)
-            # Complete with rules and functions only (not files)
-            _bar_complete_dbg "Completing with rules and functions only"
-            local completions=()
-            local curdir="$PWD"
-            
-            # Get rules
-            for idx in ${_bar_completion_rules_path[$curdir]:-}; do
-                local entry="${_bar_completion_rules[$idx]}"
-                local rule="${entry#*:}"
-                if [[ "$rule" == "$cur"* ]]; then
-                    completions+=("$rule")
+        
+        # Check if this matches a literal (check in registry if it has _bar_complete_comp_literal)
+        if [[ -v _bar_completion_registry["$proto_name"] ]]; then
+            local completer="${_bar_completion_registry[$proto_name]}"
+            if [[ "$completer" == "_bar_complete_comp_literal "* ]]; then
+                # This is a literal prototype - check for exact match
+                local literal="${completer#_bar_complete_comp_literal }"
+                if [[ "$literal" == "$word" ]]; then
+                    matched=true
+                    _bar_complete_dbg "  Matched literal prototype: $proto_name"
+                    proto_idx=$((proto_idx + 1))
                 fi
-            done
-            
-            # Get functions
-            for idx in ${_bar_completion_functions_path[$curdir]:-}; do
-                local entry="${_bar_completion_functions[$idx]}"
-                local func="${entry#*:}"
-                if [[ "$func" == "$cur"* ]]; then
-                    completions+=("$func")
-                fi
-            done
-            
-            if [[ ${#completions[@]} -gt 0 ]]; then
-                mapfile -t COMPREPLY < <(printf '%s\n' "${completions[@]}" | sort -u)
             fi
-            ;;
-        params)
-            # Complete parameters for the specific function/rule
-            if [[ -n "$func_or_rule" ]]; then
-                # Build array of previous words (for context-aware completion)
-                local -a prev_words=()
-                local i
-                for ((i=3; i<cword; i++)); do
-                    prev_words+=("${words[i]}")
+        fi
+        
+        # If not matched yet, check for special prototype types
+        if [[ $matched == false ]]; then
+            if [[ "$proto_name" =~ ^rule[[:space:]] ]] || [[ "$proto_name" == "rule" ]]; then
+                # This proto expects a rule - check if word is a known rule/function
+                local is_rule=false
+                for rule in "${_bar_completion_rules[@]}"; do
+                    if [[ "$rule" == "$word" ]]; then
+                        is_rule=true
+                        break
+                    fi
                 done
+                if [[ $is_rule == false ]]; then
+                    for func in "${_bar_completion_functions[@]}"; do
+                        if [[ "$func" == "$word" ]]; then
+                            is_rule=true
+                            break
+                        fi
+                    done
+                fi
                 
-                mapfile -t COMPREPLY < <(_bar_complete_params "$func_or_rule" "$cur" "${prev_words[@]}")
-            else
-                # Fallback to file completion
-                mapfile -t COMPREPLY < <(compgen -f -- "$cur")
+                if [[ $is_rule == true ]]; then
+                    _bar_complete_dbg "  Matched rule/function: $word"
+                    
+                    # Get parameter spec for this rule/function
+                    local param_spec=""
+                    if [[ -v _bar_completion_func_params["$word"] ]]; then
+                        param_spec="${_bar_completion_func_params[$word]}"
+                    elif [[ -v _bar_completion_rule_params["$word"] ]]; then
+                        param_spec="${_bar_completion_rule_params[$word]}"
+                    fi
+                    
+                    if [[ -n "$param_spec" ]]; then
+                        # Replace remaining protos with the rule's parameter spec
+                        mapfile -t protos < <(_bar_parse_protos "$param_spec")
+                        proto_idx=0
+                    else
+                        # No param spec - check if current proto has nested [arguments..]
+                        if [[ "$proto_name" =~ \[arguments\.\.?\] ]]; then
+                            # Promote to [arguments..]
+                            protos=("[arguments..]")
+                            proto_idx=0
+                        else
+                            # Clear protos (any arguments accepted)
+                            protos=()
+                            proto_idx=0
+                        fi
+                    fi
+                    matched=true
+                fi
+            elif [[ "$proto_name" == "rulefile" ]]; then
+                # Check if this word is a file
+                if [[ -f "$word" ]]; then
+                    _bar_complete_dbg "  Matched rulefile: $word"
+                    matched=true
+                    proto_idx=$((proto_idx + 1))
+                    # Action: parse this specific rulefile to discover its rules (with --public)
+                    _bar_parse_file --public "$word"
+                fi
             fi
-            ;;
-        *)
-            # Default to file completion
-            mapfile -t COMPREPLY < <(compgen -f -- "$cur")
-            ;;
-    esac
+        fi
+        
+        # If didn't match and proto is optional, skip it and try next
+        if [[ $matched == false && "$proto" == "["* ]]; then
+            _bar_complete_dbg "  Didn't match, skipping optional proto: $proto"
+            proto_idx=$((proto_idx + 1))
+            continue  # Don't increment word_idx, try same word against next proto
+        elif [[ $matched == false ]]; then
+            # Required proto didn't match or unknown - move on
+            _bar_complete_dbg "  Didn't match required proto, advancing anyway"
+            proto_idx=$((proto_idx + 1))
+        fi
+        
+        word_idx=$((word_idx + 1))
+    done
+    
+    # Now generate completions based on current proto_idx
+    # Collect completions from current proto and all following optional protos
+    # until we hit a non-optional proto
+    
+    _bar_complete_dbg "Generating completions starting at proto_idx=$proto_idx"
+    
+    local -a all_completions=()
+    local check_idx=$proto_idx
+    
+    while [[ $check_idx -lt ${#protos[@]} ]]; do
+        local proto="${protos[$check_idx]}"
+        
+        # If empty or we've exhausted protos, stop
+        [[ -z "$proto" ]] && break
+        
+        # Check if this proto is optional
+        local is_optional=false
+        [[ "$proto" =~ ^\[ ]] && is_optional=true
+        
+        _bar_complete_dbg "  Checking proto[$check_idx]: '$proto' (optional=$is_optional)"
+        
+        # Extract prototype name
+        local proto_name="$proto"
+        proto_name="${proto_name#[}"
+        proto_name="${proto_name%]}"
+        
+        # Handle nested prototypes - extract first part for now
+        if [[ "$proto_name" =~ ^([a-zA-Z_-]+)[[:space:]] ]]; then
+            proto_name="${BASH_REMATCH[1]}"
+            _bar_complete_dbg "  Nested proto, using first part: $proto_name"
+        fi
+        
+        # Remove trailing .. if present
+        proto_name="${proto_name%..\$}"
+        proto_name="${proto_name%..}"
+        
+        # Get completer for this prototype from registry
+        local completer
+        completer=$(_bar_get_completer "" "$proto_name")
+        
+        if [[ -n "$completer" ]]; then
+            _bar_complete_dbg "  Found completer for '$proto_name': $completer"
+            
+            # Call the completer based on its type
+            if [[ "$completer" == "_bar_extcomplete "* ]]; then
+                local ext_name="${completer#_bar_extcomplete }"
+                while IFS= read -r comp; do
+                    all_completions+=("$comp")
+                done < <(_bar_extcomplete "$ext_name" "$cur")
+            elif [[ "$completer" == "_bar_complete_comp_literal "* ]]; then
+                # Literal completer - extract the literal and complete it
+                local literal="${completer#_bar_complete_comp_literal }"
+                if [[ "$literal" == "$cur"* ]]; then
+                    all_completions+=("$literal")
+                fi
+            else
+                # Split completer into function and arguments, then call
+                # e.g., "_bar_complete_comp_file rulefile" -> function=_bar_complete_comp_file, args=rulefile
+                local -a completer_parts
+                read -ra completer_parts <<< "$completer"
+                local comp_func="${completer_parts[0]}"
+                local -a comp_args=("${completer_parts[@]:1}")
+                
+                while IFS= read -r comp; do
+                    all_completions+=("$comp")
+                done < <("$comp_func" "$cur" "${comp_args[@]}")
+            fi
+        else
+            # No completer found, use file completion as fallback
+            _bar_complete_dbg "  No completer found for '$proto_name', using file completion"
+            while IFS= read -r comp; do
+                all_completions+=("$comp")
+            done < <(_bar_complete_comp_file "$cur")
+        fi
+        
+        # If this proto is not optional, stop collecting
+        if [[ $is_optional == false ]]; then
+            break
+        fi
+        
+        check_idx=$((check_idx + 1))
+    done
+    
+    # Return the collected completions
+    if [[ ${#all_completions[@]} -gt 0 ]]; then
+        mapfile -t COMPREPLY < <(printf '%s\n' "${all_completions[@]}" | sort -u)
+    fi
     
     return 0
 }
