@@ -4,6 +4,7 @@
 ### Rust/cargo support.
 
 # prototype: "toolchain" = "ext cargo_toolchain_complete"
+# prototype: "tool" = "ext cargo_tool_complete"
 
 require run
 
@@ -61,6 +62,25 @@ function cargo_toolchain_complete ## List available cargo toolchains for complet
         rustup toolchain list 2>/dev/null | sed 's/[[:space:]].*$//' | sed 's/^/+/'
     fi
 }
+
+function cargo_tool_complete ## List available cargo tools/subcommands for completion
+{
+    ## This function provides completion for cargo tool names (subcommands).
+    ## It lists both built-in cargo commands and installed extensions.
+    cargo --list 2>/dev/null | awk '/^    [a-z]/{print $1}' | grep -v '^[[:space:]]*$'
+}
+
+function cargo_cargo_complete ## Generic cargo completion that forwards to cargo
+{
+    ## This function provides intelligent completion for cargo commands.
+    ## Usage: Called by completion system with cargo subcommand and current prefix
+    ## It uses cargo's own completion if available, or falls back to basic completion.
+    
+    # For now, provide basic file completion
+    # TODO: Investigate if cargo has native completion support we can leverage
+    compgen -f -- "${1:-}"
+}
+
 
 function cargo_cache_artifacts
 {
@@ -137,12 +157,12 @@ function cargo_fix ## Run 'cargo fix'.
     run_test cargo $CARGO_TOOLCHAIN fix --all --allow-dirty
 }
 
-function cargo_build
+function cargo_build ## [cargoargs..] - Compile a local package and all of its dependencies
 {
     run_test cargo $CARGO_TOOLCHAIN --color "${COLOR:-auto}" build --workspace "$@"
 }
 
-function cargo_test
+function cargo_test ## [cargoargs..] - Execute all unit and integration tests
 {
     run_test cargo $CARGO_TOOLCHAIN --color "${COLOR:-auto}" test --workspace "$@"
 }
@@ -162,7 +182,7 @@ function cargo_clippy_strict ## Test with 'cargo clippy' for warnings and errors
     cargo $CARGO_TOOLCHAIN --color "${COLOR:-auto}" clippy 2>&1 | tee /dev/stderr | awk '/(warning|error).*: /{exit 1}'
 }
 
-function cargo_doc
+function cargo_doc ## [cargoargs..] - Build this package's and its dependencies' documentation
 {
     export RUSTDOCFLAGS="-D rustdoc::broken_intra_doc_links"
     run_test cargo $CARGO_TOOLCHAIN --color "${COLOR:-auto}" doc --workspace "$@"
@@ -185,9 +205,9 @@ function cargo_has_unsafe_code ## Checks if the source use 'unsafe' code.
     fi
 }
 
-function cargo_miri
+function cargo_miri ## [cargoargs..] - Run tests under miri (memory sanitizer)
 {
-    run_test cargo +nightly miri test
+    run_test cargo +nightly miri test "$@"
 }
 
 ## When there is unsafe code then run a test under miri supervision.

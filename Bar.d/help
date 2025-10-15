@@ -118,6 +118,12 @@ INVOCATION AND SEMANTICS
   the same name as the symlink is called with all arguments passed.
 
 
+MODULE API/RULES
+
+$(help_describe_files "$BAR_DIR"/* )
+
+
+
 BASH COMPLETION
 
   Bar supports bash completion for rulefiles, rules, functions, and their arguments. Completion
@@ -596,10 +602,6 @@ MAIN API
 
 $(help_describe_files "$BAR_SELF")
 
-
-MODULE API/RULES
-
-$(help_describe_files "$BAR_DIR"/* )
 
 
 LICENSE
