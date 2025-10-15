@@ -136,7 +136,7 @@ _bar_apply_predicates()
         local pred
         for pred in "${predicates[@]}"; do
             # Call predicate function to test item
-            if ! "_bar_complete_predicate_${pred}" "$item" 2>/dev/null; then
+            if ! "_bar_complete_pred_${pred}" "$item" 2>/dev/null; then
                 pass=false
                 break
             fi
@@ -146,32 +146,32 @@ _bar_apply_predicates()
 }
 
 # Predicate: file exists
-_bar_complete_predicate_existing()
+_bar_complete_pred_existing()
 {
     [[ -e "$1" ]]
 }
 
 # Predicate: file does not exist
-_bar_complete_predicate_nonexisting()
+_bar_complete_pred_nonexisting()
 {
     [[ ! -e "$1" ]]
 }
 
 # Predicate: is in local directory
-_bar_complete_predicate_local()
+_bar_complete_pred_local()
 {
     [[ "$1" != */* ]]
 }
 
 # Predicate: is a rulefile
 # Checks if file is readable and contains rule or function statements
-_bar_complete_predicate_rulefile()
+_bar_complete_pred_rulefile()
 {
     [[ -f "$1" && -r "$1" ]] && grep -qE '^(rule|function)[[:space:]]' "$1" 2>/dev/null
 }
 
 # Complete file paths
-_bar_complete_file()
+_bar_complete_comp_file()
 {
     local cur="$1"
     shift
@@ -186,7 +186,7 @@ _bar_complete_file()
 }
 
 # Complete directory paths
-_bar_complete_directory()
+_bar_complete_comp_directory()
 {
     local cur="$1"
     shift
@@ -200,7 +200,7 @@ _bar_complete_directory()
 }
 
 # Complete any path (file or directory)
-_bar_complete_path()
+_bar_complete_comp_path()
 {
     local cur="$1"
     shift
@@ -214,7 +214,7 @@ _bar_complete_path()
 }
 
 # Complete with existing rule names
-_bar_complete_rule()
+_bar_complete_comp_rule()
 {
     local cur="$1"
     shift
@@ -240,7 +240,7 @@ _bar_complete_rule()
 }
 
 # Complete with command/function names
-_bar_complete_command()
+_bar_complete_comp_command()
 {
     local cur="$1"
     shift
@@ -255,7 +255,7 @@ _bar_complete_command()
 }
 
 # Complete with command, function, or rule names
-_bar_complete_command_or_rule()
+_bar_complete_comp_command_or_rule()
 {
     local cur="$1"
     shift
@@ -334,12 +334,12 @@ _bar_extcomplete()
 _bar_init_completion_registry()
 {
     # Generic completers
-    _bar_completion_registry[file]="_bar_complete_file"
-    _bar_completion_registry[directory]="_bar_complete_directory"
-    _bar_completion_registry[path]="_bar_complete_path"
-    _bar_completion_registry[rule]="_bar_complete_rule"
-    _bar_completion_registry[command]="_bar_complete_command"
-    _bar_completion_registry[command_or_rule]="_bar_complete_command_or_rule"
+    _bar_completion_registry[file]="_bar_complete_comp_file"
+    _bar_completion_registry[directory]="_bar_complete_comp_directory"
+    _bar_completion_registry[path]="_bar_complete_comp_path"
+    _bar_completion_registry[rule]="_bar_complete_comp_rule"
+    _bar_completion_registry[command]="_bar_complete_comp_command"
+    _bar_completion_registry[command_or_rule]="_bar_complete_comp_command_or_rule"
     
     # Add module-specific completers (populated during file parsing)
 }
@@ -418,7 +418,7 @@ _bar_complete_params()
     # If no parameter spec, try generic completions
     if [[ -z "$param_spec" ]]; then
         # Default to file completion
-        _bar_complete_file "$cur"
+        _bar_complete_comp_file "$cur"
         return 0
     fi
     
@@ -606,8 +606,8 @@ _bar_update_cache()
     if [[ $need_rescan == true ]]; then
         _bar_complete_dbg "Scanning directory for rule files using predicates..."
         
-        # Use _bar_complete_file with predicates to find all rulefiles
-        mapfile -t current_files < <(_bar_complete_file "" rulefile)
+        # Use _bar_complete_comp_file with predicates to find all rulefiles
+        mapfile -t current_files < <(_bar_complete_comp_file "" rulefile)
         
         # Debug output
         local file
