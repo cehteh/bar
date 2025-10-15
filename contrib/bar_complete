@@ -215,9 +215,13 @@ _bar_complete_comp_rule()
     
     # Apply predicates if specified
     if [[ ${#predicates[@]} -gt 0 ]]; then
-        printf '%s\n' "${rules[@]}" | _bar_apply_predicates "${predicates[@]}"
+        if [[ ${#rules[@]} -gt 0 ]]; then
+            printf '%s\n' "${rules[@]}" | _bar_apply_predicates "${predicates[@]}"
+        fi
     else
-        printf '%s\n' "${rules[@]}"
+        if [[ ${#rules[@]} -gt 0 ]]; then
+            printf '%s\n' "${rules[@]}"
+        fi
     fi
 }
 
@@ -267,9 +271,13 @@ _bar_complete_comp_command_or_rule()
     
     # Remove duplicates and apply predicates
     if [[ ${#predicates[@]} -gt 0 ]]; then
-        printf '%s\n' "${candidates[@]}" | sort -u | _bar_apply_predicates "${predicates[@]}"
+        if [[ ${#candidates[@]} -gt 0 ]]; then
+            printf '%s\n' "${candidates[@]}" | sort -u | _bar_apply_predicates "${predicates[@]}"
+        fi
     else
-        printf '%s\n' "${candidates[@]}" | sort -u
+        if [[ ${#candidates[@]} -gt 0 ]]; then
+            printf '%s\n' "${candidates[@]}" | sort -u
+        fi
     fi
 }
 
@@ -968,9 +976,16 @@ _bar_complete()
                     all_completions+=("$literal")
                 fi
             else
+                # Split completer into function and arguments, then call
+                # e.g., "_bar_complete_comp_file rulefile" -> function=_bar_complete_comp_file, args=rulefile
+                local -a completer_parts
+                read -ra completer_parts <<< "$completer"
+                local comp_func="${completer_parts[0]}"
+                local -a comp_args=("${completer_parts[@]:1}")
+                
                 while IFS= read -r comp; do
                     all_completions+=("$comp")
-                done < <($completer "$cur")
+                done < <("$comp_func" "$cur" "${comp_args[@]}")
             fi
         else
             # No completer found, use file completion as fallback
