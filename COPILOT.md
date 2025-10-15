@@ -8,6 +8,7 @@ This file contains development guidelines for GitHub Copilot when working on the
 - **Always** run shellcheck on all shell scripts,
 - Fix all shellcheck warnings and errors before committing
 - Use `shellcheck <file>` to validate bash/shell code
+- Use shellcheck on tests as well
 - Location of shellcheck config: `shellcheckrc`
 - Use `./bar lints` will run shellcheck on all sources
 
@@ -47,43 +48,41 @@ This file contains development guidelines for GitHub Copilot when working on the
 
 ## Completion System
 
-### General instructions:
-- keep and use the alloc_slot/free_slot functionality we need it later
-- keep the completers and predicates, but need to be renamed s. below
-
 ### Tasks
 
-- add literals to the parameter specifications in Bar.d/help:
-   eg: `function rename ## <this> as|into <that> - requires a literal *as* or *into* at the
-   2nd place` note that punctuation is are already literal: `<rulename>:` is a rulename
-   prototype completer followed with a colon.
-- `--` and `-` are not special anymore, `--flag` is a literal flag `<--flag>` takes '--flag'
-  as prototype and calls its completer.
-- `Bar.d/help` 'WRITING DOCUMENTATION' section does not comply fully with the documentation
-  format described above. Fix that in `Bar.d/help`.
-- rename all actual completers and predicates for better coding style in par with the predicate nameing. eg.
-  - completers are renamed like: `_bar_complete_file` becomes `_bar_complete_comp_file`
-  - predicates are renamed like: `_bar_complete_predicate_existing` becomes `_bar_complete_pred_existing`
-  do that for all completers and predicates
-- remove the caching and file timestamp bits this is just too complex for now
-- rewrite the completion engine in _bar_complete in a more generic way:
-   Study and analyze this appoach, and fix/improve it when you find problems. this is work in progress and only a rough sketch!
-   - rename 'words' to protos, it becomes a dynamic array of prototype specs as defined
-      eg `protos=("[--flags..]" "<inputs..>" "<output>")`
-   - keep a proto_idx pointing to the current index where to complete
-   - the protos array is dynamic completion will modify the prototype specs after the current index as we work along.
-   - the protos array also terminates with an empty string, we do not need to clear all positions in the dynamic case below
-   - the completion engine collects possible completers by evaluating the current index. this
-     is all all alternative prototypes and if optional then from the following protos as well
-     until the first non optional element is hit.
-   - A prototype may hint (implement this somehow, you are free to choose how to.) that it has some additional
-     completion. For simplicity we constrain this only to the prototype that is last in the
-     protos array. if and only if this prototype got completed (out of other alternatives) then
-     its additional completion prototype become dynamically appended to the protos array. eg:
-     (do not actually implement this, this just illustrates the semantics)
-     `function foo ## <input> <processor> - fooify <input> through <processor>`
-     Then once the processor completer successfully completes itself (the first word for a
-     processor) it append the possible completion prototype defined by that processor prototype.
+- add tests for everything you do!
+
+0. Describe the completer design in the `### Design` section right below here in COPILOT.md in
+   a way you can use it for yourself later. commit this.
+1. rename all global private functions and variables to have `_bar_complete_` as prefix
+   - _bar_completion_registry to _bar_complete_protoregistry
+   - _bar_extcomplete to _bar_complete_ext
+   - _bar_parse_file to _bar_complete_parse_file
+   - are there any more global private functions or variables that don't have _bar_complete as
+     prefix? change those too.
+2. Entries _bar_complete_protoregistry do not need "_bar_complete_comp_" as prefix anymore
+   `_bar_complete_protoregistry[rulefile]="_bar_complete_comp_file rulefile"` becomes
+   `_bar_complete_protoregistry[rulefile]="file rulefile"`
+   the places where _bar_complete_protoregistry is used will expand it: "_bar_complete_comp_${...}"
+3. Entries in _bar_complete_protoregistry will have the key syntax `prototype@module` where
+   the `@module` part is optional for common/global completers set up in
+   _bar_init_completion_registry. prototypes added when parsing modules (see below) should add
+   the module name to resolve ambiguities.
+4. When looking entries in _bar_complete_protoregistry the `proto@module` form is tried first.
+   This means we need to keep track from which module the current completing item originates,
+   implement that. When `proto@module` it falls back to just `proto`.
+5. Add a prototype definiton syntax to Bar.d/help and implement parsing it in _bar_complete_parse_file:
+   a single hash comment like
+   `# prototype: "file" = "file"`
+   or
+   `# prototype: "rulefile" = "file rulefile"`
+   will add these as _bar_complete_protoregistry[${module}@]rulefile]="file rulefile"
+6. add simple caching back:
+   add a `declare -a cache` this acts as cache for the current position completion only
+7. Refine the `### Design` section right below here in COPILOT.md to include what you just
+   changed.
+
+### Design
 
 
 ### Module-Specific Completers
