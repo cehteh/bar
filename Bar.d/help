@@ -517,6 +517,8 @@ WRITING DOCUMENTATION
       # prototype: "mytype" = "file"
       # prototype: "myfile" = "file existing local"
       # prototype: "mycommand" = "command"
+      # prototype: "toolchain" = "ext cargo_toolchain_complete"
+      # prototype: "gitargs" = "extcomp git"
     
     These definitions register a prototype with a completer. The format is:
       # prototype: "prototype_name" = "completer_spec"
@@ -524,7 +526,13 @@ WRITING DOCUMENTATION
     Where completer_spec is either:
     - A built-in completer name (file, directory, path, rule, command, etc.)
     - A completer with predicates (e.g., "file existing local")
-    - "ext function_name" for external/custom completers
+    - "ext function_name" for external/custom completers (calls bar --bare function_name)
+    - "extcomp command" for black-box external command completion (invokes command's native bash completion)
+    
+    The "extcomp" type enables leveraging any command's existing bash completion by invoking
+    it as a black box. For example, "extcomp git" will use git's native completion for all
+    git subcommands and flags. This works with git, cargo, ssh, and any other command that
+    has bash completion support.
     
     Note: The '# prototype:' comment must start at the beginning of the line (column 0).
     

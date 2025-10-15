@@ -372,6 +372,75 @@ _bar_complete_comp_ext()
     fi
 }
 
+# External command completion - invokes external command's bash completion as black box
+# Usage: _bar_complete_comp_extcomp <command> [args...]
+# Example: _bar_complete_comp_extcomp git checkout ma
+_bar_complete_comp_extcomp()
+{
+    local cmd="$1"
+    shift
+    local -a args=("$@")
+    
+    # Get the current word to complete (last argument)
+    local cur="${args[-1]:-}"
+    
+    # Source bash-completion if not already loaded
+    if [[ ! $(type -t _completion_loader) == function ]]; then
+        if [[ -f /usr/share/bash-completion/bash_completion ]]; then
+            source /usr/share/bash-completion/bash_completion 2>/dev/null || true
+        elif [[ -f /etc/bash_completion ]]; then
+            source /etc/bash_completion 2>/dev/null || true
+        fi
+    fi
+    
+    # Try to load completion for the command
+    if type -t _completion_loader &>/dev/null; then
+        _completion_loader "$cmd" 2>/dev/null || true
+    fi
+    
+    # Get the completion specification for the command
+    local comp_spec
+    if ! comp_spec=$(complete -p "$cmd" 2>/dev/null); then
+        # No completion available, fall back to file completion
+        compgen -f -- "$cur"
+        return
+    fi
+    
+    # Extract the completion function name from the spec
+    # Format: complete -F <function> <command>
+    local comp_func
+    if [[ "$comp_spec" =~ -F[[:space:]]+([^[:space:]]+) ]]; then
+        comp_func="${BASH_REMATCH[1]}"
+    else
+        # Not a function-based completion, fall back
+        compgen -f -- "$cur"
+        return
+    fi
+    
+    # Check if the completion function exists
+    if ! type -t "$comp_func" &>/dev/null; then
+        compgen -f -- "$cur"
+        return
+    fi
+    
+    # Set up completion environment
+    COMP_WORDS=("$cmd" "${args[@]}")
+    COMP_CWORD=$((${#COMP_WORDS[@]} - 1))
+    COMP_LINE="${COMP_WORDS[*]}"
+    COMP_POINT=${#COMP_LINE}
+    COMPREPLY=()
+    
+    # Call the completion function
+    "$comp_func" 2>/dev/null || true
+    
+    # Filter results by current prefix
+    if [[ -n "$cur" ]]; then
+        printf '%s\n' "${COMPREPLY[@]}" | grep "^${cur}"
+    else
+        printf '%s\n' "${COMPREPLY[@]}"
+    fi
+}
+
 # Initialize default completion registry
 _bar_init_completion_registry()
 {
@@ -511,12 +580,18 @@ _bar_get_completer()
         fi
     fi
     
-    # Expand the spec: if it starts with "ext " convert to "_bar_complete_comp_ext "
-    # otherwise expand with "_bar_complete_comp_"
+    # Expand the spec: 
+    # - "ext funcname" → "_bar_complete_comp_ext funcname"
+    # - "extcomp command" → "_bar_complete_comp_extcomp command"
+    # - otherwise expand with "_bar_complete_comp_"
     if [[ "$spec" == "ext "* ]]; then
         # External completer - convert "ext funcname" to "_bar_complete_comp_ext funcname"
         local ext_func="${spec#ext }"
         echo "_bar_complete_comp_ext $ext_func"
+    elif [[ "$spec" == "extcomp "* ]]; then
+        # External command completion - convert "extcomp command" to "_bar_complete_comp_extcomp command"
+        local ext_cmd="${spec#extcomp }"
+        echo "_bar_complete_comp_extcomp $ext_cmd"
     else
         # Internal completer - expand first word with _bar_complete_comp_ prefix
         local -a spec_parts
@@ -653,6 +728,9 @@ _bar_complete_params()
                 if [[ "$completer" == "_bar_complete_comp_ext "* ]]; then
                     local ext_name="${completer#_bar_complete_comp_ext }"
                     _bar_complete_comp_ext "$ext_name" "$cur"
+                elif [[ "$completer" == "_bar_complete_comp_extcomp "* ]]; then
+                    local ext_cmd="${completer#_bar_complete_comp_extcomp }"
+                    _bar_complete_comp_extcomp "$ext_cmd" "$cur"
                 else
                     $completer "$cur"
                 fi
@@ -677,6 +755,10 @@ _bar_complete_params()
         # External completer
         local ext_name="${completer#_bar_complete_comp_ext }"
         _bar_complete_comp_ext "$ext_name" "$cur"
+    elif [[ "$completer" == "_bar_complete_comp_extcomp "* ]]; then
+        # External command completion
+        local ext_cmd="${completer#_bar_complete_comp_extcomp }"
+        _bar_complete_comp_extcomp "$ext_cmd" "$cur"
     else
         # Internal completer
         $completer "$cur"
@@ -1254,6 +1336,12 @@ _bar_complete()
                         new_comps+=("$comp")
                         all_completions+=("$comp")
                     done < <(_bar_complete_comp_ext "$ext_name" "$cur")
+                elif [[ "$completer" == "_bar_complete_comp_extcomp "* ]]; then
+                    local ext_cmd="${completer#_bar_complete_comp_extcomp }"
+                    while IFS= read -r comp; do
+                        new_comps+=("$comp")
+                        all_completions+=("$comp")
+                    done < <(_bar_complete_comp_extcomp "$ext_cmd" "$cur")
                 elif [[ "$completer" == "_bar_complete_comp_literal "* ]]; then
                     # Literal completer - extract the literal and complete it
                     local literal="${completer#_bar_complete_comp_literal }"
