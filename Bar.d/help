@@ -26,7 +26,20 @@ function help
         more
     else
         cat
-    fi <<EOF
+    fi < <(render_help)
+}
+
+# Help text formatting rules:
+# - Basic identation step is 2 spaces
+# - Normal text indentation is a even number of spaces
+# - Code segments are indented by a odd number of spaces.
+# - Major headers have 2 empty lines above and one empty line behind.
+# - Topevel headers (at column 0) are ALL UPPERCASE. With the following section idented.
+# - Quote blocks like the 'LICENSE' at the end use one extra indentation level.
+# - Lists start at the same indentation level as the text.
+function help_render
+{
+  cat <<EOF
 
   bar -- BAshRulez the bash rule evaluator
 
