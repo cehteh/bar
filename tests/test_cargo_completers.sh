@@ -2,15 +2,18 @@
 # Test cargo completion functions
 
 # shellcheck disable=SC1091
-source contrib/bar_complete
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(dirname "$SCRIPT_DIR")"
+
+source "$REPO_ROOT/contrib/bar_complete"
 
 echo "Testing cargo completion functions..."
 
 # Load the cargo module
-if [[ -f Bar.d/cargo ]]; then
-    source Bar.d/cargo
+if [[ -f "$REPO_ROOT/Bar.d/cargo" ]]; then
+    source "$REPO_ROOT/Bar.d/cargo"
 else
-    echo "✗ FAIL: Cannot find Bar.d/cargo module"
+    echo "✗ FAIL: Cannot find $REPO_ROOT/Bar.d/cargo module"
     exit 1
 fi
 
@@ -38,27 +41,20 @@ else
     echo "ℹ INFO: cargo not installed, skipping cargo_tool_complete test"
 fi
 
-# Test 2: cargo_toolchain_complete
+# Test 2: cargo toolchain completion via extcomp
 echo ""
-echo "Test 2: Testing cargo_toolchain_complete..."
-if command -v rustup &>/dev/null; then
-    toolchains=$(cargo_toolchain_complete)
-    
-    if [[ -n "$toolchains" ]]; then
-        echo "✓ PASS: cargo_toolchain_complete returned toolchains"
-        echo "  Toolchains: $toolchains"
-        
-        # Check that toolchains have + prefix
-        if echo "$toolchains" | head -1 | grep -q "^+"; then
-            echo "✓ PASS: Toolchains have + prefix"
-        else
-            echo "✗ FAIL: Toolchains missing + prefix"
-        fi
+echo "Test 2: Testing cargo toolchain completion via extcomp..."
+if command -v cargo &>/dev/null; then
+    toolchain_completions=$(_bar_complete_comp_extcomp cargo "+")
+
+    if [[ -n "$toolchain_completions" ]]; then
+        echo "✓ PASS: _bar_complete_comp_extcomp returned toolchain suggestions"
+        echo "  Sample: $(echo "$toolchain_completions" | head -3 | tr '\n' ' ')"
     else
-        echo "ℹ INFO: No toolchains installed"
+        echo "ℹ INFO: No toolchain suggestions returned (cargo completion may be unavailable)"
     fi
 else
-    echo "ℹ INFO: rustup not installed, skipping cargo_toolchain_complete test"
+    echo "ℹ INFO: cargo not installed, skipping toolchain completion test"
 fi
 
 # Test 3: _bar_complete_comp_extcomp with cargo
@@ -95,7 +91,7 @@ echo "Test 4: Testing prototype definitions..."
 _bar_init_completion_registry
 
 # Parse cargo module
-_bar_complete_parse_file --module cargo ../Bar.d/cargo
+_bar_complete_parse_file --module cargo "$REPO_ROOT/Bar.d/cargo"
 
 # Check if toolchain prototype is registered
 if [[ -v _bar_complete_protoregistry["cargo@toolchain"] ]]; then
@@ -117,11 +113,11 @@ fi
 echo ""
 echo "Test 5: Testing completer expansion..."
 toolchain_completer=$(_bar_get_completer "" "cargo@toolchain")
-if [[ "$toolchain_completer" == "_bar_complete_comp_ext cargo_toolchain_complete" ]]; then
+if [[ "$toolchain_completer" == "_bar_complete_comp_extcomp cargo" ]]; then
     echo "✓ PASS: toolchain completer expands correctly"
 else
     echo "✗ FAIL: toolchain completer expansion incorrect"
-    echo "  Expected: _bar_complete_comp_ext cargo_toolchain_complete"
+    echo "  Expected: _bar_complete_comp_extcomp cargo"
     echo "  Got: $toolchain_completer"
 fi
 

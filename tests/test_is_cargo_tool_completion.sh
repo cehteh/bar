@@ -80,11 +80,44 @@ fi
 echo ""
 echo "=== Test 7: Verify completer lookup ==="
 completer=$(_bar_get_completer "is_cargo_tool_installed" "toolchain")
-expected_completer="_bar_complete_comp_ext cargo_toolchain_complete"
+expected_completer="_bar_complete_comp_extcomp cargo"
 if [[ "$completer" == "$expected_completer" ]]; then
     echo "✓ Completer lookup successful: '$completer'"
 else
     echo "✗ Completer lookup failed. Expected: '$expected_completer', Got: '$completer'"
+    exit 1
+fi
+
+echo ""
+echo "=== Test 8: Verify end-to-end completion ==="
+# Stub the external completer so we do not depend on cargo's native completion results.
+_bar_complete_comp_extcomp()
+{
+    local command_name="$1"
+    local cur="$2"
+
+    if [[ "$command_name" == "cargo" ]]; then
+        for item in +stable +nightly; do
+            if [[ -z "$cur" || "$item" == "$cur"* ]]; then
+                echo "$item"
+            fi
+        done
+        return 0
+    fi
+
+    return 1
+}
+
+COMP_WORDS=("./bar" "is_cargo_toolchain_available" "")
+COMP_CWORD=2
+COMPREPLY=()
+_bar_complete
+
+if [[ " ${COMPREPLY[*]} " == *" +stable "* && " ${COMPREPLY[*]} " == *" +nightly "* ]]; then
+    echo "✓ Completion returns toolchains via _bar_complete"
+else
+    echo "✗ Completion did not return expected toolchains"
+    echo "  Got: ${COMPREPLY[*]}"
     exit 1
 fi
 

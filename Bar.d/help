@@ -517,7 +517,7 @@ WRITING DOCUMENTATION
       # prototype: "mytype" = "file"
       # prototype: "myfile" = "file existing local"
       # prototype: "mycommand" = "command"
-      # prototype: "toolchain" = "ext cargo_toolchain_complete"
+  # prototype: "toolchain" = "extcomp cargo"
       # prototype: "gitargs" = "extcomp git"
     
     These definitions register a prototype with a completer. The format is:

@@ -106,7 +106,7 @@ MODULE API/RULES
         When [args..] is not present then '--version' is used. Tools that do not handle
         '--version' need 'args..' to give some sensible result.
 
-      is_cargo_toolchain_available [+toolchain]
+      is_cargo_toolchain_available <+toolchain>
         Check if a toolchain is available
 
       cargo_toolchain_complete List available cargo toolchains for completion

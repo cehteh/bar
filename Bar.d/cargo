@@ -3,7 +3,7 @@
 
 ### Rust/cargo support.
 
-# prototype: "toolchain" = "ext cargo_toolchain_complete"
+# prototype: "toolchain" = "extcomp cargo"
 # prototype: "tool" = "ext cargo_tool_complete"
 # prototype: "buildargs" = "extcomp cargo ${CARGO_TOOLCHAIN} build --workspace"
 # prototype: "testargs" = "extcomp cargo ${CARGO_TOOLCHAIN} test --workspace"
@@ -45,27 +45,34 @@ function is_cargo_tool_installed ## [+toolchain] <tool> [args..] - Checks if 'ca
 
 memofn is_cargo_tool_installed
 
-function is_cargo_toolchain_available ## [+toolchain] - Check if a toolchain is available
+function is_cargo_toolchain_available ## <+toolchain> - Check if a toolchain is available
 {
-    if cargo "$1" --version &>/dev/null; then
-        debug "toolchain $1 is installed"
+    if [[ $# -lt 1 ]]; then
+        error "missing toolchain; usage: is_cargo_toolchain_available <+toolchain>"
+        return 2
+    fi
+
+    local toolchain="$1"
+
+    if [[ "$toolchain" != +* ]]; then
+        toolchain="+$toolchain"
+    fi
+
+    if ! command -v cargo >/dev/null; then
+        note "cargo is not installed"
+        return 1
+    fi
+
+    if cargo "$toolchain" --version &>/dev/null; then
+        debug "toolchain $toolchain is installed"
         return 0
     else
-        note "toolchain $1 is not installed"
+        note "toolchain $toolchain is not installed"
         return 1
     fi
 }
 
 memofn is_cargo_toolchain_available
-
-function cargo_toolchain_complete ## List available cargo toolchains for completion
-{
-    ## This function is called by bar_complete to provide completions for +toolchain parameters.
-    ## It lists installed Rust toolchains using rustup.
-    if command -v rustup &>/dev/null; then
-        rustup toolchain list 2>/dev/null | sed 's/[[:space:]].*$//' | sed 's/^/+/'
-    fi
-}
 
 function cargo_tool_complete ## List available cargo tools/subcommands for completion
 {

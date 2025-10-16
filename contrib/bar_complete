@@ -49,7 +49,7 @@ declare -gA _bar_completion_rule_module=()
 # _bar_complete_protoregistry: associative array "prototype" -> "completer_function [predicates]"
 # Maps parameter prototypes to their completion functions
 # Examples: registry["file"]="file"
-#           registry["cargo@toolchain"]="ext cargo_toolchain_complete"
+#           registry["cargo@toolchain"]="extcomp cargo"
 declare -gA _bar_complete_protoregistry=()
 
 # _bar_completion_actions: associative array "prototype" -> "action_function"
@@ -64,6 +64,9 @@ declare -gA _bar_completion_extcomplete_cache=()
 # _bar_completion_module_completers: indexed array storing module-specific completers
 # Format: "module:completer_name"
 declare -ga _bar_completion_module_completers=()
+
+# Command used to invoke completion (bar, please, ./bar, etc.)
+declare -g _bar_complete_invocation=""
 
 # Helper: Find free slot in an array or append
 # Kept for future use, currently not actively used
@@ -343,7 +346,7 @@ _bar_complete_comp_ext()
 {
     local completer_name="$1"
     local cur="$2"
-    
+
     # Check cache first
     if [[ -v _bar_completion_extcomplete_cache["$completer_name"] ]]; then
         local cached="${_bar_completion_extcomplete_cache[$completer_name]}"
@@ -356,10 +359,24 @@ _bar_complete_comp_ext()
         done
         return 0
     fi
-    
+
+    # Determine which bar executable to use (bar, please, ./bar, etc.)
+    local bar_cmd="${_bar_complete_invocation:-}"
+    if [[ -z "$bar_cmd" ]]; then
+        if command -v bar >/dev/null 2>&1; then
+            bar_cmd="bar"
+        elif command -v please >/dev/null 2>&1; then
+            bar_cmd="please"
+        elif [[ -x ./bar ]]; then
+            bar_cmd="./bar"
+        fi
+    fi
+
+    [[ -n "$bar_cmd" ]] || return 0
+
     # Call bar --bare to get completions
     local results
-    if results=$(bar --bare "$completer_name" 2>/dev/null); then
+    if results=$("$bar_cmd" --bare "$completer_name" 2>/dev/null); then
         # Cache the results
         _bar_completion_extcomplete_cache[$completer_name]="$results"
         # Filter and return
@@ -381,6 +398,16 @@ _bar_complete_comp_extcomp()
     local cmd="$1"
     shift
     local -a args=()
+
+    # Allow the command specification to contain preset arguments (e.g. "cargo +nightly")
+    if [[ "$cmd" == *' '* ]]; then
+        local -a cmd_parts=()
+        read -ra cmd_parts <<< "$cmd"
+        cmd="${cmd_parts[0]}"
+        if (( ${#cmd_parts[@]} > 1 )); then
+            args+=("${cmd_parts[@]:1}")
+        fi
+    fi
     
     # Process arguments, expanding ${VARIABLE} references
     local arg
@@ -864,6 +891,24 @@ _bar_extract_literal_punct()
     echo "$literal_suffix"
 }
 
+# Apply literal prefix/suffix to a completion item when needed
+_bar_complete_apply_literals()
+{
+    local item="$1"
+    local literal_prefix="$2"
+    local literal_suffix="$3"
+
+    if [[ -n "$literal_prefix" && "$item" != "$literal_prefix"* ]]; then
+        item="${literal_prefix}${item}"
+    fi
+
+    if [[ -n "$literal_suffix" && "$item" != *"$literal_suffix" ]]; then
+        item="${item}${literal_suffix}"
+    fi
+
+    printf '%s\n' "$item"
+}
+
 # Parse a file for documented rules and functions
 _bar_complete_parse_file()
 {
@@ -1143,7 +1188,8 @@ _bar_complete()
     local cur cword
     local -a protos  # Dynamic array of prototype specs
     local proto_idx=0
-    local -a cache   # Cache for current position completions
+    local -A cache=()   # Cache for current position completions
+    local active_func_or_rule=""
     
     _bar_complete_dbg "=== Bar completion triggered ==="
     
@@ -1162,6 +1208,7 @@ _bar_complete()
     
     # Determine the command (bar, please, or a path like ./bar)
     local cmd="${COMP_WORDS[0]}"
+    _bar_complete_invocation="$cmd"
     
     # For ./bar or similar, check if it's a bar executable
     if [[ "$cmd" == ./* || "$cmd" == ../* || "$cmd" == *"/bar" ]]; then
@@ -1256,6 +1303,7 @@ _bar_complete()
                 
                 if [[ $is_rule == true ]]; then
                     _bar_complete_dbg "  Matched rule/function: $word"
+                    active_func_or_rule="$word"
                     
                     # Get parameter spec for this rule/function
                     local param_spec=""
@@ -1344,87 +1392,106 @@ _bar_complete()
         # Remove trailing .. if present
         proto_name="${proto_name%..\$}"
         proto_name="${proto_name%..}"
-        
-        # Get completer for this prototype from registry
+
+        # Extract literal punctuation so lookups ignore prefix/suffix
+        local -a punct_parts
+        mapfile -t punct_parts < <(_bar_extract_literal_punct "$proto_name")
+        local proto_clean="${punct_parts[0]}"
+        local literal_prefix="${punct_parts[1]}"
+        local literal_suffix="${punct_parts[2]}"
+
+        # Get completer for this prototype from registry with module context
         local completer
-        completer=$(_bar_get_completer "" "$proto_name")
-        
-        if [[ -n "$completer" ]]; then
-            _bar_complete_dbg "  Found completer for '$proto_name': $completer"
-            
-            # Check cache first
-            local cache_key="${completer}:${cur}"
-            local use_cache=false
-            local cache_idx=0
-            
-            # Search cache for this completer+cur combination
-            for ((cache_idx=0; cache_idx<${#cache[@]}; cache_idx++)); do
-                if [[ "${cache[$cache_idx]}" == "$cache_key"* ]]; then
-                    use_cache=true
-                    break
-                fi
-            done
-            
-            if [[ $use_cache == true ]]; then
-                # Use cached results
-                _bar_complete_dbg "  Using cached results for $cache_key"
-                local cached_results="${cache[$cache_idx]#*:}"
-                cached_results="${cached_results#*:}"  # Skip the second colon
-                
-                # Split cached results and add to completions
-                IFS=$'\n' read -rd '' -a cached_comps <<< "$cached_results" || true
-                for comp in "${cached_comps[@]}"; do
-                    [[ -n "$comp" ]] && all_completions+=("$comp")
-                done
+        completer=$(_bar_get_completer "$active_func_or_rule" "$proto_clean")
+
+        # Decide which prefix to pass to the completer. When the literal prefix/suffix
+        # has not been typed yet, request the full result set so we can add literals
+        # ourselves before filtering.
+        local cur_for_completer
+        if [[ -n "$literal_prefix" ]]; then
+            if [[ "$cur" == "$literal_prefix"* ]]; then
+                cur_for_completer="$cur"
             else
-                # Call the completer and cache results
+                cur_for_completer="${literal_prefix}${cur}"
+            fi
+        else
+            cur_for_completer="$cur"
+        fi
+
+        # Cache key combines completer, request prefix, literals, and current word
+        local cache_key="${completer}::${cur_for_completer}::${literal_prefix}::${literal_suffix}::${cur}"
+
+        if [[ -n "$completer" ]]; then
+            _bar_complete_dbg "  Found completer for '$proto_clean': $completer"
+
+            if [[ -v cache["$cache_key"] ]]; then
+                _bar_complete_dbg "  Using cached results for $cache_key"
+                local cached_results="${cache[$cache_key]}"
+                if [[ -n "$cached_results" ]]; then
+                    local -a cached_comps=()
+                    mapfile -t cached_comps <<< "$cached_results"
+                    all_completions+=("${cached_comps[@]}")
+                fi
+            else
                 local -a new_comps=()
-                
-                # Call the completer based on its type
+
                 if [[ "$completer" == "_bar_complete_comp_ext "* ]]; then
                     local ext_name="${completer#_bar_complete_comp_ext }"
                     while IFS= read -r comp; do
-                        new_comps+=("$comp")
-                        all_completions+=("$comp")
-                    done < <(_bar_complete_comp_ext "$ext_name" "$cur")
+                        [[ -z "$comp" ]] && continue
+                        local adjusted
+                        adjusted=$(_bar_complete_apply_literals "$comp" "$literal_prefix" "$literal_suffix")
+                        if [[ -z "$cur" || "$adjusted" == "$cur"* ]]; then
+                            new_comps+=("$adjusted")
+                            all_completions+=("$adjusted")
+                        fi
+                    done < <(_bar_complete_comp_ext "$ext_name" "$cur_for_completer")
                 elif [[ "$completer" == "_bar_complete_comp_extcomp "* ]]; then
                     local ext_cmd="${completer#_bar_complete_comp_extcomp }"
                     while IFS= read -r comp; do
-                        new_comps+=("$comp")
-                        all_completions+=("$comp")
-                    done < <(_bar_complete_comp_extcomp "$ext_cmd" "$cur")
+                        [[ -z "$comp" ]] && continue
+                        local adjusted
+                        adjusted=$(_bar_complete_apply_literals "$comp" "$literal_prefix" "$literal_suffix")
+                        if [[ -z "$cur" || "$adjusted" == "$cur"* ]]; then
+                            new_comps+=("$adjusted")
+                            all_completions+=("$adjusted")
+                        fi
+                    done < <(_bar_complete_comp_extcomp "$ext_cmd" "$cur_for_completer")
                 elif [[ "$completer" == "_bar_complete_comp_literal "* ]]; then
-                    # Literal completer - extract the literal and complete it
                     local literal="${completer#_bar_complete_comp_literal }"
-                    if [[ "$literal" == "$cur"* ]]; then
-                        new_comps+=("$literal")
-                        all_completions+=("$literal")
+                    local adjusted
+                    adjusted=$(_bar_complete_apply_literals "$literal" "$literal_prefix" "$literal_suffix")
+                    if [[ -z "$cur" || "$adjusted" == "$cur"* ]]; then
+                        new_comps+=("$adjusted")
+                        all_completions+=("$adjusted")
                     fi
                 else
-                    # Split completer into function and arguments, then call
-                    # e.g., "_bar_complete_comp_file rulefile" -> function=_bar_complete_comp_file, args=rulefile
                     local -a completer_parts
                     read -ra completer_parts <<< "$completer"
                     local comp_func="${completer_parts[0]}"
                     local -a comp_args=("${completer_parts[@]:1}")
-                    
+
                     while IFS= read -r comp; do
-                        new_comps+=("$comp")
-                        all_completions+=("$comp")
-                    done < <("$comp_func" "$cur" "${comp_args[@]}")
+                        [[ -z "$comp" ]] && continue
+                        local adjusted
+                        adjusted=$(_bar_complete_apply_literals "$comp" "$literal_prefix" "$literal_suffix")
+                        if [[ -z "$cur" || "$adjusted" == "$cur"* ]]; then
+                            new_comps+=("$adjusted")
+                            all_completions+=("$adjusted")
+                        fi
+                    done < <("$comp_func" "$cur_for_completer" "${comp_args[@]}")
                 fi
-                
-                # Cache the results
+
                 if [[ ${#new_comps[@]} -gt 0 ]]; then
-                    local cache_value
-                    cache_value="${cache_key}:$(printf '%s\n' "${new_comps[@]}")"
-                    cache+=("$cache_value")
+                    cache["$cache_key"]="$(printf '%s\n' "${new_comps[@]}")"
+                else
+                    cache["$cache_key"]=""
                 fi
             fi
         else
-            # No completer found, use file completion as fallback
-            _bar_complete_dbg "  No completer found for '$proto_name', using file completion"
+            _bar_complete_dbg "  No completer found for '$proto_clean', using file completion"
             while IFS= read -r comp; do
+                [[ -z "$comp" ]] && continue
                 all_completions+=("$comp")
             done < <(_bar_complete_comp_file "$cur")
         fi

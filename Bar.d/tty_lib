@@ -126,6 +126,7 @@ function tty_echo ## [echo_args] - Echos only when the output is a tty.
 
 [[ "${TERM:-dumb}" = "dumb" ]] || function tty_newline ## Outputs a newline when we are not at column 1.
 {
+    [[ -t 0 && -t 1 ]] || return 0
     local col
     IFS=';' read -srdR -p $'\033[6n' _ col || true
     col="${col%R}"

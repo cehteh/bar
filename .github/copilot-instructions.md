@@ -16,6 +16,7 @@ Bar is a rule-based command runner implementing a declarative workflow system fo
 - Run shellcheck on touched shell scripts (`shellcheck <file>` or `./bar lints`) and resolve findings.
 - Add or update automated tests covering success, failure, and edge cases for new behaviour.
 - Update `Bar.d/help` whenever behaviour or CLI contracts change, then run `./bar doc` to regenerate the README when appropriate.
+- when changing something to figure out if it works/fixes something and this was not the case, then undo those changes before committing. 
 - Stage work logically and write concise commit messages that capture rationale and testing.
 
 ## Code Quality and Testing

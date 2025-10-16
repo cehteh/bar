@@ -3,19 +3,22 @@
 
 set -e
 
-# Navigate to test directory
-cd "$(dirname "$0")"
+# Resolve repository root and navigate to the test directory
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(dirname "$SCRIPT_DIR")"
+
+cd "$SCRIPT_DIR"
 
 # Source the bar completion system
 # shellcheck disable=SC1091
-source ../contrib/bar_complete
+source "$REPO_ROOT/contrib/bar_complete"
 
 # Initialize the completion system
 _bar_init_completion_registry
 
 # Parse the cargo module to register prototypes
 echo "Parsing Bar.d/cargo module..."
-_bar_complete_parse_file --module cargo ../Bar.d/cargo
+_bar_complete_parse_file --module cargo "$REPO_ROOT/Bar.d/cargo"
 
 echo "Testing cargo completion with variable expansion..."
 

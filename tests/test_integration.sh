@@ -1,10 +1,13 @@
 #!/bin/bash
 # Manual integration test for bar_complete
 
-cd "$(dirname "$0")" || exit 1
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(dirname "$SCRIPT_DIR")"
+
+cd "$SCRIPT_DIR" || exit 1
 
 # shellcheck disable=SC1091
-source ../contrib/bar_complete
+source "$REPO_ROOT/contrib/bar_complete"
 
 test_integration() {
     echo "Testing bar_complete integration..."

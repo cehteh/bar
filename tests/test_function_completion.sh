@@ -2,14 +2,17 @@
 # Test function completion for git_ls_files and other git functions
 
 # shellcheck disable=SC1091
-source contrib/bar_complete
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(dirname "$SCRIPT_DIR")"
+
+source "$REPO_ROOT/contrib/bar_complete"
 
 echo "Testing function completion..."
 
 _bar_init_completion_registry
 
 # Parse git_lib module
-_bar_complete_parse_file --module git_lib Bar.d/git_lib
+_bar_complete_parse_file --module git_lib "$REPO_ROOT/Bar.d/git_lib"
 
 # Test 1: Check if git_ls_files is tracked
 echo ""

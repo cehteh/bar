@@ -2,7 +2,10 @@
 # Test external completers and literal punctuation handling
 
 # shellcheck disable=SC1091
-source ../contrib/bar_complete
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(dirname "$SCRIPT_DIR")"
+
+source "$REPO_ROOT/contrib/bar_complete"
 
 echo "Testing external completers and literal punctuation..."
 echo ""

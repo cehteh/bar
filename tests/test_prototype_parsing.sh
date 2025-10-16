@@ -3,7 +3,10 @@
 
 # shellcheck disable=SC1091
 # Source the completion script
-source ../contrib/bar_complete
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(dirname "$SCRIPT_DIR")"
+
+source "$REPO_ROOT/contrib/bar_complete"
 
 # Initialize registry
 _bar_init_completion_registry

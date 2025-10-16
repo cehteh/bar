@@ -2,7 +2,10 @@
 # Test external command completion (black-box forwarding)
 
 # shellcheck disable=SC1091
-source ../contrib/bar_complete
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(dirname "$SCRIPT_DIR")"
+
+source "$REPO_ROOT/contrib/bar_complete"
 
 echo "Testing external command completion (_bar_complete_comp_extcomp)..."
 
