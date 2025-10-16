@@ -1,226 +1,141 @@
 # Bar - BAsh Rulez AI Coding Instructions
 
-Bar is a rule-based command runner implementing a declarative workflow system for bash. It's similar to make/just but with unique features like rule caching, conditional evaluation, git hook integration, and background job scheduling.
+Bar is a rule-based command runner implementing a declarative workflow system for bash. It resembles make/just but adds rule caching, conditional evaluation, git hook integration, and background job scheduling.
+
+## Immediate Checklist
+
+- Run `./bar` before every commit; it validates lints, tests, docs, and rebuilds the README. Fix any reported issues first.
+- Only commit the README when you meaningfully update documentation or finish a task for review.
+- Keep `.github/copilot-instructions.md` current as new guardrails emerge; remove outdated guidance promptly.
+- Ensure every `tests/test_*.sh` script is executable and that `./bar tests` passes cleanly.
+
+## Development Workflow
+
+- Clarify the requirement, then inspect existing modules for comparable patterns.
+- Extend existing rules and hooks when possible instead of writing bespoke scripts.
+- Run shellcheck on touched shell scripts (`shellcheck <file>` or `./bar lints`) and resolve findings.
+- Add or update automated tests covering success, failure, and edge cases for new behaviour.
+- Update `Bar.d/help` whenever behaviour or CLI contracts change, then run `./bar doc` to regenerate the README when appropriate.
+- Stage work logically and write concise commit messages that capture rationale and testing.
+
+## Code Quality and Testing
+
+- `./bar` orchestrates the core pipeline; it must succeed prior to committing.
+- `./bar tests` executes the full suite defined in Barf; run it before submission.
+- The `shellcheckrc` configuration governs linting expectations; follow it for consistent shellcheck runs.
+- New tests belong in `tests/` with the `test_*.sh` naming convention and executable bit set.
+- Reuse existing helpers such as the `testdir` system for isolated environments instead of custom scaffolding.
+
+## Documentation
+
+- `Bar.d/help` is the single source of user-facing documentation; avoid ad-hoc docs elsewhere.
+- Regenerate the README with `./bar doc` after material help changes and include it in commits when content meaningfully changes.
+- Headings: use three leading hashes for file-level descriptions and two leading hashes for individual rules or functions inside help modules.
+- Follow the documented parameter grammar: `<param>` for required values, `[param]` for optional, `..` for repetition, `a|b` for alternatives, and literal tokens for fixed strings. Prototypes bind specific completers.
+
+## Completion System Reference
+
+- `contrib/bar_complete` implements parameter-aware completion with module tracking, prototype registry, predicate filtering, and result caching.
+- Register prototypes via `# prototype: "name" = "spec"` comments or `module_prototype_complete` functions; specs map to built-ins like `file`, `file existing`, `ext func`, or `extcomp command`.
+- Resolver order prefers `module@proto`, then `func@proto`, falling back to global `proto` definitions.
+- Literal punctuation in prototypes (such as `[+toolchain]` or `<rule:>`) is preserved; completions inject the literal when the user has not typed it yet.
+- External completers reuse the invoking command (for example `./bar --bare ...`) and cache results in `_bar_completion_extcomplete_cache` for efficiency.
 
 ## Architecture Overview
 
-**Core Components:**
-- `bar` - Main script with module loading and rule evaluation
-- `Bar.d/` - Module directory containing rule libraries and tools support
-- `Barf` - Project rule file (like Makefile but for bash rules)
-- Rule engine with dependency resolution, caching, and conditional execution
+- `bar` - main script handling module loading and rule evaluation.
+- `Bar.d/` - module directory with rule libraries and tooling support.
+- `Barf` - project rule file (Makefile analogue) defining orchestration.
+- Rule engine provides dependency graphs, caching, conditional execution, and background scheduling.
 
-**Key Modules:**
-- `rule_lib` - Core rule definition and evaluation engine
-- `std_lib` - General utility functions (always loaded)
-- `*_rules` modules - Auto-loaded rule hooks for tools (cargo, git, etc.)
-- Tool modules (`cargo`, `git`, `shellcheck`) - Tool-specific functionality
+## Rule System Essentials
 
-## Rule System Architecture
-
-Rules are cached, pure functions with dependencies. The syntax: `rule [name:] [deps..] [-- body]`
-
-**Rule Types:**
-- Conjunctive (default): All clauses must succeed
-- Disjunctive (`--disjunct`): First successful clause wins
-- Conditional deps: `dep?` (skip if fails), `!dep` (expect failure), `dep~` (unconditional)
-
-**Special Rules:** `SETUP`, `PREPROCESS`, `MAIN`, `POSTPROCESS`, `CLEANUP`
-
-## Development Workflows
-
-**Testing:**
-```bash
-./bar tests                    # Run all tests in tests/
-./bar testdir_enter           # Create isolated test environment  
-./bar test_staged             # Test staged changes in testdir
-```
-
-**Key Commands:**
-```bash
-./bar                         # Run MAIN rule (lints tests doc build)
-./bar fastchk                 # Fast checks based on git branch
-./bar activate                # Install git hooks
-./bar help <module>           # Module documentation
-./bar --debug <rule>          # Debug rule execution
-```
-
-**Module Loading:**
-- `*_lib` - Manual load with `require modulename_lib`
-- `*_rules` - Auto-loaded at startup to hook into std rules
-- Simple names (no underscore) - Lazy loaded by rule name prefix
-
-## Key Patterns
-
-**Hook Pattern:** Tool-specific `*_rules` modules add clauses to standard rules:
-```bash
-# In cargo_rules
-rule build_libs: is_cargo_project? 'cargo build --lib'
-rule lint_sources: is_cargo_project? cargo_lint??
-```
-
-**Conditional Rules:** Use branch-specific logic:
-```bash
-rule fastchk: --conclusive is_git_release_branch? lints tests doc
-rule fastchk: --conclusive is_git_feature_branch? lint_sources
-```
-
-**Background Jobs:** Use memodb for expensive operations:
-```bash
-rule main_commit: 'memodb_schedule audit' 'memodb_schedule tests'
-rule main_commit_results: 'memodb_result audit' 'memodb_result tests'
-```
-
-## Documentation Convention
-
-Use `##` for user-facing docs, `###` for file headers:
-```bash
-function name ## [--opt] <required> [optional..] - Description
-## [--opt] - Option description
-## <required> - Required parameter
-```
-
-**Completion Prototypes:** Define at column 0:
-```bash
-# prototype: "toolchain" = "ext cargo_toolchain_complete"
-# prototype: "gitargs" = "extcomp git"
-```
-
-## Integration Points
-
-**Git Hooks:** Rules triggered by git operations (pre-commit, etc.)
-**Tool Integration:** Modules detect and integrate with cargo, git, shellcheck, etc.
-**Completion System:** `contrib/bar_complete` provides bash completion with parameter-aware completion
-
-## Testing Infrastructure
-
-- Tests in `tests/test_*.sh` - Run with `./bar tests`
-- Isolated testdir system - Creates clean environments from git trees
-- Background job testing via memodb
-- Integration tests for completion system
-
-## Project-Specific Notes
-
-- Self-hosting: Bar maintains itself using Bar (see `Barf` vs `Barf.default`)
-- License checking: No DBG statements allowed in production
-- Module system is self-contained (no external paths)
-- Extensive bash completion with parameter introspection
+- Rules use the syntax `rule [name:] [deps..] [-- body]` and behave as cached pure functions.
+- Default rules are conjunctive; add `--disjunct` to stop at the first succeeding clause.
+- Dependency modifiers: `dep?` skips if the dependency fails, `!dep` expects failure, and `dep~` forces execution.
+- Lifecycle hooks include `SETUP`, `PREPROCESS`, `MAIN`, `POSTPROCESS`, and `CLEANUP`.
 
 ## Module System
 
-### Module Types & Loading
+- `*_lib` modules expose function libraries; load them explicitly with `require name_lib`.
+- `*_rules` modules hook into standard targets and auto-load at startup.
+- Single-word modules load lazily when their rule prefix is invoked.
+- Completion helpers follow `module_prototype_complete` naming with lowercase alphanumeric segments.
 
-1. **`*_lib`** - Function libraries, manually loaded with `require name_lib`
-2. **`*_rules`** - Rule definitions that hook into standard targets, auto-loaded at startup  
-3. **Single-word modules** - Lazy-loaded on demand when rules like `module_action` are called
+## Standard Integration Points
 
-### Module Conventions
+- Standard targets in `std_rules`: `build` (via `build_libs` and `build_bins`), `tests` (`test_units`, `test_integrations`), `lints` (`lint_sources`, `lint_docs`), and `all` (`build`, `doc`).
+- Git hook execution: `SETUP` → `PREPROCESS` → branch-specific main rule → `POSTPROCESS` → `CLEANUP`; enable hooks with `./bar activate`.
+- Branch defaults (`Barf.default`): feature branches run fast checks, devel branches run full tests, main/release branches perform exhaustive validation.
 
-- **std_lib, rule_lib** - Always loaded, provide core functionality
-- **std_rules** - Defines extensible standard targets (`build`, `test`, `lints`, etc.)
-- **Tool-specific modules** - e.g., `cargo_rules` hooks Rust support into standard targets
-- **Feature modules** - e.g., `git_rules` provides git hook integration, `release` handles versioning
+## Development Commands
 
-### Auto-loading Pattern
+- `./bar` - run the full pipeline (lints, tests, docs, build).
+- `./bar fastchk` - execute quick, branch-aware checks.
+- `./bar watch` - start the file watcher for continuous testing.
+- `./bar activate` - install configured git hooks.
+- `./bar help <module>` - render module documentation.
+- `./bar --debug <rule>` - run a rule with verbose diagnostics.
+- `./bar testdir_enter` / `./bar test_staged` - set up isolated test directories.
 
-Rule names trigger module loading: `try_cargo_check` → loads `cargo` module by stripping `try_` prefix and taking first word before `_`.
+## Testing Infrastructure
 
-## Standard Workflow Integration
+- `tests/test_*.sh` scripts validate functionality; ensure they use repository-relative sourcing via the `SCRIPT_DIR` and `REPO_ROOT` pattern.
+- The `testdir` system creates clean environments from git trees for reproducible runs.
+- `memodb` enables background job scheduling; pair `memodb_schedule` with `memodb_result` during async testing scenarios.
+- Completion features have dedicated integration tests under `tests/`.
 
-### Standard Rule Targets
+## Project Notes
 
-All modules hook into these extensible targets in `std_rules`:
-- **`build`** → `build_libs` + `build_bins`  
-- **`tests`** → `test_units` + `test_integrations`
-- **`lints`** → `lint_sources` + `lint_docs`
-- **`all`** → `build` + `doc`
-
-### Git Hook Integration
-
-Execution flow for git hooks:
-1. `SETUP` - Creates isolated testdir from git index
-2. `PREPROCESS` - Prepares environment  
-3. **Main rule** - Branch-specific logic (see `Barf.default` branch patterns)
-4. `POSTPROCESS` - Cleanup tasks
-5. `CLEANUP` - Always runs (in reverse order)
-
-Enable with: `./bar activate` (runs `githook_enable` for configured hooks)
-
-## Development Workflows
-
-### Essential Commands
-
-```bash
-./bar                    # Run MAIN rule (typically lints + tests + build)
-./bar fastchk           # Branch-aware quick checks
-./bar watch             # Continuous testing with file watcher
-./bar activate          # Enable git hooks
-./bar help              # Extract documentation from modules
-./bar --debug rule      # Run with verbose debugging
-```
-
-### Testing & Background Processing
-
-- **testdir system** - Creates isolated test directories from git trees
-- **memodb** - Persistent memoization allowing background command execution
-- **Background processing** - `memodb_schedule cmd` + later `memodb_result cmd`
-
-### Branch-aware Development (Barf.default)
-
-Different rules fire based on git branch patterns:
-- **feature branches** - Fast lints + unit tests
-- **devel branches** - Full test suite  
-- **main/release** - Complete validation including audit, docs, benchmarks
+- The project is self-hosting; Bar manages its own workflows through Bar rules.
+- Production code must not contain `DBG` statements.
+- The module system operates entirely within the repository without external path assumptions.
+- Bash completion relies on parameter prototypes and should remain consistent across modules.
+- `is_cargo_toolchain_available` must not depend on `rustup`; many environments ship only distro `cargo`.
 
 ## Key Patterns for Extension
 
-### Adding Tool Support
+- Add tool support by creating `<tool>_rules` modules that extend standard targets and paired `<tool>` modules containing implementations plus detection helpers (for example `is_tool_project`).
+- Compose workflows with multi-clause rules or disjunctive fallbacks instead of large monolithic scripts.
+- Encode branch-aware or conditional behaviour using built-in predicates within rule clauses.
 
-1. Create `tool_rules` module hooking into std_rules:
-```bash
-rule lint_sources: is_tool_project? tool_lint
-rule build_libs: is_tool_project? tool_build  
+## Patterns and Examples
+
 ```
-
-2. Create `tool` module with implementation functions
-3. Add detection function `is_tool_project` checking for tool manifest files
-
-### Rule Definition Patterns
-
-```bash
-# Multi-clause rule (all must pass)
-rule complex_task: prep_step
-rule complex_task: actual_work  
-rule complex_task: cleanup_step
-
-# Disjunctive rule (first success wins)
-rule --disjunct fallback_task: preferred_method
-rule fallback_task: fallback_method
-
-# Branch-conditional rules
-rule pre-commit: is_git_feature_branch? quick_checks
-rule pre-commit: is_git_main_branch? full_validation
-```
-
-### Module Documentation
-
-Use `##` comments for auto-extracted documentation:
-
-```bash
-function my_function ## <arg> - Description
+function my_function ## <required> [optional] - Summary
 {
-    ## Additional documentation lines
-    ## More details about usage
+    ## <required> - Required parameter description
+    ## [optional] - Optional parameter description
 }
 
-## Rule documentation  
-rule my_rule: deps -- body
+## <arg> [options..] - Rule summary
+rule my_rule:
+    ## <arg> - Explanation
+    ## [options..] - Option details
+
+function mymodule_mytype_complete ## Emit completions for mytype
+{
+    echo "option1"
+    echo "option2"
+}
 ```
 
-## Configuration Files
+## Project Structure
 
-- **`Barf.default`** - Template showing branch-aware git hook integration
-- **`example`** - Comprehensive syntax examples and test cases  
-- **Project `Barf`** - Customize by extending/overriding standard rules
+- `bar` - entrypoint script.
+- `Bar.d/` - modules for libraries, rules, and tooling.
+- `Bar.d/help` - authoritative documentation source.
+- `contrib/bar_complete` - bash completion implementation.
+- `tests/` - integration and regression suite.
 
-The architecture prioritizes composability - most functionality comes from modules hooking into standard extension points rather than monolithic implementations.
+## Git History Guidance
+
+- Store implementation notes and context in commit messages rather than standalone files.
+- Keep messages brief but informative, describing behaviour changes, rationale, and tests executed.
+
+## Configuration and References
+
+- `Barf.default` - template showcasing branch-aware orchestration.
+- `example/` - comprehensive syntax demonstrations and fixtures.
+- `Pleasef.default` - please integration example.
+- Use `./bar help` and module sources in `Bar.d/` as primary references when extending functionality.
