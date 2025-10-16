@@ -1,3 +1,4 @@
+
   bar -- BAshRulez the bash rule evaluator
 
 ABOUT
@@ -63,7 +64,7 @@ INVOCATION AND SEMANTICS
 
   Starts by loading all initial modules (those which have underscores in their name) and the
   rulefile, which is either "Barf", "barf", ".Barf", ".barf" when called as 'bar' or "Pleasef"
-  "pleasef" ".Pleasef" ".pleasef" "\$HOME/.Pleasef" when called as 'please' and when the first
+  "pleasef" ".Pleasef" ".pleasef" "$HOME/.Pleasef" when called as 'please' and when the first
   argument is not a file.
 
   The duality of having 'bar' installed as 'please' is not only for making it more
@@ -90,7 +91,1254 @@ INVOCATION AND SEMANTICS
 
 MODULE API/RULES
 
-$(help_describe_files "$BAR_DIR"/* )
+  cargo - Rust/cargo support.
+
+    Variables:
+
+      CARGO_TOOLCHAIN (xg)
+        The rust toolchain that is used for most operations.
+        Default: ${CARGO_TOOLCHAIN:-}
+
+    Functions:
+
+      is_cargo_tool_installed [+toolchain] <tool> [args..]
+        Checks if 'cargo <tool>' is installed
+        When [args..] is not present then '--version' is used. Tools that do not handle
+        '--version' need 'args..' to give some sensible result.
+
+      is_cargo_toolchain_available [+toolchain]
+        Check if a toolchain is available
+
+      cargo_toolchain_complete 
+        List available cargo toolchains for completion
+        This function is called by bar_complete to provide completions for +toolchain parameters.
+        It lists installed Rust toolchains using rustup.
+
+      cargo_tool_complete 
+        List available cargo tools/subcommands for completion
+        This function provides completion for cargo tool names (subcommands).
+        It lists both built-in cargo commands and installed extensions.
+
+      cargo_fix 
+        Run 'cargo fix'.
+        Note that this will modify the source in place.
+
+      cargo_build [buildargs..]
+        Compile a local package and all of its dependencies
+
+      cargo_test [testargs..]
+        Execute all unit and integration tests
+
+      cargo_check 
+        Run 'cargo check'. Testing whenever the source can be compiled.
+
+      cargo_clippy_errors 
+        Tests with 'cargo clippy' for errors only
+
+      cargo_clippy_strict 
+        Test with 'cargo clippy' for warnings and errors
+
+      cargo_doc [docargs..]
+        Build this package's and its dependencies' documentation
+
+      cargo_update 
+        Run 'cargo update'
+
+      cargo_has_unsafe_code 
+        Checks if the source use 'unsafe' code.
+        This does only a coarse '-Funsafe-code' check, but does not depend on external tools.
+
+      cargo_miri [miriargs..]
+        Run tests under miri (memory sanitizer)
+
+      cargo_bench 
+        Run 'cargo bench'
+
+      cargo_publish 
+        Run 'cargo publish'
+
+    Rules:
+
+      cargo_lint:
+        Runs all linters
+
+      cargo_toolchain:
+        <+toolchain> - Clause local change of the toochain used by cargo.
+
+      cargo_fmt_check:
+        Checks whenever the source code is well formatted.
+        If available the '+nightly' toolchain is used.
+
+      cargo_build_unit_tests:
+        Builds unit tests.
+
+      cargo_test_units:
+        Runs unit tests.
+
+      cargo_build_integration_tests:
+        Build integration tests
+
+      cargo_test_integrations:
+        Run integration tests. This includes the doctests.
+
+      cargo_fmt:
+        Run 'cargo fmt'. When available the '+nightly' toolchain is used.
+        Note that this will modify the source in place.
+
+      cargo_miri:
+        When there is unsafe code then run a test under miri supervision.
+        Requires the '+nightly' toolchain.
+
+      cargo_check_msrv:
+        Checks whenever the 'rust_version' in the manifest is sufficient.
+        This check only happens when 'cargo-msrv' is installed, otherwise a warning is printed.
+
+      cargo_mutants:
+        Run 'cargo mutants' when it is available.
+        When 'cargo-mutants' is not installed a warning is printed.
+
+      cargo_outdated:
+        Run 'cargo outedated' when it is available.
+        When 'cargo-outdated' is not installed a warning is printed.
+
+      cargo_audit:
+        Run 'cargo audit' when it is available.
+        When 'cargo-audit' is not installed a warning is printed.
+
+      cargo_semver_checks:
+        Run cargo semver-checks to test if a semver for a release is sufficient
+
+
+  cargo_rules - General support rules for Rust/Cargo projects
+    
+    Checks whenever we are in a cargo project.
+    Hooks cargo support into the 'std_rules'
+
+    Functions:
+
+      has_cargo_manifest 
+        Checks if 'Cargo.toml' exists.
+
+    Rules:
+
+      is_cargo_installed:
+        Successful when 'cargo' is available.
+
+      is_cargo_project:
+        Check whenever we are ready to use cargo here.
+
+      release_publish:
+        Push a software release to crates.io (or whatever registry is configured).
+
+
+  cliff - git cliff changelog generation
+
+    Variables:
+
+      GIT_CLIFF_OUTPUT (gx)
+        Output where to write the changelog
+        Default: ${GIT_CLIFF_OUTPUT:-CHANGELOG.md}
+
+    Functions:
+        The generated changelog and cliff.toml (when there where changes) are implicitly staged.
+        This does not git-commit though.
+
+    Rules:
+
+      cliff_changelog:
+        [cliff_args..] - use git cliff to generate a changelog.
+
+      cliff_release_changelog:
+        Makes a changelog for a release, commits and tags it. Must be called from a release worktree
+        with state 'tested'.
+
+      cliff_changelog_amend:
+        Regenerates the changelog up to the previous commit and amends the current commit with the new changelog
+
+
+  cliff_rules - Hooks git cliff into build_versioned_artifacts
+
+    Rules:
+
+      release_changelog:
+        Create a cliff changelog for releases when there is a 'cliff.toml' at the project root.
+
+
+  entr - Support for the entr file watcher
+
+    Rules:
+
+      is_entr_installed:
+        Succeeds when 'entr' is available.
+
+      entr_watch:
+        Runs bar in a loop again whenever a file gets changed.
+        Takes a target rule and its parameters as argument.
+        Defaults to 'MAIN'.
+
+
+  entr_rules - hooks entr into the watch/watch_git_index rules
+
+  git - Git support rules
+
+    Rules:
+
+      is_git_repository:
+        Succeeds when we are in inside (at or below) a git repository.
+
+      is_git_toplevel:
+        Succeeds when we are at the top level of a git repository.
+
+      git_is_clean:
+        Checks if there are modified files, fails if there are any.
+
+      git_branch_matches:
+        [branchpattern..] - Checks that the current git branch matches any of the given patterns.
+
+      is_git_pre_commit_hook:
+        Checks if called as githook.
+
+      is_git_pre_merge_commit_hook:
+        Checks if called as githook.
+
+      is_git_prepare_commit_msg_hook:
+        Checks if called as githook.
+
+      is_git_commit_msg_hook:
+        Checks if called as githook.
+
+      is_git_applypatch_msg_hook:
+        Checks if called as githook.
+
+      is_git_pre_applypatch_hook:
+        Checks if called as githook.
+
+      is_git_post_applypatch_hook:
+        Checks if called as githook.
+
+      is_git_post_commit_hook:
+        Checks if called as githook.
+
+      is_git_pre_rebase_hook:
+        Checks if called as githook.
+
+      is_git_post_checkout_hook:
+        Checks if called as githook.
+
+      is_git_post_merge_hook:
+        Checks if called as githook.
+
+      is_git_pre_push_hook:
+        Checks if called as githook.
+
+      is_git_pre_receive_hook:
+        Checks if called as githook.
+
+      is_git_update_hook:
+        Checks if called as githook.
+
+      is_git_proc_receive_hook:
+        Checks if called as githook.
+
+      is_git_post_receive_hook:
+        Checks if called as githook.
+
+      is_git_post_update_hook:
+        Checks if called as githook.
+
+      is_git_reference_transaction_hook:
+        Checks if called as githook.
+
+      is_git_push_to_checkout_hook:
+        Checks if called as githook.
+
+      is_git_pre_auto_gc_hook:
+        Checks if called as githook.
+
+      is_git_post_rewrite_hook:
+        Checks if called as githook.
+
+      is_git_sendemail_validate_hook:
+        Checks if called as githook.
+
+      is_git_fsmonitor_watchman_hook:
+        Checks if called as githook.
+
+      is_git_post_index_change_hook:
+        Checks if called as githook.
+
+      is_git_main_branch:
+        Checks if the current branch matches 'main master'.
+
+      is_git_release_branch:
+        Checks if the current branch matches 'release-* release/*'.
+
+      is_git_devel_branch:
+        Checks if the current branch matches 'devel-* devel/*'.
+
+      is_git_feature_branch:
+        Checks if the current branch matches 'feature-* feature/*'.
+
+      is_git_bugfix_branch:
+        Checks if the current branch matches 'bugfix-* bugfix/* fix-* fix/*'.
+
+      is_git_hotfix_branch:
+        Checks if the current branch matches 'hotfix-* hotfix/*'.
+
+      is_git_improvement_branch:
+        Checks if the current branch matches 'improvement-* improvement/*'.
+
+      is_git_doc_branch:
+        Checks if the current branch matches 'doc-* doc/*'.
+
+      is_git_wip_branch:
+        Checks if the current branch matches 'wip-* wip/*'.
+
+      is_git_experimental_branch:
+        Checks if the current branch matches 'experiment-* experiment/*'.
+
+
+  git_lib - Git support library
+
+    Functions:
+
+      git_dir 
+        Returns the absolute path to the 'GIT_DIR' (.git/).
+        Note that this may be distinct from '$(git_toplevel)/.git/' when worktrees or other git
+        features are used.
+
+      git_ls_files [git-ls-files-opts]..
+        Sorted list of files in the git repository.
+        git-ls-files '--cached' and '--exclude-standard' are always implied.  Notable options
+        are '-z' for zero terminated output and '--others' to show untracked files.
+
+      git_branch_name 
+        Returns the branch name that is checked out, dies when not in a git branch.
+
+      git_branch_complete 
+        List all git branches for completion
+        This function is called by bar_complete to provide completions for branch parameters.
+
+      git_branch_find [patterns]..
+        lists branches matching the given patterns
+
+      git_branch_find_one [patterns]..
+        lists the matching the given patterns, fails when there are more than one
+
+      git_is_ancestor [patterns]..
+        checks if the current branch is a ancestor of the one branch matching the patterns
+
+      git_tree_hash [git-ls-files-opts]..
+        Returns a sha1 hash over the current directory
+        This hash is a identifier used by bar. It is not the same hash git using for storing trees.
+
+      git_add_ignore [patterns..]
+        Adds new ignore patterns to '.gitignore'.
+        Patterns that are already present are skipped.
+
+      git_parse_worktrees [main [dirs [branches [heads]]]]
+        Parses git worktrees into variables provided by the caller
+        - main:     variable storing the main worktree (dir)
+        - dirs:     associative array storing 'branch:directory'
+        - branches: associative array storing 'directory:branch'
+        - heads:    associative array storing 'directory:head'
+
+  git_rules - Standard rules for git support
+
+    Rules:
+
+      pre-commit:
+        Entry rule when called as githook.
+
+      pre-merge-commit:
+        Entry rule when called as githook.
+
+      prepare-commit-msg:
+        Entry rule when called as githook.
+
+      commit-msg:
+        Entry rule when called as githook.
+
+      applypatch-msg:
+        Entry rule when called as githook.
+
+      pre-applypatch:
+        Entry rule when called as githook.
+
+      post-applypatch:
+        Entry rule when called as githook.
+
+      post-commit:
+        Entry rule when called as githook.
+
+      pre-rebase:
+        Entry rule when called as githook.
+
+      post-checkout:
+        Entry rule when called as githook.
+
+      post-merge:
+        Entry rule when called as githook.
+
+      pre-push:
+        Entry rule when called as githook.
+
+      pre-receive:
+        Entry rule when called as githook.
+
+      update:
+        Entry rule when called as githook.
+
+      proc-receive:
+        Entry rule when called as githook.
+
+      post-receive:
+        Entry rule when called as githook.
+
+      post-update:
+        Entry rule when called as githook.
+
+      reference-transaction:
+        Entry rule when called as githook.
+
+      push-to-checkout:
+        Entry rule when called as githook.
+
+      pre-auto-gc:
+        Entry rule when called as githook.
+
+      post-rewrite:
+        Entry rule when called as githook.
+
+      sendemail-validate:
+        Entry rule when called as githook.
+
+      fsmonitor-watchman:
+        Entry rule when called as githook.
+
+      post-index-change:
+        Entry rule when called as githook.
+
+      release_publish:
+        Push tags and branches to the default push remove when publishing a release.
+
+
+  githook - Support library for managing githooks
+
+    Rules:
+
+      githook_enable:
+        Takes a list of githooks to enable as parameters. Must be called from the git_toplevel.
+        Fails when a hook is not available.
+
+      githook_disable:
+        Takes a list of githooks to disable as parameters. Must be called from the git_toplevel.
+        Fails when a hook is not pointing to bar.
+
+
+  help - Provides help, extracts documentation from modules
+    
+    Inline documentation uses two or three hash characters. Three '###' is used for file level
+    documentation to describe a file entirely. Two '##' are used in different contexts:
+    
+    Variable definitions that use the 'declare' keyword can use '##' at the end of the same
+    line to document the variable.
+    
+    Functions use formal parameter syntax: 'function name ## [--opt] <required> [optional] - description'
+    Parameters use: <mandatory>, [optional], param.., [param..], --flags, foo|bar alternatives.
+    Multi-line documentation continues on following lines starting with optional whitespace
+    followed by '##' and parameter explanations.
+    
+    Rules are documented by '##' lines before the rule definition, using the same formal
+    parameter syntax when the rule accepts parameters.
+    
+    Only variables, functions and rules that have doc comments are included in the output.
+
+    Variables:
+
+      MYVAR (g)
+        Description of the variable
+        Default: value
+
+    Functions:
+
+      name [--opt] <required> [optional]
+        description'
+        This module provides cargo/rust support.
+
+      name [--opt] <required> [optional..]
+        Short description
+
+      rename <this> as|into <that>
+        rename this as/into that
+
+      process <input>: <output>
+        process input to output
+
+      foo [--verbose|-v] <input> [output]
+        Process files
+        [--verbose|-v] - Enable verbose output
+        <input>         - Input file to process
+        [output]        - Optional output file (defaults to stdout)
+
+      foo [--opts] <input>
+        Process files
+        [--opts] -
+            --verbose - Enable verbose output
+            --quiet   - Suppress output
+        <input> - Input file to process
+        <target> - Build the specified target
+        [--toolchain] <target> [options..] - Build target
+
+  init - Module to install, initialize and update bar itself.
+
+    Functions:
+
+      init_install [prefix]
+        install links in [prefix] or '~/.local'
+        Bar is distributed by radicle/git. Usually it will exist somewhere in a users home
+        directory where it got checked out. Bar does rolling releases, it is continuously
+        improved. To make this checked out version available for use this 'init_install' will
+        create symlinks at the given [prefix] directory or in '~/.local' by default.
+
+    Rules:
+
+      init:
+        Initialize bar in a workdir. This copies the main 'bar' script, a default 'Barf' and all
+        'Bar.d/' modules to current directory. When the workdir is a git repository then
+        '.gitignore' is updated to exclude the files and directories 'bar' will use for
+        temporary/testing storage. A user may edit the 'Barf' file to suit the project/personal
+        preference.  Unneeded modules in 'Bar.d' can be deleted. When that is done the new/changed
+        files should be committed to version control.
+
+      init_update_existing:
+        Updates a initialized working tree. That is 'bar' itself will be updated when a newer
+        version is available and any module in 'Bar.d/' that exists in the local working tree will
+        be updated as well.  Barf will be left untouched.
+
+      init_update:
+        Updates a initialized working tree. That is 'bar' itself will be updated when a newer
+        version is available and all modules including ones that are not present in 'Bar.d/' will
+        be updated as well.  Barf will be left untouched.
+
+
+  lock - Library for managing lockfiles
+
+    Functions:
+
+      lock_wait <lockname>
+        Waits until we have the lock on a lockfile.
+        '.lock' is automatically appended to the 'lockname'.
+        These locks are recursive the same process can lock_wait on the same lockfile multiple
+        times which must be paired with the same numbers of 'lock_remove' to unlock it.
+
+      lock_try_norec <lockname>
+        try to lock a lockfile non recursively.
+        Will not wait, fails when we already have the lock
+        Locks 'new' and then removes the 'old' locck.
+
+      lock_send <lock> <who>
+        Sends a 'lock' to another process with pid 'who'.
+        Locks can be send atomically to another process. 'lock_send' registers the lock to be
+        send to a process, the lock will be send at the final lock_remove in the sending
+        process when all recursive locks are freed. Note that to obtain the 'who' pid the
+        receiver has to be started first.
+
+      lock_receive <lock>
+        Wait for lock send by another process.
+        Blocks until the the sender removed all uses of 'lock',
+
+      lock_remove <lock>
+        Unlocks 'lock'.
+        'lock_remove' must be paired with the same numbers of earlier 'lock_wait'. Only the
+        last 'lock_remove' will release the lockfile.
+
+  memodb - The memodb is a persistent database which memoizes command results.
+    
+    It records the stdout, stderr and state/exitcode commands and functions.  Commands and
+    functions that are used with the memodb must be pure as their result must only depend on
+    the arguments passed and the directory they are called in. The content of the directory is
+    hashed for the database. This requires properly set up '.gitignore' rules to ignore any
+    build artifacts. Otherwise subsequent instances will not use the same memodb and re-run
+    commands.
+    
+    This is used for
+     1. Persist/cache command results throughout multiple invocations
+     2. Implement background processing where one invocation can schedule commands to be
+        executed in the background and a later invocation can collect the results
+
+    Variables:
+
+      MEMODB_KEEP (gx)
+        How many trees to keep.
+        Default: ${MEMODB_KEEP:-5}
+
+      MEMODB_BACKGROUNDING (gx)
+        Global backgrounding flag.
+        Default: ${MEMODB_BACKGROUNDING:-true}
+
+    Functions:
+
+      memodb_eval <cmd> [args..]
+        Execute a command in foreground and stores its results.
+        The command is only executed on the first time the 'memodb_eval' is called with the
+        same options in the same directory. Any subsequent call will replay the stored results.
+
+      memodb_schedule <cmd> [args..]
+        Schedules a command to be run in background.
+        Will 'memodb_eval' the command when 'MEMODB_BACKGROUNDING' is not true.
+
+      memodb_result <cmd> [args..]
+        Retrieves the background results.
+        Waits for the backgrounding to be completed. Merges the results into the current memodb.
+        Replays the result (stdout/stderr/exitcode) of the given 'cmd [args..]'.
+        'cmd [args..]' must be the same as used when scheduling it to the background.
+        Will error when the command was not previously scheduled and backgrounding is enabled.
+
+      memo_exit 
+        exits a memodb, remove the lock, but keeps the log
+
+  net - Low level networking functions
+
+    Functions:
+
+      net_canon_hostname <host>
+        Canonalize 'host' to a FQDN.
+
+      net_host_reachable <host> [timeout [tries]]
+        checks if 'host' is reachable.
+        The check uses ICMP ping to check for reachability.
+        The [timeout] defaults to 10 seconds and [tries] defaults to 3.
+
+      net_wakeonlan <host>
+        Sends a wake-on-lan signal.
+        'host' is a hostname. '/etc/ethers' must have entries to resolve hosts. See
+        'contrib/update-ethers.sh' for automatically discover and maintain '/etc/ethers'. Waits
+        for the host to become reachable. Fails when it is not reachable.
+
+  rad - Support for the radicle p2p git frontend
+
+    Functions:
+
+      rad_import 
+        import a git repository into radicle
+
+  radicle - managing a radicle installation itself
+
+    Functions:
+
+      radicle_update [HEAD|TAG]
+        Updates the users radicle installation to [HEAD|TAG] or the latest stable
+
+      update_radicle_desktop [HEAD|TAG]
+        Build radicle-desktop, [HEAD|TAG] or the latest stable
+
+  release - Rules for software releases
+    
+    The 'release' module implements a (opinionated) release workflow. Making releases starts
+    on a git toplevel in a development or main branch, a devel branch does not need to be
+    clean.  For each release a new branch/worktree based on the last commit is created. All
+    release work will be done in that branch/worktree. This can be a interactive process, when
+    release_tests fails one can correct things and commit them until the tests pass. The
+    actual release procedure then evaluates 'release_prepare', 'release_commit', 'release_tag'
+    and 'release_publish'.  Finally 'release_postprocess' and 'release_cleanup' are evaluated.
+    
+    Any non published release can be aborted/deleted.
+    
+    This only defines the bare workflow the actual implementation hooks into the
+    'release_rules'.
+    
+    We still make a few fixed assumptions:
+     - Versioning is based on semver
+     - Releases are called 'release'
+     - The main branch can be named 'main' or 'master'
+     - Development branches matching 'devel' 'devel-*' or 'devel/*'
+    
+    The worktree tracks its state in a local git config bar.release.state:
+     - start:
+       The worktree is created but not tested yet.
+     - tested:
+       All test passed.
+     - changelog:
+       generated the changelog and committed it.
+     - ready:
+       The worktree/branch is ready for publishing
+     - published:
+       Uploads succeeded.
+     - done:
+       Postprocessing done.
+     - finished:
+       Final state, everything finished.
+    
+    Further following git config variables are set:
+     - bar.release.startbranch:
+       Branch this release initiated from (usually main or devel).
+     - bar.release.version:
+       The (semver) version of this release.
+    
+    Release Configuration and Workflow
+    
+    Every release starts in its own git worktree. All testing, and fixes necessary for the
+    release are made in that worktree.
+    
+    Configuration of release workflows is done by extending the rules from 'release_rules'.
+    Many other '*_rules' modules already hook into these rules and do the 'right thing'.
+    The parts that can configured in Barf are:
+      - release_prepare:
+        Any extra preparation for releases. 'cargo_rules' already bumps the version.
+      - release_tests:
+        Whatever tests are necessary for making a software release. 'lints' and 'tests' are
+        already defined dependencies. Anything more needs to be added in Barf.
+      - release_preprocess:
+        Any final work that needs to be done before publishing. This should not change the
+        project files anymore. This is the place to do git tags, merge/fast-forward branches
+        or switch over to other worktrees. For convenience the 'release_as_*' rules exist to
+        do this work.
+      - release_publish:
+        The actual publishing part. May need access to the internet.
+        The 'git_rules' and 'cargo_rules' already hook into this.
+      - release_postprocess:
+        Any work to be done after the publishing. Like rebase work/devel branches on the
+        release and so on. For example resetting the main branch and rebase the branch from
+        where the release started:
+         rule release_postprocess: release_reset_mainbranch release_rebase_startbranch
+      - release_cleanup:
+        Final clean up work to remove artifacts not needed after the release.
+        May just use 'rule release_cleanup: clean' when build artifacts can be deleted.
+
+    Functions:
+
+      release_state_matches [[!]statematch]
+        Check if the current state matches (does not match with '!').
+
+      release_into <target_version>
+        switch over to another existing release worktree, reset it to the current release state
+        We prepare releases in dedicated worktrees. This would leave a lot worktrees behind.
+        This provides the facility to coalesce worktrees to keep only major, majorpre1x, or majorminor versions.
+
+      release_rename <version>
+        rename worktree and cd into that
+
+      release_fastforward_branch <branch>
+        fast-forward <branch> to the release branch if possible
+
+      release_reset_mainbranch 
+        Find main branch (main/master) and reset it to the release branch
+
+      release_rebase_branch <branch>
+        rebase <branch> onto the release branch
+
+      release_rebase_startbranch 
+        Rebase the branch that started the release on the release branch.
+
+    Rules:
+
+      release:
+        Makes a software release. Takes an optional version number starting with a digit or a
+        name for the generating the version by 'release_generate_version_hook' as argument.
+        When no argument is provided it defaults to 'auto'.
+
+      release_as_major:
+        To be used from release-preprocess. Creates or resets the release worktree to release.x major.
+
+      release_as_majorpre1x:
+        To be used from release-preprocess. Creates or resets the release worktree to release.x[.y] major with 0.x major semantic.
+
+      release_as_majorminor:
+        To be used from release-preprocess. Creates or resets the release worktree to release.x.y major.minor.
+
+
+  release_rules - The rules called by the release rule
+
+    Rules:
+
+      release_prepare:
+        Update manifest, bump versions, generate changelog an other versioned artifacts etc..
+        Should leave the tree in a uncommited state. Note that 'build_versioned_artifacts' is
+        already a dependency here.
+
+      release_tests:
+        All tests and lints to run for a software release.
+
+      release_changelog:
+        Create the changelog and commit it, may include tags etc.
+
+      release_preprocess:
+        Local actions to be done before the release, rebase main/devel on it etc.
+
+      release_publish:
+        Deploy the release, upload it to servers, git push or whatever necessary. Since network
+        operations can be fallible this can be restarted.  Should start with them least critical
+        (git push) and finally publish it to registries.
+
+      release_postprocess:
+        Local actions to be done after the release.
+
+      release_cleanup:
+        Final cleanup for the release, clean/delete worktrees etc
+
+      release_generate_version:
+        Canonicalize version names. Queried when the the version to 'release' does not start with a
+        digit or was not given. Other modules should plug in here. Names are 'auto', 'major',
+        'minor', 'patch'. Custom rules may support more names such as 'prerelease', 'alpha', 'beta'
+        and so on. 'auto' is the default for 'release'.
+
+      release_current_version:
+        Query the current version of this project.
+
+
+  rule_lib - The library that implements rules, always loaded
+
+    Functions:
+        See RULE DEFINITION SYNTAX in help for details
+
+      newrule <name:> ...
+        Creates a new rule, deletes the existing one.
+        Used to replace already existing rules/clauses.
+
+      rule_delete <name>
+        Deletes a rule (and all it clauses).
+        Can only be used when the rule was not evaluated yet.
+
+      rule_rename <oldname> <newname>
+        renames a rule
+        Can only be used when the rule was not evaluated yet.
+
+      clause_local [var[=value]..]
+        Makes scalar variables local to a clause.
+
+      rule_eval <name> [args..]
+        Evaluates a rule
+        Normally this is used by bar itself but it can be used from function and rule bodies
+        to evaluate rules.
+
+      rule_exists <name>
+        checks if a rule is defined
+
+      rule_list [pattern]
+        lists all loaded rules or rules matching pattern
+        Because of automatic module loading this list is only a current view for diagnostics.
+
+  run - Module for running tests in resource limited environments
+
+    Variables:
+
+      NICE_LEVEL (gx)
+        The nice level 'run_test' uses
+        Default: ${NICE_LEVEL:-1}
+
+      TIMEOUT_SECS (gx)
+        Timeout for tests
+        Default: ${TIMEOUT_SECS:-300}
+
+      MEMORY_KB (gx)
+        Memory limit for tests
+        Default: ${MEMORY_KB:-33554432}
+
+  search - Rules to search text in a project
+
+    Rules:
+
+      search_for:
+        [rg_args..] - General searching for text, pretty paging the results.
+
+      search_issues:
+        Searches for 'FIXME:|TODO:|PLANNED:' with some context around.
+
+      search_fixmes:
+        Searches for 'FIXME:'.
+
+      search_todos:
+        Searches for 'TODO:'.
+
+      search_planned:
+        Searches 'PLANNED:'.
+
+
+  semver_lib - Library for parsing and manipulating (simplified) semver.
+    
+    For the sake of sanity not all possible semver syntax variants are
+    handled. Esp. manipulation is only implemented for the common cases. Patches welcome.
+
+    Functions:
+
+      semver_parse <semver> [major [minor [patch [prerelease [build]]]]]
+        parses semver into the provided variables
+
+      semver_validate <version>
+        Validate if string is a valid semver
+
+      semver_shortversion <version>
+        shortens a semver to the first non zero part 0.2.1-pre0+123 -> 0.2
+
+      semver_major <version>
+        shortens a semver to major
+
+      semver_majorpre1x <version>
+        shortens a semver to major with 0.x major semantic
+
+      semver_majorminor <version>
+        shortens a semver to major.minor
+
+      semver_is_patch 
+        <version>
+
+      semver_increment <version> <release|major|majorpre1x|minor|patch>
+        Increment selected part
+        'release' strips any 'prerelease' part
+        'majorpre1x' increments the minor part on a 0.x version
+
+      semver_cmp <a> <b>
+        comparing 'a' with 'b', prints 'lt', 'eq' or 'gt'
+
+      semver_lt <a> <b>
+        succeeds if a < b
+
+      semver_le <a> <b>
+        succeeds if a <= b
+
+      semver_gt <a> <b>
+        succeeds if a > b
+
+      semver_ge <a> <b>
+        succeeds if a >= b
+
+      semver_eq <a> <b>
+        succeeds if a == b
+
+  shellcheck - Support for the shellcheck shell linter.
+    
+    Shellcheck is surprisingly slow.  In projects using bar one can prevent the bar files
+    themselves being checked by setting in 'Barf':
+    
+     SHELLCHECK_LS_FILES=":!bar :!Bar.d"  # Perhaps adding ':!Barf' too
+
+    Variables:
+
+      SHELLCHECK_LS_FILES (gx)
+        List of file match rules for git-ls-files.
+        Default: ${SHELLCHECK_LS_FILES:-}
+
+    Functions:
+
+      shellcheck_is_shscript <file>
+        Check if <file> is a shell script
+
+      shellcheck_list_shscripts 
+        List all shell scripts under git control
+
+      shellcheck_lint 
+        Test if all shell scripts under git control pass the linter.
+
+    Rules:
+
+      shellcheck_has_shscripts:
+        Checks if the project has any shell scripts. Must be called from a git toplevel.
+        Checks whenever any shell scripts are versioned in gitq
+
+
+  shellcheck_rules - Hooks shellcheck_lint into the std lint rule.
+
+    Rules:
+
+      is_shellcheck_available:
+        Checks if shellcheck is installed and the project has any shell scripts.
+
+
+  ssh - Access remote hosts
+
+    Functions:
+
+      ssh_ping [[user@]host]
+        Checks if one can connect to a remote host.
+
+      ssh_cmd [ssh_args]..
+        Executes a ssh command.
+
+      ssh_bg_cmd [ssh_args]..
+        Executes a ssh command in the background.
+
+  std_lib - Library of general functions which are always present
+
+    Functions:
+
+      memo [-c|-d] [cmd args..]..
+        memoize the result/stdout/stderr of commands, will always return the same result again
+        Memoizes for the current run only. See memodb for persistent memoization.
+        Memoized functions must be pure and only depend on their arguments and the current working directory.
+        Can not handle null bytes in stdout/stderr, use memodb when that is required.
+
+      memofn <functionnames..>
+        rewrites a function into a function that uses 'memo'
+        This renames the given functions to 'nomemo_<functionname>' and creates a wrapper
+        function with the original name that memoizes the result.
+
+      is_scalar <name>
+        Checks that a variable 'name' is a scalar (non array) variable.
+
+      called_as [pattern..]
+        Checks whenever bar is called as a symlink matching the given patterns.
+        This is usable as a rule dependency.
+
+      is_command_installed <command>
+        Checks whenever a function exists or a shell command is in PATH.
+
+      bar_now 
+        Returns the current timestamp in microseconds since epoch.
+
+      hash_args <arguments..>
+        returns the sha1hash of all supplied arguments
+
+      iset <target> [values]..
+        indirect assign values to a variable given by name, assigns to an array when more values are given.
+        When target is empty or '[*]' (missing name) then this is a no-op. Otherwise target
+        must be a declared variable When no values are given then target is cleared.
+
+  std_rules - Standard rule targets where other modules can hook in
+    
+    Here we define targets which can be universally used. Other modules will hook their more
+    specific rules into these. Usually projects support only a subset of these standard targets.
+    This is fine. Any not hooked rule will only print a debug message and being a no-op otherwise.
+    
+    Undesired std_rules can be renamed or deleted in the rulefile, this is preferred to
+    editing the std_rules file because it allows for easier updates of the std_rules file. All
+    these std rules just structure the targets and give debug output on the leafs. Actual
+    actions are hooked in by other modules.
+
+    Rules:
+
+      all:
+        Rule that builds the software, documentation and necessary artifacts but will not do any testing.
+
+      lints:
+        Run all linters.
+
+      build:
+        Build libraries and executables, but not tests, docs and other non mandatory things.
+
+      tests:
+        Run tests, first unit tests then integration tests.
+
+      doc:
+        Build the documentation. When supported the documentation is linted as well.
+
+      bench:
+        Build and run benchmarks.
+
+      fmt:
+        Reformat the source code in place.
+
+      fix:
+        Apply trivial fixes, should be non breaking changes.
+
+      update:
+        Update dependencies.
+
+      run:
+        Run the main binary if any. This already depends on 'build' but the actual run action has
+        to be hooked into 'run' by the user in the rulefile.
+
+      audit:
+        Audit for security issues.
+
+      lint_sources:
+        Run a static analyzer over the source code.
+
+      lint_docs:
+        Checks the documentation.
+
+      fetch_resources:
+        Whenever resources are externally managed and not part of the versioned source tree they
+        should be added to this rule.
+
+      build_assets:
+        Whenever assets that are not part of the normal build process have to be build, this should
+        be added to this rule.
+
+      build_libs:
+        Build libraries.
+
+      build_bins:
+        Build executables.
+
+      build_tests:
+        Build all tests
+
+      build_unit_tests:
+        Build unit tests.
+
+      build_integration_tests:
+        Build integration tests.
+
+      build_docs:
+        Build the documentation
+
+      build_benches:
+        Build benchmarks.
+
+      build_examples:
+        Build examples.
+
+      build_versioned_artifacts:
+        Usually versioned files should be source and not generated by any rule. Sometimes one wants
+        exceptions from this rule. Like generating a README or CHANGELOG. This can be hooked into
+        this rule. This can be run before committing or as part of the commit check where one checks
+        for git_is_clean after running generate_versioned. When this failed then the user forgotten
+        to update the versioned files.
+
+      test_units:
+        Run unit tests.
+
+      test_integrations:
+        Run integration tests.
+
+      test_expensive:
+        Some tests are very expensive. Since building and running makes no much difference then
+        this is accumulated in this single rule. This allows to exclude expensive tests from the
+        normal workflow rules and include them on demand.
+
+      testrelease:
+        Runs the 'release_tests' in a testdir. Uses the current index (staged or last commit) This
+        is not a full release test as it wont attempt to bump version and does not generate
+        changelogs etc.
+
+      benchmark:
+        Running benchmarks. This does not include building benchmarks, see the 'bench' rule.
+
+      deploy:
+        Deploy the project to some server or similar.
+
+      clean:
+        Clean all build artifacts, but keep assets and user configuration.
+
+      force_reset:
+        Danger-Zone: reset the project into a pristine state with all non versioned data deleted or
+        reset to the original state.
+
+      activate:
+        Activates maintainer curated githooks and other setup to use bar in a checked out
+        repository.
+
+
+  testdir - Creating an isolated directory for testing.
+    
+    Unlike other frameworks which do 'pre-commit' processing bar will not modify, block or
+    stash the users workdir. Instead it creates and manages directories which become populated
+    with the projects files. These testdirs also act as caches for build artifacts an can be
+    seeded from previous runs to increase build/test speed. Testdirs are automatically garbage
+    collected, only a few most recent used ones are kept for inspection and seeding new build.
+    
+    Testdirs are created from git 'treeish' objects. Thus git is mandatory.
+    Testdirs are created in the git toplevel and have the name constructed from
+    '$TESTDIR_PREFIX-<timestamp>-<treehash>/'
+
+    Variables:
+
+      TESTDIR_PREFIX (gx)
+        Prefix used for testdirs.
+        Default: ${TESTDIR_PREFIX:-.test}
+
+      TESTDIR_KEEP (gx)
+        How many old testdirs.
+        Default: ${TESTDIR_KEEP:-5}
+
+      TESTDIR (gx)
+        Path to the current testdir.
+
+      TESTDIR_PREV (gx)
+        Path to the previous testdir if exits.
+
+    Functions:
+
+      testdir_gc 
+        Cleanup old testdirs.
+        Removed old unused testdirs. This is called automatically. It is only necessary to
+        manually call this when testdirs piled up because they where in use or when
+        'TESTDIR_KEEP' was decremented.
+
+      testdir_clean 
+        Cleanup all testdirs.
+        Removes all unused testdirs.
+
+      testdir_list 
+        Lists all testdirs.
+
+    Rules:
+
+      testdir_enter:
+        [treeish] - Sets up a test directory change dir into it.
+        Must be called from the git toplevel. Takes an optional treeish to construct the testdir
+        from. When no treeish is given then current index is used.  After creation the
+        'testdir_enter_hook' rule is evaluated. This rule is used to prep/populate/seed the
+        testdir. When a previous testdir exists then 'TESTDIR_PREV' point to it, the hook can use
+        that as source for populating already build artifacts.
+
+
+  tty_lib - This module adds some support for conditional terminal control codes.
+    
+    These codes are stored in the 'TTYCTL' associative array.  The 'TTYNIL' mirrors the keys
+    from 'TTYCTL' but maps them to empty strings.  Finally 'TTYOUT' and 'TTYERR' refer to
+    'TTYCTL' when the associated output stream is a non dumb terminals and refer to 'TTYNIL'
+    when it is not a terminal or a dumb terminal.
+    
+    The keys in 'TTYCTL/TTYNIL' are as following.
+    
+    Two character control sequences:
+     'ce' - Clears from cursor to the end of the line.
+     'cl' - Puts the cursor in column 1 and clears the line.
+     'cs' - Clears the entire screen.
+     'cr' - Puts the cursor in column 1.
+    
+    Three character styles:
+      The first two characters set the foreground and background color:
+       '_' - no change.
+       'k' - black
+       'r' - red.
+       'g' - green
+       'b' - blue.
+       'y' - yellow.
+       'm' - magenta.
+       'c' - cyan.
+       'K' - bright black
+       'R' - bright red.
+       'G' - bright green
+       'B' - bright blue.
+       'Y' - bright yellow.
+       'M' - bright magenta.
+       'C' - bright cyan.
+      The third character set the style uppercase enables, lowercase disables:
+       '_' - no change.
+       'B' - bold.
+       'D' - dim.
+       'U' - underline.
+       'I' - italic.
+       'R' - reverse.
+       'S' - strike-through.
+       'n' - normal (has no uppercase).
+    
+    Finally there is a the one character 'n' code that resets the style completely.
+    
+    For an example to see how this is used look at the 'std_lib' module.
+
+    Functions:
+
+      tty_echo [echo_args]
+        Echos only when the output is a tty.
+
+      tty_newline 
+        Outputs a newline when we are not at column 1.
+
+  watch_rules - Continious supervision by a file watcher
+
+    Rules:
+
+      watch:
+        [rule [arguments..]] - Evaluates a rule or MAIN whenever a versioned files changed in the current directory.
+        File watchers hook into this rule.
+
+      watch_git_index:
+        [rule [arguments..]] - Evaluates a rule or MAIN whenever a the git index changed.
+        File watchers hook into this rule.
 
 
 
@@ -122,7 +1370,7 @@ INITIAL INSTALLATION
 
   Bar can be invoked in different ways:
 
-  1. Installed in \$PATH:
+  1. Installed in $PATH:
      To make this work it is best to clone bar locally and symlink the checked out files
      to your '.local/' tree. This allows easy upgrades via git:
 
@@ -335,7 +1583,7 @@ RULE DEFINITION SYNTAX
    # functions and commands can be used as rules, this should be preferred
    function example
    {
-       echo "i am example called with \$*"
+       echo "i am example called with $*"
    }
 
    # add a tests rule with 3 clauses
@@ -512,14 +1760,14 @@ WRITING DOCUMENTATION
 
 MODULES
 
-  Modules are shell snippets normally located in '\$BAR_DIR' ('Bar.d/', 'bar.d/', '.Bar.d/' or
+  Modules are shell snippets normally located in '$BAR_DIR' ('Bar.d/', 'bar.d/', '.Bar.d/' or
   '.bar.d/') when called as 'bar' or symlink or '~/.config/please' when called as 'please'.
   The 'std_lib' and 'rules_lib' are always loaded at startup. Modules matching '*_rules' are
   also autoloaded at startup. Any other '*_lib' must be manuallly loaded with 'require'.
   Modules with simple alphabetic names without underscores are lazy loaded on demand.
 
   Modules are loaded with the 'require' function. This ensures that they are loaded only once.
-  Require will load modules outside of '\$BAR_DIR' when a path containing at least one slash
+  Require will load modules outside of '$BAR_DIR' when a path containing at least one slash
   is given.
 
   The first variant for modules that are initially loaded is used for modules that define
@@ -578,7 +1826,81 @@ STANDARD RULES
 
 MAIN API
 
-$(help_describe_files "$BAR_SELF")
+  bar - The main BAsh Rulez script
+    
+    Provides only basic functionality for module loading and debugging and starting rule
+    evaluation. Loads the 'std_lib' and 'rule_lib' to make them omnipresent.
+
+    Variables:
+
+      BAR_SELF (grx)
+        Path to bar itself.
+        Default: $(realpath "$BASH_ARGV0")
+
+      BAR_CALLED_AS (grx)
+        Name of bar when called by symlink.
+        Default: ${BASH_ARGV0##*/}
+
+      BAR_PWD (gxr)
+        Initial working directory.
+        Default: $PWD
+
+      BAR_VERBOSITY_LEVEL (gxi)
+        Verbosity level from 0 (silent) to 6 (trace).
+        Default: ${BAR_VERBOSITY_LEVEL:-2}
+
+      BAR_TIMESTAMP (grix)
+        Timestamp in microseconds since epoch of this invocation
+        Default: $(bar_now)
+
+    Functions:
+
+      bar_main [rulefile] [--bare] [rule [arguments..]]
+        Loads a rulefile and executes rule with optional arguments
+        [rulefile]           - File to load the user rules from.
+                               Default: Barf|barf|.Barf|.barf when called as bar or symlink.
+                                        Pleasef|pleasef|.Pleasef|.pleasef|\$HOME/.Pleasef when called as please.
+        [--bare]             - Don't eval SETUP, PREPROCESS, POSTPROCESS and CLEANUP.
+        [rule [arguments..]] - Target rule with arguments.
+                               Default: MAIN
+
+      require [--opt] [modules..]
+        Loads modules.
+        [--opt]     - Make the modules optional, when they do not exist then no warning is emitted
+                      and no failure returned.
+        [modules..] - List of module names to be loaded. Modules are loaded only once, further
+                      attempts to load it will be a no-op.
+
+      DBG [message..]
+        For print-style debugging, should not be present in production code.
+
+      die [message..]
+        Prints 'message' to stderr and exits with failure
+        Unexpected fatal problem. Will terminate execution, CLEANUP rules will be called.
+
+      error [message..]
+        Print a error message to stderr.
+        Unexpected but not fatal.
+
+      warn [message..]
+        Print an warning to stderr.
+        Expected, non fatal problem.
+
+      note [message..]
+        Print an important notice to stderr.
+        Important message the user should be notified about.
+
+      info [message..]
+        Print an informal message to stderr.
+        Broader message about non rule related progress.
+
+      debug [message..]
+        Print a debug message to stderr.
+        Finer grained progress messages.
+
+      trace [message]
+        Prints a trace message to stderr.
+        Very verbose function call or finer messages.
 
 
 
@@ -599,154 +1921,3 @@ LICENSE
 
     You should have received a copy of the GNU Affero General Public License
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
-EOF
-}
-
-
-function help_describe_files
-{
-    local file
-    for file in "$@"; do
-        if help_describe_file "$file"; then
-            help_describe_variables "$file"
-            help_describe_functions "$file"
-            help_describe_rules "$file"
-        else
-            warn "$file has no top level doc"
-        fi
-    done
-}
-
-
-function help_describe_file
-{
-    awk '
-    function printout(text) {
-             out = out text "\n"
-    }
-
-    /^###/{
-        if (match($0, /^###( )?(.*)/, m)) {
-           printout( indent m[2])
-           indent="    "
-        }
-        next
-    }
-
-    END{
-        name = FILENAME
-        gsub(/^.*\//, "", name)
-        if (out != "") {
-           print "  " name " - " out
-        } else {
-           exit 1
-        }
-    }
-    ' "$1"
-}
-
-function help_describe_functions
-{
-    awk '
-    function printout(text) {
-             out = out text "\n"
-    }
-
-    /^.*function[ \t]+[A-Za-z_][A-Za-z0-9_]*[ \t]*##/ {
-      if (match($0, /^.*function[ \t]+([A-Za-z_][A-Za-z0-9_]*)[ \t]*## (((.*) )?- )?(.*)$/, m)) {
-        printout()
-        printout("      " m[1] " " m[4])
-        printout("        " m[5])
-        next
-      }
-    }
-
-    /^[ \t]+##.*/ {
-      sub(/^.*##[ ]?/, "")
-      printout("        " $0)
-      next
-    }
-
-    END{
-        if (out != "") {
-           print "    Functions:"
-           print out
-        }
-    }
-    ' "$1"
-}
-
-function help_describe_rules
-{
-    awk '
-
-    function printout(text) {
-             out = out text "\n"
-    }
-
-    /^rule([ \t](--[a-z_-]*)?)+([A-Za-z_-][A-Za-z0-9_-]*:)/ {
-      if (descr != "" ) {
-         if (match($0, /^rule([ \t](--[a-z_-]*)?)+([A-Za-z_-][A-Za-z0-9_-]*:)/, m)) {
-            printout("      " m[3])
-            printout(descr)
-            descr=""
-         }
-      }
-      next
-    }
-
-    /^##/ {
-      sub(/^##[ ]?/, "")
-      descr = descr "        " $0 "\n"
-      next
-    }
-
-    {
-      descr = ""
-      next
-    }
-
-    END{
-        if (out != "") {
-           print "    Rules:"
-           print ""
-           print out
-        }
-    }
-    ' "$1"
-}
-
-
-
-function help_describe_variables
-{
-    awk '
-    function printout(text) {
-             out = out text "\n"
-    }
-
-    /declare[ \t]+.*##/ {
-      if (match($0, /declare[ \t]+(-([a-zA-Z]+))? ([A-Za-z_][A-Za-z0-9_]*)(="(.*)")?[ \t]*## (.*)$/, m)) {
-        printout("")
-        printout("      " m[3] " (" m[2] ")")
-        printout("        " m[6])
-        if (m[4] != "") {
-           printout("        Default: " m[5])
-        }
-        next
-      }
-    }
-
-    END{
-        if (out != "") {
-           #print ""
-           print "    Variables:"
-           print out
-        }
-    }
-    ' "$1"
-}
-
-# Define --bare rule for help (reads existing module files)
-rule --bare help:
-

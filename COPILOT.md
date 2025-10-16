@@ -2,6 +2,32 @@
 
 This file contains development guidelines for GitHub Copilot when working on the Bar project.
 
+## ⚠️ IMPORTANT REMINDERS - Read These First! ⚠️
+
+**ALWAYS follow these guidelines before committing:**
+
+1. **Run `./bar` to check the project and rebuild README**
+   - This validates the project and regenerates documentation
+   - **ALWAYS** do this before every commit
+   - Fix any issues it shows before committing
+   
+2. **README commits**
+   - Only commit README when there are significant additions
+   - Or when you are finished with a task and want to push it for review
+   - Don't commit trivial README updates
+   
+3. **Keep COPILOT.md updated**
+   - Add things you recently learned and need to remember
+   - Remove finished tasks and outdated items
+   - Commit COPILOT.md when you change it
+   
+4. **Testing**
+   - `./bar tests` runs all tests defined in Barf
+   - All test files in `tests/*.sh` should be executable
+   - Tests must pass before committing
+
+---
+
 ## Code Quality
 
 ### Shellcheck
@@ -48,39 +74,13 @@ This file contains development guidelines for GitHub Copilot when working on the
 
 ## Completion System
 
-### Tasks
-
-- add tests for everything you do!
-
-0. Describe the completer design in the `### Design` section right below here in COPILOT.md in
-   a way you can use it for yourself later. commit this.
-1. rename all global private functions and variables to have `_bar_complete_` as prefix
-   - _bar_completion_registry to _bar_complete_protoregistry
-   - _bar_extcomplete to _bar_complete_ext
-   - _bar_parse_file to _bar_complete_parse_file
-   - are there any more global private functions or variables that don't have _bar_complete as
-     prefix? change those too.
-2. Entries _bar_complete_protoregistry do not need "_bar_complete_comp_" as prefix anymore
-   `_bar_complete_protoregistry[rulefile]="_bar_complete_comp_file rulefile"` becomes
-   `_bar_complete_protoregistry[rulefile]="file rulefile"`
-   the places where _bar_complete_protoregistry is used will expand it: "_bar_complete_comp_${...}"
-3. Entries in _bar_complete_protoregistry will have the key syntax `prototype@module` where
-   the `@module` part is optional for common/global completers set up in
-   _bar_init_completion_registry. prototypes added when parsing modules (see below) should add
-   the module name to resolve ambiguities.
-4. When looking entries in _bar_complete_protoregistry the `proto@module` form is tried first.
-   This means we need to keep track from which module the current completing item originates,
-   implement that. When `proto@module` it falls back to just `proto`.
-5. Add a prototype definiton syntax to Bar.d/help and implement parsing it in _bar_complete_parse_file:
-   a single hash comment like
-   `# prototype: "file" = "file"`
-   or
-   `# prototype: "rulefile" = "file rulefile"`
-   will add these as _bar_complete_protoregistry[${module}@]rulefile]="file rulefile"
-6. add simple caching back:
-   add a `declare -a cache` this acts as cache for the current position completion only
-7. Refine the `### Design` section right below here in COPILOT.md to include what you just
-   changed.
+All core completion system tasks have been completed. The system now supports:
+- Module tracking with hierarchical lookup
+- Prototype definitions via comments
+- Literal punctuation handling (e.g., `[+toolchain]`)
+- Universal black-box completion forwarding via `extcomp`
+- Variable expansion in prototypes (e.g., `${CARGO_TOOLCHAIN}`)
+- Performance caching
 
 ### Design
 
@@ -122,11 +122,13 @@ The completion system works through multiple layers:
    - Return filtered, sorted results
 
 6. **Completer Specification Format**:
-   - Registry stores simplified specs: `"file"`, `"file existing"`, `"ext funcname"`
+   - Registry stores simplified specs: `"file"`, `"file existing"`, `"ext funcname"`, `"extcomp command"`
    - When retrieved via `_bar_get_completer`, specs are expanded:
      - `"file"` → `_bar_complete_comp_file`
      - `"file existing"` → `_bar_complete_comp_file existing`
-     - `"ext funcname"` → `_bar_complete_ext funcname`
+     - `"ext funcname"` → `_bar_complete_comp_ext funcname`
+     - `"extcomp command args"` → `_bar_complete_comp_extcomp command args`
+   - Variable expansion: `${VARIABLE}` in specs are expanded at completion time
 
 7. **Predicate Filters**: Completers can be constrained by predicates (like "existing",
    "nonexisting", "local", "rulefile") that filter the completion results.
@@ -140,9 +142,16 @@ The completion system works through multiple layers:
 9. **Naming Conventions**:
    - All completion-related global functions and variables use `_bar_complete` prefix
    - `_bar_complete_protoregistry` - the main registry
-   - `_bar_complete_ext` - external completer caller
+   - `_bar_complete_comp_ext` - external completer caller
+   - `_bar_complete_comp_extcomp` - universal external command completion forwarder
    - `_bar_complete_parse_file` - file parser
    - `_bar_complete_comp_*` - built-in completers
+
+10. **Literal Punctuation Handling**:
+   - Parameters can have literal punctuation prefixes/suffixes: `<+toolchain>`, `<rule:>`
+   - Exceptions: `--` and `-` are part of prototype, `..` is repetition marker
+   - When user hasn't typed the literal yet, completer is called and results are prefixed
+   - Example: `[+toolchain]` completes to `+stable`, `+nightly`, etc.
 
 
 ### Module-Specific Completers

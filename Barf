@@ -30,6 +30,27 @@ rule pre-commit: MAIN
 
 # TODO: test Barf.default
 
+## Run all tests in tests/ directory
+rule tests: -- '
+    shopt -s nullglob
+    local test_file
+    local failed=0
+    local passed=0
+    for test_file in tests/test_*.sh; do
+        if [[ -x "$test_file" ]]; then
+            echo "Running $test_file..."
+            if "$test_file"; then
+                ((passed++))
+            else
+                ((failed++))
+                echo "FAILED: $test_file"
+            fi
+        fi
+    done
+    echo "Tests passed: $passed, failed: $failed"
+    [[ $failed -eq 0 ]]
+'
+
 rule SETUP: 'called_as? pre-commit' testdir_enter
 rule SETUP: 'called_as? pre-merge-commit' testdir_enter
 rule SETUP: 'called_as? prepare-commit-msg' testdir_enter
