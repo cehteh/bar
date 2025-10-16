@@ -651,98 +651,134 @@ function help_describe_files
 function help_describe_file
 {
     awk '
-    function printout(text) {
-             out = out text "\n"
-    }
-
-    /^###/{
-        if (match($0, /^###( )?(.*)/, m)) {
-           printout( indent m[2])
-           indent="    "
+        function printout(text) {
+            out = out text "\n"
         }
-        next
-    }
 
-    END{
-        name = FILENAME
-        gsub(/^.*\//, "", name)
-        if (out != "") {
-           print "  " name " - " out
-        } else {
-           exit 1
+        /^###/ {
+            line = $0
+            sub(/^###[ ]?/, "", line)
+            printout(indent line)
+            indent = "    "
+            next
         }
-    }
+
+        END {
+            name = FILENAME
+            gsub(/^.*\//, "", name)
+            if (out != "") {
+                print "  " name " - " out
+            } else {
+                exit 1
+            }
+        }
     ' "$1"
 }
 
 function help_describe_functions
 {
     awk '
-    function printout(text) {
-             out = out text "\n"
-    }
-
-    /^.*function[ \t]+[A-Za-z_][A-Za-z0-9_]*[ \t]*##/ {
-      if (match($0, /^.*function[ \t]+([A-Za-z_][A-Za-z0-9_]*)[ \t]*## (((.*) )?- )?(.*)$/, m)) {
-        printout()
-        printout("      " m[1] " " m[4])
-        printout("        " m[5])
-        next
-      }
-    }
-
-    /^[ \t]+##.*/ {
-      sub(/^.*##[ ]?/, "")
-      printout("        " $0)
-      next
-    }
-
-    END{
-        if (out != "") {
-           print "    Functions:"
-           print out
+        function printout(text) {
+            out = out text "\n"
         }
-    }
+
+        /function[ \t]+[A-Za-z_][A-Za-z0-9_]*[ \t]*##/ {
+            split($0, parts, "##")
+            if (length(parts) < 2) {
+                next
+            }
+
+            namepart = parts[1]
+            sub(/^.*function[ \t]+/, "", namepart)
+            sub(/[ \t].*$/, "", namepart)
+
+            infopart = parts[2]
+            sub(/^[ \t]+/, "", infopart)
+
+            proto = infopart
+            desc = ""
+            split(infopart, proto_desc, " - ")
+            if (length(proto_desc) >= 2) {
+                proto = proto_desc[1]
+                desc = substr(infopart, length(proto) + 4)
+            }
+
+            if (proto == infopart) {
+                desc = ""
+            }
+
+            printout()
+            if (proto != "") {
+                printout("      " namepart " " proto)
+            } else {
+                printout("      " namepart)
+            }
+      if (desc != "") {
+                printout("        " desc)
+            }
+            next
+        }
+
+        /^[ \t]+##.*/ {
+            line = $0
+            sub(/^.*##[ ]?/, "", line)
+            printout("        " line)
+            next
+        }
+
+        END {
+            if (out != "") {
+                print "    Functions:"
+                print out
+            }
+        }
     ' "$1"
 }
 
 function help_describe_rules
 {
     awk '
-
-    function printout(text) {
-             out = out text "\n"
-    }
-
-    /^rule([ \t](--[a-z_-]*)?)+([A-Za-z_-][A-Za-z0-9_-]*:)/ {
-      if (descr != "" ) {
-         if (match($0, /^rule([ \t](--[a-z_-]*)?)+([A-Za-z_-][A-Za-z0-9_-]*:)/, m)) {
-            printout("      " m[3])
-            printout(descr)
-            descr=""
-         }
-      }
-      next
-    }
-
-    /^##/ {
-      sub(/^##[ ]?/, "")
-      descr = descr "        " $0 "\n"
-      next
-    }
-
-    {
-      descr = ""
-      next
-    }
-
-    END{
-        if (out != "") {
-           print "    Rules:"
-           print ""
-           print out
+        function printout(text) {
+            out = out text "\n"
         }
-    }
+
+        /^rule([ \t].*)?/ {
+            if (descr != "") {
+                line = $0
+                sub(/^.*rule[ \t]+/, "", line)
+                while (line ~ /^--[A-Za-z_-]+[ \t]+/) {
+                    sub(/^--[A-Za-z_-]+[ \t]+/, "", line)
+                }
+                rule_name = line
+                sub(/[ \t].*$/, "", rule_name)
+                if (rule_name ~ /:$/) {
+                    printout("      " rule_name)
+                    printout(descr)
+                }
+                descr = ""
+            }
+            next
+        }
+
+        /^##/ {
+            line = $0
+            sub(/^##[ ]?/, "", line)
+            descr = descr "        " line "\n"
+            next
+        }
+
+        {
+            descr = ""
+            next
+        }
+
+        END {
+            if (out != "") {
+                print "    Rules:"
+                print ""
+                print out
+            }
+        }
     ' "$1"
 }
 
@@ -751,29 +787,55 @@ function help_describe_rules
 function help_describe_variables
 {
     awk '
-    function printout(text) {
-             out = out text "\n"
-    }
-
-    /declare[ \t]+.*##/ {
-      if (match($0, /declare[ \t]+(-([a-zA-Z]+))? ([A-Za-z_][A-Za-z0-9_]*)(="(.*)")?[ \t]*## (.*)$/, m)) {
-        printout("")
-        printout("      " m[3] " (" m[2] ")")
-        printout("        " m[6])
-        if (m[4] != "") {
-           printout("        Default: " m[5])
+        function printout(text) {
+            out = out text "\n"
         }
-        next
-      }
-    }
 
-    END{
-        if (out != "") {
-           #print ""
-           print "    Variables:"
-           print out
+        /declare[ \t]+.*##/ {
+            before = $0
+            sub(/[ \t]*##.*/, "", before)
+            desc = $0
+            sub(/^.*##[ ]?/, "", desc)
+
+            rest = before
+            sub(/^declare[ \t]+/, "", rest)
+
+            flags = ""
+            if (rest ~ /^-[A-Za-zA-Z]+/) {
+                flags = rest
+                sub(/[ \t].*$/, "", flags)
+                sub(/^-/, "", flags)
+                sub(/^[^ \t]+[ \t]*/, "", rest)
+            }
+
+            varname = rest
+            sub(/[ \t=].*$/, "", varname)
+
+            value = rest
+            if (value ~ /=/) {
+                equals = index(value, "=")
+                value = substr(value, equals + 1)
+                sub(/^[ \t]*"?/, "", value)
+                sub(/"?[ \t]*$/, "", value)
+            } else {
+                value = ""
+            }
+
+            printout("")
+            printout("      " varname " (" flags ")")
+            printout("        " desc)
+            if (value != "") {
+                printout("        Default: " value)
+            }
+            next
         }
-    }
+
+        END {
+            if (out != "") {
+                print "    Variables:"
+                print out
+            }
+        }
     ' "$1"
 }
 

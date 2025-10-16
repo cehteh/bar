@@ -109,18 +109,15 @@ MODULE API/RULES
       is_cargo_toolchain_available [+toolchain]
         Check if a toolchain is available
 
-      cargo_toolchain_complete 
-        List available cargo toolchains for completion
+      cargo_toolchain_complete List available cargo toolchains for completion
         This function is called by bar_complete to provide completions for +toolchain parameters.
         It lists installed Rust toolchains using rustup.
 
-      cargo_tool_complete 
-        List available cargo tools/subcommands for completion
+      cargo_tool_complete List available cargo tools/subcommands for completion
         This function provides completion for cargo tool names (subcommands).
         It lists both built-in cargo commands and installed extensions.
 
-      cargo_fix 
-        Run 'cargo fix'.
+      cargo_fix Run 'cargo fix'.
         Note that this will modify the source in place.
 
       cargo_build [buildargs..]
@@ -129,33 +126,26 @@ MODULE API/RULES
       cargo_test [testargs..]
         Execute all unit and integration tests
 
-      cargo_check 
-        Run 'cargo check'. Testing whenever the source can be compiled.
+      cargo_check Run 'cargo check'. Testing whenever the source can be compiled.
 
-      cargo_clippy_errors 
-        Tests with 'cargo clippy' for errors only
+      cargo_clippy_errors Tests with 'cargo clippy' for errors only
 
-      cargo_clippy_strict 
-        Test with 'cargo clippy' for warnings and errors
+      cargo_clippy_strict Test with 'cargo clippy' for warnings and errors
 
       cargo_doc [docargs..]
         Build this package's and its dependencies' documentation
 
-      cargo_update 
-        Run 'cargo update'
+      cargo_update Run 'cargo update'
 
-      cargo_has_unsafe_code 
-        Checks if the source use 'unsafe' code.
+      cargo_has_unsafe_code Checks if the source use 'unsafe' code.
         This does only a coarse '-Funsafe-code' check, but does not depend on external tools.
 
       cargo_miri [miriargs..]
         Run tests under miri (memory sanitizer)
 
-      cargo_bench 
-        Run 'cargo bench'
+      cargo_bench Run 'cargo bench'
 
-      cargo_publish 
-        Run 'cargo publish'
+      cargo_publish Run 'cargo publish'
 
     Rules:
 
@@ -216,8 +206,7 @@ MODULE API/RULES
 
     Functions:
 
-      has_cargo_manifest 
-        Checks if 'Cargo.toml' exists.
+      has_cargo_manifest Checks if 'Cargo.toml' exists.
 
     Rules:
 
@@ -402,8 +391,7 @@ MODULE API/RULES
 
     Functions:
 
-      git_dir 
-        Returns the absolute path to the 'GIT_DIR' (.git/).
+      git_dir Returns the absolute path to the 'GIT_DIR' (.git/).
         Note that this may be distinct from '$(git_toplevel)/.git/' when worktrees or other git
         features are used.
 
@@ -412,11 +400,9 @@ MODULE API/RULES
         git-ls-files '--cached' and '--exclude-standard' are always implied.  Notable options
         are '-z' for zero terminated output and '--others' to show untracked files.
 
-      git_branch_name 
-        Returns the branch name that is checked out, dies when not in a git branch.
+      git_branch_name Returns the branch name that is checked out, dies when not in a git branch.
 
-      git_branch_complete 
-        List all git branches for completion
+      git_branch_complete List all git branches for completion
         This function is called by bar_complete to provide completions for branch parameters.
 
       git_branch_find [patterns]..
@@ -556,14 +542,13 @@ MODULE API/RULES
 
     Variables:
 
-      MYVAR (g)
+       ()
         Description of the variable
         Default: value
 
     Functions:
 
-      name [--opt] <required> [optional]
-        description'
+       # Functions use formal parameter syntax: 'function name 
         This module provides cargo/rust support.
 
       name [--opt] <required> [optional..]
@@ -695,8 +680,7 @@ MODULE API/RULES
         'cmd [args..]' must be the same as used when scheduling it to the background.
         Will error when the command was not previously scheduled and backgrounding is enabled.
 
-      memo_exit 
-        exits a memodb, remove the lock, but keeps the log
+      memo_exit - exits a memodb, remove the lock, but keeps the log
 
   net - Low level networking functions
 
@@ -720,8 +704,7 @@ MODULE API/RULES
 
     Functions:
 
-      rad_import 
-        import a git repository into radicle
+      rad_import import a git repository into radicle
 
   radicle - managing a radicle installation itself
 
@@ -822,14 +805,12 @@ MODULE API/RULES
       release_fastforward_branch <branch>
         fast-forward <branch> to the release branch if possible
 
-      release_reset_mainbranch 
-        Find main branch (main/master) and reset it to the release branch
+      release_reset_mainbranch Find main branch (main/master) and reset it to the release branch
 
       release_rebase_branch <branch>
         rebase <branch> onto the release branch
 
-      release_rebase_startbranch 
-        Rebase the branch that started the release on the release branch.
+      release_rebase_startbranch Rebase the branch that started the release on the release branch.
 
     Rules:
 
@@ -980,8 +961,7 @@ MODULE API/RULES
       semver_majorminor <version>
         shortens a semver to major.minor
 
-      semver_is_patch 
-        <version>
+      semver_is_patch <version>
 
       semver_increment <version> <release|major|majorpre1x|minor|patch>
         Increment selected part
@@ -1024,11 +1004,9 @@ MODULE API/RULES
       shellcheck_is_shscript <file>
         Check if <file> is a shell script
 
-      shellcheck_list_shscripts 
-        List all shell scripts under git control
+      shellcheck_list_shscripts List all shell scripts under git control
 
-      shellcheck_lint 
-        Test if all shell scripts under git control pass the linter.
+      shellcheck_lint Test if all shell scripts under git control pass the linter.
 
     Rules:
 
@@ -1083,8 +1061,7 @@ MODULE API/RULES
       is_command_installed <command>
         Checks whenever a function exists or a shell command is in PATH.
 
-      bar_now 
-        Returns the current timestamp in microseconds since epoch.
+      bar_now Returns the current timestamp in microseconds since epoch.
 
       hash_args <arguments..>
         returns the sha1hash of all supplied arguments
@@ -1250,18 +1227,15 @@ MODULE API/RULES
 
     Functions:
 
-      testdir_gc 
-        Cleanup old testdirs.
+      testdir_gc Cleanup old testdirs.
         Removed old unused testdirs. This is called automatically. It is only necessary to
         manually call this when testdirs piled up because they where in use or when
         'TESTDIR_KEEP' was decremented.
 
-      testdir_clean 
-        Cleanup all testdirs.
+      testdir_clean Cleanup all testdirs.
         Removes all unused testdirs.
 
-      testdir_list 
-        Lists all testdirs.
+      testdir_list Lists all testdirs.
 
     Rules:
 
@@ -1325,8 +1299,7 @@ MODULE API/RULES
       tty_echo [echo_args]
         Echos only when the output is a tty.
 
-      tty_newline 
-        Outputs a newline when we are not at column 1.
+      tty_newline Outputs a newline when we are not at column 1.
 
   watch_rules - Continious supervision by a file watcher
 
@@ -1833,23 +1806,32 @@ MAIN API
 
     Variables:
 
-      BAR_SELF (grx)
+       ()
         Path to bar itself.
         Default: $(realpath "$BASH_ARGV0")
 
-      BAR_CALLED_AS (grx)
+       ()
         Name of bar when called by symlink.
-        Default: ${BASH_ARGV0##*/}
+        Default: ${BASH_ARGV0
 
-      BAR_PWD (gxr)
+       ()
+        Directory to load rules from.
+
+       ()
+        When set, don't eval SETUP, PREPROCESS, POSTPROCESS and CLEANUP.
+
+       ()
+        The Barf file used.
+
+       ()
         Initial working directory.
         Default: $PWD
 
-      BAR_VERBOSITY_LEVEL (gxi)
+       ()
         Verbosity level from 0 (silent) to 6 (trace).
         Default: ${BAR_VERBOSITY_LEVEL:-2}
 
-      BAR_TIMESTAMP (grix)
+       ()
         Timestamp in microseconds since epoch of this invocation
         Default: $(bar_now)
 
