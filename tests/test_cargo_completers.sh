@@ -61,32 +61,32 @@ else
     echo "ℹ INFO: rustup not installed, skipping cargo_toolchain_complete test"
 fi
 
-# Test 3: cargo_cargo_complete
+# Test 3: _bar_complete_comp_extcomp with cargo
 echo ""
-echo "Test 3: Testing cargo_cargo_complete (black box forwarding)..."
+echo "Test 3: Testing _bar_complete_comp_extcomp with cargo (black box forwarding)..."
 if command -v rustc &>/dev/null; then
     # Test completing cargo subcommands
-    completions=$(cargo_cargo_complete "bui")
+    completions=$(_bar_complete_comp_extcomp cargo "bui")
     
     if echo "$completions" | grep -q "build"; then
-        echo "✓ PASS: cargo_cargo_complete finds 'build' from 'bui' prefix"
+        echo "✓ PASS: _bar_complete_comp_extcomp finds 'build' from 'bui' prefix"
     else
-        echo "ℹ INFO: cargo_cargo_complete fallback mode (no native completion)"
+        echo "ℹ INFO: _bar_complete_comp_extcomp fallback mode (no native completion)"
         echo "  Got: $(echo "$completions" | head -3 | tr '\n' ' ')"
     fi
     
     # Test with no prefix
-    all_completions=$(cargo_cargo_complete "")
+    all_completions=$(_bar_complete_comp_extcomp cargo "")
     completion_count=$(echo "$all_completions" | wc -l)
     
     if [[ $completion_count -gt 20 ]]; then
-        echo "✓ PASS: cargo_cargo_complete returns many completions ($completion_count)"
+        echo "✓ PASS: _bar_complete_comp_extcomp returns many completions ($completion_count)"
         echo "  Sample: $(echo "$all_completions" | head -5 | tr '\n' ' ')"
     else
-        echo "ℹ INFO: cargo_cargo_complete using fallback mode"
+        echo "ℹ INFO: _bar_complete_comp_extcomp using fallback mode"
     fi
 else
-    echo "ℹ INFO: rustc not installed, skipping cargo_cargo_complete test"
+    echo "ℹ INFO: rustc not installed, skipping _bar_complete_comp_extcomp test"
 fi
 
 # Test 4: Prototype definitions
