@@ -5,6 +5,10 @@
 
 # prototype: "toolchain" = "ext cargo_toolchain_complete"
 # prototype: "tool" = "ext cargo_tool_complete"
+# prototype: "buildargs" = "extcomp cargo ${CARGO_TOOLCHAIN} build --workspace"
+# prototype: "testargs" = "extcomp cargo ${CARGO_TOOLCHAIN} test --workspace"
+# prototype: "docargs" = "extcomp cargo ${CARGO_TOOLCHAIN} doc --workspace"
+# prototype: "miriargs" = "extcomp cargo +nightly miri test"
 
 require run
 
@@ -213,12 +217,12 @@ function cargo_fix ## Run 'cargo fix'.
     run_test cargo $CARGO_TOOLCHAIN fix --all --allow-dirty
 }
 
-function cargo_build ## [cargoargs..] - Compile a local package and all of its dependencies
+function cargo_build ## [buildargs..] - Compile a local package and all of its dependencies
 {
     run_test cargo $CARGO_TOOLCHAIN --color "${COLOR:-auto}" build --workspace "$@"
 }
 
-function cargo_test ## [cargoargs..] - Execute all unit and integration tests
+function cargo_test ## [testargs..] - Execute all unit and integration tests
 {
     run_test cargo $CARGO_TOOLCHAIN --color "${COLOR:-auto}" test --workspace "$@"
 }
@@ -238,7 +242,7 @@ function cargo_clippy_strict ## Test with 'cargo clippy' for warnings and errors
     cargo $CARGO_TOOLCHAIN --color "${COLOR:-auto}" clippy 2>&1 | tee /dev/stderr | awk '/(warning|error).*: /{exit 1}'
 }
 
-function cargo_doc ## [cargoargs..] - Build this package's and its dependencies' documentation
+function cargo_doc ## [docargs..] - Build this package's and its dependencies' documentation
 {
     export RUSTDOCFLAGS="-D rustdoc::broken_intra_doc_links"
     run_test cargo $CARGO_TOOLCHAIN --color "${COLOR:-auto}" doc --workspace "$@"
@@ -261,7 +265,7 @@ function cargo_has_unsafe_code ## Checks if the source use 'unsafe' code.
     fi
 }
 
-function cargo_miri ## [cargoargs..] - Run tests under miri (memory sanitizer)
+function cargo_miri ## [miriargs..] - Run tests under miri (memory sanitizer)
 {
     run_test cargo +nightly miri test "$@"
 }

@@ -375,11 +375,29 @@ _bar_complete_comp_ext()
 # External command completion - invokes external command's bash completion as black box
 # Usage: _bar_complete_comp_extcomp <command> [args...]
 # Example: _bar_complete_comp_extcomp git checkout ma
+# Supports ${VARIABLE} expansion in arguments: extcomp cargo ${CARGO_TOOLCHAIN} build
 _bar_complete_comp_extcomp()
 {
     local cmd="$1"
     shift
-    local -a args=("$@")
+    local -a args=()
+    
+    # Process arguments, expanding ${VARIABLE} references
+    local arg
+    for arg in "$@"; do
+        # Check if argument contains ${...} pattern
+        if [[ "$arg" =~ \$\{[^}]+\} ]]; then
+            # Use eval to expand the variable
+            local expanded
+            expanded=$(eval echo "$arg")
+            # Only add if it's not empty (variable was set)
+            if [[ -n "$expanded" ]]; then
+                args+=("$expanded")
+            fi
+        else
+            args+=("$arg")
+        fi
+    done
     
     # Get the current word to complete (last argument)
     local cur="${args[-1]:-}"
