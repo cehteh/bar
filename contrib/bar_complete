@@ -722,10 +722,41 @@ _bar_complete_params()
             cur="${cur#"$literal_prefix"}"
             proto_name="$proto_clean"
         else
-            # User hasn't typed the literal yet, complete the literal
-            if [[ "$literal_prefix" == "$cur"* ]]; then
-                echo "$literal_prefix"
+            # User hasn't typed the literal yet or is typing it
+            # We need to call the completer and prefix all results with the literal
+            proto_name="$proto_clean"
+            
+            # Get completer for this prototype
+            local completer
+            completer=$(_bar_get_completer "$func_or_rule" "$proto_name")
+            
+            if [[ -z "$completer" ]]; then
+                # No completer found, just offer the literal if it matches
+                if [[ "$literal_prefix" == "$cur"* ]]; then
+                    echo "$literal_prefix"
+                fi
+                return 0
             fi
+            
+            # Call the completer with empty prefix to get all options
+            local -a proto_completions=()
+            if [[ "$completer" == "_bar_complete_comp_ext "* ]]; then
+                local ext_name="${completer#_bar_complete_comp_ext }"
+                mapfile -t proto_completions < <(_bar_complete_comp_ext "$ext_name" "")
+            elif [[ "$completer" == "_bar_complete_comp_extcomp "* ]]; then
+                local ext_cmd="${completer#_bar_complete_comp_extcomp }"
+                mapfile -t proto_completions < <(_bar_complete_comp_extcomp "$ext_cmd" "")
+            else
+                mapfile -t proto_completions < <($completer "")
+            fi
+            
+            # Prefix each completion with the literal and filter by current input
+            for proto_comp in "${proto_completions[@]}"; do
+                local full_comp="${literal_prefix}${proto_comp}"
+                if [[ "$full_comp" == "$cur"* ]]; then
+                    echo "$full_comp"
+                fi
+            done
             return 0
         fi
     else
