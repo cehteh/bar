@@ -97,7 +97,7 @@ echo "Test 6: Testing with multiple arguments (git checkout)..."
 if command -v git &>/dev/null; then
     # Simulate: git checkout <branch>
     # In a real repo, this would complete branch names
-    cd /tmp && git init test_repo &>/dev/null && cd test_repo
+    cd /tmp && git init test_repo &>/dev/null && cd test_repo || return
     git checkout -b main &>/dev/null 2>&1
     git checkout -b feature/test &>/dev/null 2>&1
     
@@ -110,7 +110,7 @@ if command -v git &>/dev/null; then
         echo "  Got: $(echo "$completions" | head -3 | tr '\n' ' ')"
     fi
     
-    cd - &>/dev/null
+    cd - &>/dev/null || return
     rm -rf /tmp/test_repo
 fi
 

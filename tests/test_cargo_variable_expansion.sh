@@ -7,6 +7,7 @@ set -e
 cd "$(dirname "$0")"
 
 # Source the bar completion system
+# shellcheck disable=SC1091
 source ../contrib/bar_complete
 
 # Initialize the completion system

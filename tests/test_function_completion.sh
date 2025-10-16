@@ -19,7 +19,7 @@ if [[ -v _bar_completion_func_module[git_ls_files] ]]; then
     echo "✓ PASS: git_ls_files is tracked in completion system"
 else
     echo "✗ FAIL: git_ls_files is NOT tracked"
-    echo "  Available functions: ${!_bar_completion_func_module[@]}"
+    echo "  Available functions: ${!_bar_completion_func_module[*]}"
     exit 1
 fi
 

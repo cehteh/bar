@@ -405,8 +405,10 @@ _bar_complete_comp_extcomp()
     # Source bash-completion if not already loaded
     if [[ ! $(type -t _completion_loader) == function ]]; then
         if [[ -f /usr/share/bash-completion/bash_completion ]]; then
+            # shellcheck disable=SC1091
             source /usr/share/bash-completion/bash_completion 2>/dev/null || true
         elif [[ -f /etc/bash_completion ]]; then
+            # shellcheck disable=SC1091
             source /etc/bash_completion 2>/dev/null || true
         fi
     fi
