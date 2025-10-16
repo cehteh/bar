@@ -3,7 +3,7 @@
 
 # shellcheck disable=SC1091
 # Source the completion script
-source ../contrib/bar_complete
+source contrib/bar_complete
 
 # Enable debug mode to see cache messages
 export BAR_COMPLETE_DEBUG=1

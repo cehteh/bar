@@ -2,13 +2,13 @@
 # Test cargo completion functions
 
 # shellcheck disable=SC1091
-source ../contrib/bar_complete
+source contrib/bar_complete
 
 echo "Testing cargo completion functions..."
 
 # Load the cargo module
-if [[ -f ../Bar.d/cargo ]]; then
-    source ../Bar.d/cargo
+if [[ -f Bar.d/cargo ]]; then
+    source Bar.d/cargo
 else
     echo "✗ FAIL: Cannot find Bar.d/cargo module"
     exit 1
