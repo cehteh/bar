@@ -1216,44 +1216,90 @@ function help_describe_rules
             out = out text "\n"
         }
 
-        /^rule([ \t].*)?/ {
-            if (descr != "") {
-                line = $0
-                sub(/^.*rule[ \t]+/, "", line)
-                while (line ~ /^--[A-Za-z_-]+[ \t]+/) {
-                    sub(/^--[A-Za-z_-]+[ \t]+/, "", line)
-                }
-                rule_name = line
-                sub(/[ \t].*$/, "", rule_name)
-                if (rule_name ~ /:$/) {
-                    printout("      " rule_name)
-                    printout(descr)
-                }
-                descr = ""
+    function trim(text) {
+      sub(/^[ \t]+/, "", text)
+      sub(/[ \t]+$/, "", text)
+      return text
+    }
+
+    function reset_docs(    idx) {
+      doc_count = 0
+      for (idx in doc_lines) {
+        delete doc_lines[idx]
+      }
+    }
+
+    BEGIN {
+      doc_count = 0
+    }
+
+    /^rule([ \t].*)?/ {
+      if (doc_count > 0) {
+        line = $0
+        sub(/^.*rule[ \t]+/, "", line)
+        while (line ~ /^--[A-Za-z_-]+[ \t]+/) {
+          sub(/^--[A-Za-z_-]+[ \t]+/, "", line)
+        }
+        rule_name = line
+        sub(/[ \t].*$/, "", rule_name)
+        sub(/:$/, "", rule_name)
+
+        first = trim(doc_lines[1])
+        proto_line = ""
+        summary = ""
+        split_pos = index(first, " - ")
+        if (split_pos > 0) {
+          proto_line = trim(substr(first, 1, split_pos - 1))
+          summary = trim(substr(first, split_pos + 3))
+        } else {
+          summary = first
+        }
+
+        printout("")
+        if (proto_line != "") {
+          printout("      " rule_name " " proto_line)
+        } else {
+          printout("      " rule_name)
+        }
+        if (summary != "") {
+          printout("        " summary)
+        }
+
+        if (doc_count > 1) {
+          for (i = 2; i <= doc_count; i++) {
+            extra = trim(doc_lines[i])
+            if (extra != "") {
+              printout("        " extra)
             }
-            next
+          }
         }
+      }
 
-        /^##[^.]/ {
-            line = $0
-            sub(/^##[ ]?/, "", line)
-            descr = descr "        " line "\n"
-            next
-        }
+      reset_docs()
+      next
+    }
 
-        {
-            descr = ""
-            next
-        }
+    /^##[^.]/ {
+      line = $0
+      sub(/^##[ \t]*/, "", line)
+      doc_count++
+      doc_lines[doc_count] = line
+      next
+    }
 
-        END {
-            if (out != "") {
-                print "    Rules:"
-                print ""
-                print out
-            }
-        }
-    ' "$1"
+    {
+      reset_docs()
+      next
+    }
+
+    END {
+      if (out != "") {
+        print "    Rules:"
+        print ""
+        print out
+      }
+    }
+  ' "$1"
 }
 
 
@@ -1324,6 +1370,9 @@ function help_describe_variables
 
 # Define --bare rule for help (reads existing module files)
 ## [[-s|--short] topic|rule|function|variable|text] - Show help topics
+##   - [-s|--short]:                 Show only the queried sections
+##   - topic|rule|function|variable: Navigate to or show only specified topics
+##   - text:                         Search the specified text in the documentation
 rule --bare help:
 
 # Provide indexer via bare rule for external consumers like completion

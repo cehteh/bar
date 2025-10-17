@@ -1111,9 +1111,11 @@ _bar_complete_parse_file()
         elif [[ "$line" =~ ^##[[:space:]]*(.*)$ ]]; then
             in_doc_comment=true
             last_doc_line="${BASH_REMATCH[1]}"
-            # Check if this line has parameters
-            if [[ "$last_doc_line" =~ ^(.+)[[:space:]]+-[[:space:]] ]]; then
-                doc_params="${BASH_REMATCH[1]}"
+            # Check if this line has parameters; only record the first match
+            if [[ -z "$doc_params" && "$last_doc_line" =~ ^(.+)[[:space:]]+-[[:space:]] ]]; then
+                local param_part="${BASH_REMATCH[1]}"
+                param_part="$(printf '%s' "$param_part" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+                doc_params="$param_part"
             fi
     elif [[ $in_doc_comment == true && "$line" =~ ^rule[[:space:]]+(--[a-z_-]*[[:space:]]+)*([A-Za-z_-][A-Za-z0-9_-]*): ]]; then
             local rule="${BASH_REMATCH[2]}"

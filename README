@@ -91,7 +91,7 @@ INVOCATION AND SEMANTICS
 
 MODULE API/RULES
 
-  cargo - Rust/cargo support.
+  cargo - Rust/cargo support
 
     Variables:
 
@@ -145,55 +145,55 @@ MODULE API/RULES
 
     Rules:
 
-      cargo_lint:
+
+      cargo_lint
         Runs all linters
 
-      cargo_toolchain:
-        <+toolchain> - Clause local change of the toochain used by cargo.
+      cargo_toolchain <+toolchain>
+        Clause local change of the toochain used by cargo.
 
-      cargo_fmt_check:
+      cargo_fmt_check
         Checks whenever the source code is well formatted.
         If available the '+nightly' toolchain is used.
 
-      cargo_build_unit_tests:
+      cargo_build_unit_tests
         Builds unit tests.
 
-      cargo_test_units:
+      cargo_test_units
         Runs unit tests.
 
-      cargo_build_integration_tests:
+      cargo_build_integration_tests
         Build integration tests
 
-      cargo_test_integrations:
+      cargo_test_integrations
         Run integration tests. This includes the doctests.
 
-      cargo_fmt:
+      cargo_fmt
         Run 'cargo fmt'. When available the '+nightly' toolchain is used.
         Note that this will modify the source in place.
 
-      cargo_miri:
+      cargo_miri
         When there is unsafe code then run a test under miri supervision.
         Requires the '+nightly' toolchain.
 
-      cargo_check_msrv:
+      cargo_check_msrv
         Checks whenever the 'rust_version' in the manifest is sufficient.
         This check only happens when 'cargo-msrv' is installed, otherwise a warning is printed.
 
-      cargo_mutants:
+      cargo_mutants
         Run 'cargo mutants' when it is available.
         When 'cargo-mutants' is not installed a warning is printed.
 
-      cargo_outdated:
+      cargo_outdated
         Run 'cargo outedated' when it is available.
         When 'cargo-outdated' is not installed a warning is printed.
 
-      cargo_audit:
+      cargo_audit
         Run 'cargo audit' when it is available.
         When 'cargo-audit' is not installed a warning is printed.
 
-      cargo_semver_checks:
+      cargo_semver_checks
         Run cargo semver-checks to test if a semver for a release is sufficient
-
 
   cargo_rules - General support rules for Rust/Cargo projects
     
@@ -206,15 +206,15 @@ MODULE API/RULES
 
     Rules:
 
-      is_cargo_installed:
+
+      is_cargo_installed
         Successful when 'cargo' is available.
 
-      is_cargo_project:
+      is_cargo_project
         Check whenever we are ready to use cargo here.
 
-      release_publish:
+      release_publish
         Push a software release to crates.io (or whatever registry is configured).
-
 
   cliff - git cliff changelog generation
 
@@ -230,37 +230,37 @@ MODULE API/RULES
 
     Rules:
 
-      cliff_changelog:
-        [cliff_args..] - use git cliff to generate a changelog.
 
-      cliff_release_changelog:
+      cliff_changelog [cliff_args..]
+        use git cliff to generate a changelog.
+
+      cliff_release_changelog
         Makes a changelog for a release, commits and tags it. Must be called from a release worktree
         with state 'tested'.
 
-      cliff_changelog_amend:
+      cliff_changelog_amend
         Regenerates the changelog up to the previous commit and amends the current commit with the new changelog
-
 
   cliff_rules - Hooks git cliff into build_versioned_artifacts
 
     Rules:
 
-      release_changelog:
-        Create a cliff changelog for releases when there is a 'cliff.toml' at the project root.
 
+      release_changelog
+        Create a cliff changelog for releases when there is a 'cliff.toml' at the project root.
 
   entr - Support for the entr file watcher
 
     Rules:
 
-      is_entr_installed:
+
+      is_entr_installed
         Succeeds when 'entr' is available.
 
-      entr_watch:
+      entr_watch
         Runs bar in a loop again whenever a file gets changed.
         Takes a target rule and its parameters as argument.
         Defaults to 'MAIN'.
-
 
   entr_rules - hooks entr into the watch/watch_git_index rules
 
@@ -268,120 +268,120 @@ MODULE API/RULES
 
     Rules:
 
-      is_git_repository:
+
+      is_git_repository
         Succeeds when we are in inside (at or below) a git repository.
 
-      is_git_toplevel:
+      is_git_toplevel
         Succeeds when we are at the top level of a git repository.
 
-      git_is_clean:
+      git_is_clean
         Checks if there are modified files, fails if there are any.
 
-      git_branch_matches:
-        [branchpattern..] - Checks that the current git branch matches any of the given patterns.
+      git_branch_matches [branchpattern..]
+        Checks that the current git branch matches any of the given patterns.
 
-      is_git_pre_commit_hook:
+      is_git_pre_commit_hook
         Checks if called as githook.
 
-      is_git_pre_merge_commit_hook:
+      is_git_pre_merge_commit_hook
         Checks if called as githook.
 
-      is_git_prepare_commit_msg_hook:
+      is_git_prepare_commit_msg_hook
         Checks if called as githook.
 
-      is_git_commit_msg_hook:
+      is_git_commit_msg_hook
         Checks if called as githook.
 
-      is_git_applypatch_msg_hook:
+      is_git_applypatch_msg_hook
         Checks if called as githook.
 
-      is_git_pre_applypatch_hook:
+      is_git_pre_applypatch_hook
         Checks if called as githook.
 
-      is_git_post_applypatch_hook:
+      is_git_post_applypatch_hook
         Checks if called as githook.
 
-      is_git_post_commit_hook:
+      is_git_post_commit_hook
         Checks if called as githook.
 
-      is_git_pre_rebase_hook:
+      is_git_pre_rebase_hook
         Checks if called as githook.
 
-      is_git_post_checkout_hook:
+      is_git_post_checkout_hook
         Checks if called as githook.
 
-      is_git_post_merge_hook:
+      is_git_post_merge_hook
         Checks if called as githook.
 
-      is_git_pre_push_hook:
+      is_git_pre_push_hook
         Checks if called as githook.
 
-      is_git_pre_receive_hook:
+      is_git_pre_receive_hook
         Checks if called as githook.
 
-      is_git_update_hook:
+      is_git_update_hook
         Checks if called as githook.
 
-      is_git_proc_receive_hook:
+      is_git_proc_receive_hook
         Checks if called as githook.
 
-      is_git_post_receive_hook:
+      is_git_post_receive_hook
         Checks if called as githook.
 
-      is_git_post_update_hook:
+      is_git_post_update_hook
         Checks if called as githook.
 
-      is_git_reference_transaction_hook:
+      is_git_reference_transaction_hook
         Checks if called as githook.
 
-      is_git_push_to_checkout_hook:
+      is_git_push_to_checkout_hook
         Checks if called as githook.
 
-      is_git_pre_auto_gc_hook:
+      is_git_pre_auto_gc_hook
         Checks if called as githook.
 
-      is_git_post_rewrite_hook:
+      is_git_post_rewrite_hook
         Checks if called as githook.
 
-      is_git_sendemail_validate_hook:
+      is_git_sendemail_validate_hook
         Checks if called as githook.
 
-      is_git_fsmonitor_watchman_hook:
+      is_git_fsmonitor_watchman_hook
         Checks if called as githook.
 
-      is_git_post_index_change_hook:
+      is_git_post_index_change_hook
         Checks if called as githook.
 
-      is_git_main_branch:
+      is_git_main_branch
         Checks if the current branch matches 'main master'.
 
-      is_git_release_branch:
+      is_git_release_branch
         Checks if the current branch matches 'release-* release/*'.
 
-      is_git_devel_branch:
+      is_git_devel_branch
         Checks if the current branch matches 'devel-* devel/*'.
 
-      is_git_feature_branch:
+      is_git_feature_branch
         Checks if the current branch matches 'feature-* feature/*'.
 
-      is_git_bugfix_branch:
+      is_git_bugfix_branch
         Checks if the current branch matches 'bugfix-* bugfix/* fix-* fix/*'.
 
-      is_git_hotfix_branch:
+      is_git_hotfix_branch
         Checks if the current branch matches 'hotfix-* hotfix/*'.
 
-      is_git_improvement_branch:
+      is_git_improvement_branch
         Checks if the current branch matches 'improvement-* improvement/*'.
 
-      is_git_doc_branch:
+      is_git_doc_branch
         Checks if the current branch matches 'doc-* doc/*'.
 
-      is_git_wip_branch:
+      is_git_wip_branch
         Checks if the current branch matches 'wip-* wip/*'.
 
-      is_git_experimental_branch:
+      is_git_experimental_branch
         Checks if the current branch matches 'experiment-* experiment/*'.
-
 
   git_lib - Git support library
 
@@ -429,94 +429,94 @@ MODULE API/RULES
 
     Rules:
 
-      pre-commit:
+
+      pre-commit
         Entry rule when called as githook.
 
-      pre-merge-commit:
+      pre-merge-commit
         Entry rule when called as githook.
 
-      prepare-commit-msg:
+      prepare-commit-msg
         Entry rule when called as githook.
 
-      commit-msg:
+      commit-msg
         Entry rule when called as githook.
 
-      applypatch-msg:
+      applypatch-msg
         Entry rule when called as githook.
 
-      pre-applypatch:
+      pre-applypatch
         Entry rule when called as githook.
 
-      post-applypatch:
+      post-applypatch
         Entry rule when called as githook.
 
-      post-commit:
+      post-commit
         Entry rule when called as githook.
 
-      pre-rebase:
+      pre-rebase
         Entry rule when called as githook.
 
-      post-checkout:
+      post-checkout
         Entry rule when called as githook.
 
-      post-merge:
+      post-merge
         Entry rule when called as githook.
 
-      pre-push:
+      pre-push
         Entry rule when called as githook.
 
-      pre-receive:
+      pre-receive
         Entry rule when called as githook.
 
-      update:
+      update
         Entry rule when called as githook.
 
-      proc-receive:
+      proc-receive
         Entry rule when called as githook.
 
-      post-receive:
+      post-receive
         Entry rule when called as githook.
 
-      post-update:
+      post-update
         Entry rule when called as githook.
 
-      reference-transaction:
+      reference-transaction
         Entry rule when called as githook.
 
-      push-to-checkout:
+      push-to-checkout
         Entry rule when called as githook.
 
-      pre-auto-gc:
+      pre-auto-gc
         Entry rule when called as githook.
 
-      post-rewrite:
+      post-rewrite
         Entry rule when called as githook.
 
-      sendemail-validate:
+      sendemail-validate
         Entry rule when called as githook.
 
-      fsmonitor-watchman:
+      fsmonitor-watchman
         Entry rule when called as githook.
 
-      post-index-change:
+      post-index-change
         Entry rule when called as githook.
 
-      release_publish:
+      release_publish
         Push tags and branches to the default push remove when publishing a release.
-
 
   githook - Support library for managing githooks
 
     Rules:
 
-      githook_enable:
+
+      githook_enable
         Takes a list of githooks to enable as parameters. Must be called from the git_toplevel.
         Fails when a hook is not available.
 
-      githook_disable:
+      githook_disable
         Takes a list of githooks to disable as parameters. Must be called from the git_toplevel.
         Fails when a hook is not pointing to bar.
-
 
   help - Provides help, extracts documentation from modules
     
@@ -538,11 +538,14 @@ MODULE API/RULES
 
     Rules:
 
-      help:
-        [[-s|--short] topic|rule|function|variable|text] - Show help topics
 
+      help [[-s|--short] topic|rule|function|variable|text]
+        Show help topics
+        - [-s|--short]:                 Show only the queried sections
+        - topic|rule|function|variable: Navigate to or show only specified topics
+        - text:                         Search the specified text in the documentation
 
-  init - Module to install, initialize and update bar itself.
+  init - Module to install, initialize and update bar itself
 
     Functions:
 
@@ -555,7 +558,8 @@ MODULE API/RULES
 
     Rules:
 
-      init:
+
+      init
         Initialize bar in a workdir. This copies the main 'bar' script, a default 'Barf' and all
         'Bar.d/' modules to current directory. When the workdir is a git repository then
         '.gitignore' is updated to exclude the files and directories 'bar' will use for
@@ -563,16 +567,15 @@ MODULE API/RULES
         preference.  Unneeded modules in 'Bar.d' can be deleted. When that is done the new/changed
         files should be committed to version control.
 
-      init_update_existing:
+      init_update_existing
         Updates a initialized working tree. That is 'bar' itself will be updated when a newer
         version is available and any module in 'Bar.d/' that exists in the local working tree will
         be updated as well.  Barf will be left untouched.
 
-      init_update:
+      init_update
         Updates a initialized working tree. That is 'bar' itself will be updated when a newer
         version is available and all modules including ones that are not present in 'Bar.d/' will
         be updated as well.  Barf will be left untouched.
-
 
   lock - Library for managing lockfiles
 
@@ -605,7 +608,7 @@ MODULE API/RULES
         'lock_remove' must be paired with the same numbers of earlier 'lock_wait'. Only the
         last 'lock_remove' will release the lockfile.
 
-  memodb - The memodb is a persistent database which memoizes command results.
+  memodb - A persistent database which memoizes command results
     
     It records the stdout, stderr and state/exitcode commands and functions.  Commands and
     functions that are used with the memodb must be pure as their result must only depend on
@@ -779,59 +782,59 @@ MODULE API/RULES
 
     Rules:
 
-      release:
+
+      release
         Makes a software release. Takes an optional version number starting with a digit or a
         name for the generating the version by 'release_generate_version_hook' as argument.
         When no argument is provided it defaults to 'auto'.
 
-      release_as_major:
+      release_as_major
         To be used from release-preprocess. Creates or resets the release worktree to release.x major.
 
-      release_as_majorpre1x:
+      release_as_majorpre1x
         To be used from release-preprocess. Creates or resets the release worktree to release.x[.y] major with 0.x major semantic.
 
-      release_as_majorminor:
+      release_as_majorminor
         To be used from release-preprocess. Creates or resets the release worktree to release.x.y major.minor.
-
 
   release_rules - The rules called by the release rule
 
     Rules:
 
-      release_prepare:
+
+      release_prepare
         Update manifest, bump versions, generate changelog an other versioned artifacts etc..
         Should leave the tree in a uncommited state. Note that 'build_versioned_artifacts' is
         already a dependency here.
 
-      release_tests:
+      release_tests
         All tests and lints to run for a software release.
 
-      release_changelog:
+      release_changelog
         Create the changelog and commit it, may include tags etc.
 
-      release_preprocess:
+      release_preprocess
         Local actions to be done before the release, rebase main/devel on it etc.
 
-      release_publish:
+      release_publish
         Deploy the release, upload it to servers, git push or whatever necessary. Since network
         operations can be fallible this can be restarted.  Should start with them least critical
         (git push) and finally publish it to registries.
 
-      release_postprocess:
+      release_postprocess
         Local actions to be done after the release.
 
-      release_cleanup:
+      release_cleanup
         Final cleanup for the release, clean/delete worktrees etc
 
-      release_generate_version:
+      release_generate_version
         Canonicalize version names. Queried when the the version to 'release' does not start with a
         digit or was not given. Other modules should plug in here. Names are 'auto', 'major',
         'minor', 'patch'. Custom rules may support more names such as 'prerelease', 'alpha', 'beta'
         and so on. 'auto' is the default for 'release'.
 
-      release_current_version:
+      release_current_version
         Query the current version of this project.
-
 
   rule_lib - The library that implements rules, always loaded
 
@@ -885,23 +888,23 @@ MODULE API/RULES
 
     Rules:
 
-      search_for:
-        [rg_args..] - General searching for text, pretty paging the results.
 
-      search_issues:
+      search_for [rg_args..]
+        General searching for text, pretty paging the results.
+
+      search_issues
         Searches for 'FIXME:|TODO:|PLANNED:' with some context around.
 
-      search_fixmes:
+      search_fixmes
         Searches for 'FIXME:'.
 
-      search_todos:
+      search_todos
         Searches for 'TODO:'.
 
-      search_planned:
+      search_planned
         Searches 'PLANNED:'.
 
-
-  semver_lib - Library for parsing and manipulating (simplified) semver.
+  semver_lib - Parsing and manipulating (simplified) semantic versioning strings
     
     For the sake of sanity not all possible semver syntax variants are
     handled. Esp. manipulation is only implemented for the common cases. Patches welcome.
@@ -951,7 +954,7 @@ MODULE API/RULES
       semver_eq <a> <b>
         succeeds if a == b
 
-  shellcheck - Support for the shellcheck shell linter.
+  shellcheck - Support for the shellcheck shell linter
     
     Shellcheck is surprisingly slow.  In projects using bar one can prevent the bar files
     themselves being checked by setting in 'Barf':
@@ -975,18 +978,18 @@ MODULE API/RULES
 
     Rules:
 
-      shellcheck_has_shscripts:
+
+      shellcheck_has_shscripts
         Checks if the project has any shell scripts. Must be called from a git toplevel.
         Checks whenever any shell scripts are versioned in gitq
 
-
-  shellcheck_rules - Hooks shellcheck_lint into the std lint rule.
+  shellcheck_rules - Hooks shellcheck_lint into the std lint rule
 
     Rules:
 
-      is_shellcheck_available:
-        Checks if shellcheck is installed and the project has any shell scripts.
 
+      is_shellcheck_available
+        Checks if shellcheck is installed and the project has any shell scripts.
 
   ssh - Access remote hosts
 
@@ -1049,138 +1052,138 @@ MODULE API/RULES
 
     Rules:
 
-      all:
+
+      all
         Rule that builds the software, documentation and necessary artifacts but will not do any testing.
 
-      lints:
+      lints
         Run all linters.
 
-      build:
+      build
         Build libraries and executables, but not tests, docs and other non mandatory things.
 
-      tests:
+      tests
         Run tests, first unit tests then integration tests.
 
-      doc:
+      doc
         Build the documentation. When supported the documentation is linted as well.
 
-      bench:
+      bench
         Build and run benchmarks.
 
-      fmt:
+      fmt
         Reformat the source code in place.
 
-      fix:
+      fix
         Apply trivial fixes, should be non breaking changes.
 
-      update:
+      update
         Update dependencies.
 
-      run:
+      run
         Run the main binary if any. This already depends on 'build' but the actual run action has
         to be hooked into 'run' by the user in the rulefile.
 
-      audit:
+      audit
         Audit for security issues.
 
-      lint_sources:
+      lint_sources
         Run a static analyzer over the source code.
 
-      lint_docs:
+      lint_docs
         Checks the documentation.
 
-      fetch_resources:
+      fetch_resources
         Whenever resources are externally managed and not part of the versioned source tree they
         should be added to this rule.
 
-      build_assets:
+      build_assets
         Whenever assets that are not part of the normal build process have to be build, this should
         be added to this rule.
 
-      build_libs:
+      build_libs
         Build libraries.
 
-      build_bins:
+      build_bins
         Build executables.
 
-      build_tests:
+      build_tests
         Build all tests
 
-      build_unit_tests:
+      build_unit_tests
         Build unit tests.
 
-      build_integration_tests:
+      build_integration_tests
         Build integration tests.
 
-      build_docs:
+      build_docs
         Build the documentation
 
-      build_benches:
+      build_benches
         Build benchmarks.
 
-      build_examples:
+      build_examples
         Build examples.
 
-      build_versioned_artifacts:
+      build_versioned_artifacts
         Usually versioned files should be source and not generated by any rule. Sometimes one wants
         exceptions from this rule. Like generating a README or CHANGELOG. This can be hooked into
         this rule. This can be run before committing or as part of the commit check where one checks
         for git_is_clean after running generate_versioned. When this failed then the user forgotten
         to update the versioned files.
 
-      test_units:
+      test_units
         Run unit tests.
 
-      test_integrations:
+      test_integrations
         Run integration tests.
 
-      test_expensive:
+      test_expensive
         Some tests are very expensive. Since building and running makes no much difference then
         this is accumulated in this single rule. This allows to exclude expensive tests from the
         normal workflow rules and include them on demand.
 
-      testrelease:
+      testrelease
         Runs the 'release_tests' in a testdir. Uses the current index (staged or last commit) This
         is not a full release test as it wont attempt to bump version and does not generate
         changelogs etc.
 
-      benchmark:
+      benchmark
         Running benchmarks. This does not include building benchmarks, see the 'bench' rule.
 
-      deploy:
+      deploy
         Deploy the project to some server or similar.
 
-      clean:
+      clean
         Clean all build artifacts, but keep assets and user configuration.
 
-      force_reset:
+      force_reset
         Danger-Zone: reset the project into a pristine state with all non versioned data deleted or
         reset to the original state.
 
-      activate:
+      activate
         Activates maintainer curated githooks and other setup to use bar in a checked out
         repository.
 
-      --help:
+      --help
         Show help.
 
-      -h:
+      -h
         Show help.
 
-      --debug:
-        [rule] [args] - Evaluate a rule with at debug level.
+      --debug [rule] [args]
+        Evaluate a rule with at debug level.
 
-      --trace:
-        [rule] [args] - Evaluate a rule with at trace level.
+      --trace [rule] [args]
+        Evaluate a rule with at trace level.
 
-      --verbose:
-        [rule] [args] - Evaluate a rule at increased verbosity level.
+      --verbose [rule] [args]
+        Evaluate a rule at increased verbosity level.
 
-      --quiet:
-        [rule] [args] - Evaluate a rule with supressed output.
+      --quiet [rule] [args]
+        Evaluate a rule with supressed output.
 
-
-  testdir - Creating an isolated directory for testing.
+  testdir - Creating an isolated directory for testing
     
     Unlike other frameworks which do 'pre-commit' processing bar will not modify, block or
     stash the users workdir. Instead it creates and manages directories which become populated
@@ -1222,16 +1225,16 @@ MODULE API/RULES
 
     Rules:
 
-      testdir_enter:
-        [treeish] - Sets up a test directory change dir into it.
+
+      testdir_enter [treeish]
+        Sets up a test directory change dir into it.
         Must be called from the git toplevel. Takes an optional treeish to construct the testdir
         from. When no treeish is given then current index is used.  After creation the
         'testdir_enter_hook' rule is evaluated. This rule is used to prep/populate/seed the
         testdir. When a previous testdir exists then 'TESTDIR_PREV' point to it, the hook can use
         that as source for populating already build artifacts.
 
-
-  tty_lib - This module adds some support for conditional terminal control codes.
+  tty_lib - Module for terminal control codes
     
     These codes are stored in the 'TTYCTL' associative array.  The 'TTYNIL' mirrors the keys
     from 'TTYCTL' but maps them to empty strings.  Finally 'TTYOUT' and 'TTYERR' refer to
@@ -1286,12 +1289,13 @@ MODULE API/RULES
 
     Rules:
 
-      watch:
-        [rule [arguments..]] - Evaluates a rule or MAIN whenever a versioned files changed in the current directory.
+
+      watch [rule [arguments..]]
+        Evaluates a rule or MAIN whenever a versioned files changed in the current directory.
         File watchers hook into this rule.
 
-      watch_git_index:
-        [rule [arguments..]] - Evaluates a rule or MAIN whenever a the git index changed.
+      watch_git_index [rule [arguments..]]
+        Evaluates a rule or MAIN whenever a the git index changed.
         File watchers hook into this rule.
 
 
