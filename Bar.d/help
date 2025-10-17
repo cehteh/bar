@@ -23,9 +23,25 @@
 # prototype: "function" = "help"
 # prototype: "variable" = "help"
 
-function help ## [topic|rule|function|variable|text] - Show help
+function help ## [[-s|--section] topic|rule|function|variable|text] - Show help
 {
-  local query="$*"
+  local -a args=("$@")
+  local section_only=0
+
+  if (( ${#args[@]} > 0 )); then
+    case "${args[0]}" in
+      -s|--section)
+        section_only=1
+        args=("${args[@]:1}")
+        ;;
+    esac
+  fi
+
+  local query="${args[*]}"
+  if [[ -z "$query" ]]; then
+    section_only=0
+  fi
+
   local force_pager="${BAR_FORCE_PAGER:-}"
   local pager=""
   local -a pager_cmd=()
@@ -65,7 +81,7 @@ function help ## [topic|rule|function|variable|text] - Show help
   fi
 
   if [[ "$pager" == "less" ]]; then
-    pager_cmd=(less -R)
+    pager_cmd=(less -R -F)
   elif [[ "$pager" == "more" ]]; then
     pager_cmd=(more)
   fi
@@ -76,48 +92,113 @@ function help ## [topic|rule|function|variable|text] - Show help
 
   local target_line=""
   local search_term=""
+  local case_sensitive=0
+  local found_line=""
+  local found_span=""
+  local found_proto=""
+  local best_rank=9999
+  local best_line=""
+  local best_span=""
+  local best_proto=""
 
   if [[ -n "$query" ]]; then
     # Smart case: if query contains any uppercase letter -> case-sensitive search
-    local case_sensitive=0
+    case_sensitive=0
     if [[ "$query" =~ [A-Z] ]]; then
       case_sensitive=1
     fi
 
-  local entry lineno remainder value
-    local found_line=""
+    local entry span remainder value proto start_line lineno
+    local lower_query="${query,,}"
 
     # Iterate index (which preserves case) and perform a prefix match.
     while IFS= read -r entry; do
       [[ -z "$entry" ]] && continue
-      lineno="${entry%%:*}"
+      span="${entry%%:*}"
       remainder="${entry#*:}"
+      proto="${remainder%%:*}"
       value="${remainder#*:}"
       [[ -z "$value" ]] && continue
+
+      start_line="${span%%-*}"
+      if [[ "$start_line" =~ ^[0-9]+$ ]]; then
+        lineno="$start_line"
+      else
+        continue
+      fi
 
       # Escape regex metacharacters in query for safe use in =~
       local q_escaped
       q_escaped=$(printf '%s' "$query" | sed -e 's/[]\\.^$*+?()[\]{}|]/\\&/g')
 
+      local matched=0
+      local match_exact=0
+      local begins_value=0
+
       if (( case_sensitive == 1 )); then
-        # token-start prefix match: either at beginning or preceded by non-alnum
         if [[ "$value" =~ (^|[^[:alnum:]])$q_escaped ]]; then
-          # ensure the match is a prefix of a token: check that matched substring
-          # starts at position 1 or immediately after a separator
-          found_line="$lineno"
-          break
+          matched=1
+          if [[ "$value" == "$query" ]]; then
+            match_exact=1
+          fi
+          if (( ${#value} >= ${#query} )) && [[ "${value:0:${#query}}" == "$query" ]]; then
+            begins_value=1
+          fi
         fi
       else
-        # case-insensitive: lower both value and query then apply same token-start logic
         local lower_value lower_q_escaped
         lower_value="${value,,}"
         lower_q_escaped=$(printf '%s' "${q_escaped,,}")
         if [[ "$lower_value" =~ (^|[^[:alnum:]])$lower_q_escaped ]]; then
-          found_line="$lineno"
-          break
+          matched=1
+          if [[ "$lower_value" == "$lower_query" ]]; then
+            match_exact=1
+          fi
+          if (( ${#lower_value} >= ${#lower_query} )) && [[ "${lower_value:0:${#lower_query}}" == "$lower_query" ]]; then
+            begins_value=1
+          fi
         fi
       fi
+
+      if (( matched == 0 )); then
+        continue
+      fi
+
+      local rank
+      case "$proto" in
+        topic) rank=100 ;;
+        function) rank=200 ;;
+        rule) rank=300 ;;
+        variable) rank=400 ;;
+        *) rank=500 ;;
+      esac
+
+      if (( begins_value == 1 )); then
+        (( rank -= 20 ))
+      fi
+
+      if (( match_exact == 1 )); then
+        (( rank -= 10 ))
+      fi
+
+      if (( rank < best_rank || (rank == best_rank && lineno < best_line) )); then
+        best_rank=$rank
+        best_line="$lineno"
+        best_span="$span"
+        best_proto="$proto"
+      fi
+
+      if (( rank <= 90 )); then
+        # Exact topic match (or better) cannot be improved further
+        break
+      fi
     done < <(help_indexer)
+
+    if [[ -n "$best_line" ]]; then
+      found_line="$best_line"
+      found_span="$best_span"
+      found_proto="$best_proto"
+    fi
 
     if [[ -n "$found_line" ]]; then
       target_line="$found_line"
@@ -128,7 +209,22 @@ function help ## [topic|rule|function|variable|text] - Show help
     fi
   fi
 
+  local render_span=""
+  if (( section_only == 1 )); then
+    if [[ -n "$found_line" && "$found_proto" != "text" ]]; then
+      render_span="$found_span"
+      target_line=""
+      search_term=""
+    else
+      section_only=0
+    fi
+  fi
+
   if [[ $use_pager -eq 0 ]]; then
+    if [[ -n "$render_span" ]]; then
+      help_render "$render_span"
+      return
+    fi
     if (( stdout_is_tty == 0 )); then
       local -a help_lines=()
       mapfile -t help_lines < <(help_render)
@@ -157,7 +253,11 @@ function help ## [topic|rule|function|variable|text] - Show help
       return
     fi
 
-    help_render
+    if [[ -n "$render_span" ]]; then
+      help_render "$render_span"
+    else
+      help_render
+    fi
     return
   fi
 
@@ -177,11 +277,21 @@ function help ## [topic|rule|function|variable|text] - Show help
   fi
 
   if (( ${#pager_cmd[@]} == 0 )); then
-    help_render
+    if [[ -n "$render_span" ]]; then
+      help_render "$render_span"
+    else
+      help_render
+    fi
     return
   fi
 
-  "${pager_cmd[@]}" < <(help_render)
+  # shellcheck disable=2034
+  BAR_VERBOSITY_LEVEL=0
+  if [[ -n "$render_span" ]]; then
+    "${pager_cmd[@]}" < <(help_render "$render_span")
+  else
+    "${pager_cmd[@]}" < <(help_render)
+  fi
 }
 
 # Help text formatting rules:
@@ -194,6 +304,7 @@ function help ## [topic|rule|function|variable|text] - Show help
 # - Lists start at the same indentation level as the text.
 function help_render
 {
+  local span="${1:-}"
   if ! declare -p help_render_cache >/dev/null 2>&1; then
     declare -ga help_render_cache=()
   mapfile -t help_render_cache <<EOF
@@ -797,6 +908,39 @@ LICENSE
 EOF
   fi
 
+  if [[ -z "$span" ]]; then
+    printf '%s\n' "${help_render_cache[@]}"
+    return
+  fi
+
+  if [[ "$span" =~ ^([0-9]+)-([0-9]+)$ ]]; then
+    local start="${BASH_REMATCH[1]}"
+    local end="${BASH_REMATCH[2]}"
+    local total=${#help_render_cache[@]}
+    if (( total == 0 )); then
+      return
+    fi
+    if (( start < 1 )); then
+      start=1
+    fi
+    if (( end < start )); then
+      end=$start
+    fi
+    local start_idx=$(( start - 1 ))
+    local end_idx=$(( end - 1 ))
+    if (( start_idx >= total )); then
+      return
+    fi
+    if (( end_idx >= total )); then
+      end_idx=$(( total - 1 ))
+    fi
+    local i
+    for ((i=start_idx; i<=end_idx; i++)); do
+      printf '%s\n' "${help_render_cache[i]}"
+    done
+    return
+  fi
+
   printf '%s\n' "${help_render_cache[@]}"
 }
 
@@ -809,8 +953,61 @@ function help_indexer
       return str
     }
 
+    function record_result(start, end, proto, value,    idx) {
+      if (end < start) {
+        end = start
+      }
+      idx = ++result_count
+      result_start[idx] = start
+      result_end[idx] = end
+      result_proto[idx] = proto
+      result_value[idx] = value
+    }
+
+    function close_sections(new_indent,    end_line) {
+      while (stack_size > 0 && stack_indent[stack_size] >= new_indent) {
+        end_line = stack_last_content[stack_size]
+        if (end_line == 0) {
+          end_line = stack_start[stack_size]
+        }
+        record_result(stack_start[stack_size], end_line, stack_proto[stack_size], stack_value[stack_size])
+        stack_size--
+      }
+    }
+
+    function push_section(proto, value, indent) {
+      stack_size++
+      stack_indent[stack_size] = indent
+      stack_proto[stack_size] = proto
+      stack_value[stack_size] = value
+      stack_start[stack_size] = NR
+      stack_last_content[stack_size] = NR
+    }
+
+    function touch_sections() {
+      for (i = 1; i <= stack_size; i++) {
+        stack_last_content[i] = NR
+      }
+    }
+
+    function find_span_end(start, start_indent,    j, end_line) {
+      end_line = start
+      for (j = start + 1; j <= NR; j++) {
+        if (line_has_text[j] == 0) {
+          continue
+        }
+        if (indentation[j] <= start_indent) {
+          break
+        }
+        end_line = j
+      }
+      return end_line
+    }
+
     BEGIN {
       code_indent = 0
+      stack_size = 0
+      result_count = 0
     }
 
     {
@@ -821,6 +1018,7 @@ function help_indexer
       }
 
       trimmed = trim(line)
+      has_text = (trimmed != "") ? 1 : 0
 
       if (code_indent > 0) {
         if (trimmed != "" && indent < code_indent) {
@@ -828,6 +1026,12 @@ function help_indexer
         } else {
           trimmed_lines[NR] = ""
           blank[NR] = 1
+          indentation[NR] = indent
+          line_has_text[NR] = has_text
+          if (has_text) {
+            close_sections(indent)
+            touch_sections()
+          }
           next
         }
       }
@@ -836,22 +1040,43 @@ function help_indexer
         code_indent = indent
         trimmed_lines[NR] = ""
         blank[NR] = 1
+        indentation[NR] = indent
+        line_has_text[NR] = has_text
+        if (has_text) {
+          close_sections(indent)
+          touch_sections()
+        }
         next
       }
 
       trimmed_lines[NR] = trimmed
       blank[NR] = (trimmed == "") ? 1 : 0
+      indentation[NR] = indent
+      line_has_text[NR] = has_text
+
+      if (has_text) {
+        close_sections(indent)
+      }
 
       if (line ~ /^    Functions:/) {
         section = "function"
+        if (has_text) {
+          touch_sections()
+        }
         next
       }
       if (line ~ /^    Rules:/) {
         section = "rule"
+        if (has_text) {
+          touch_sections()
+        }
         next
       }
       if (line ~ /^    Variables:/) {
         section = "variable"
+        if (has_text) {
+          touch_sections()
+        }
         next
       }
 
@@ -860,15 +1085,20 @@ function help_indexer
         split(name, parts, /[[:space:]]+/)
         name = parts[1]
         sub(/:$/, "", name)
-        printf "%d:%s:%s\n", NR, section, name
+        push_section(section, name, indent)
       }
 
-      if (trimmed != "" && line !~ /^      / && line !~ /^        / && line !~ /^    (Functions|Rules|Variables):/) {
+      if (has_text && line !~ /^      / && line !~ /^        / && line !~ /^    (Functions|Rules|Variables):/) {
         section = ""
+      }
+
+      if (has_text) {
+        touch_sections()
       }
     }
 
     END {
+      close_sections(-1)
       for (i = 1; i <= NR; i++) {
         candidate = trimmed_lines[i]
         if (candidate == "") {
@@ -880,8 +1110,13 @@ function help_indexer
         prev_blank = (i == 1) ? 1 : blank[i - 1]
         next_blank = (i == NR) ? 0 : blank[i + 1]
         if (prev_blank && next_blank) {
-          printf "%d:topic:%s\n", i, candidate
+          span_end = find_span_end(i, indentation[i])
+          record_result(i, span_end, "topic", candidate)
         }
+      }
+
+      for (i = 1; i <= result_count; i++) {
+        printf "%d-%d:%s:%s\n", result_start[i], result_end[i], result_proto[i], result_value[i]
       }
     }
   '

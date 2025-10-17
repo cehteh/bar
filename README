@@ -544,7 +544,7 @@ MODULE API/RULES
 
     Functions:
 
-      help [topic|rule|function|variable|text]
+      help [[-s|--section] topic|rule|function|variable|text]
         Show help
 
     Rules:

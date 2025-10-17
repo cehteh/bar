@@ -91,3 +91,15 @@ else
     echo "✗ help without query should start with header (got: $header_line)"
     exit 1
 fi
+
+# 5. --section should slice to the matching section
+if ! section_line="$(BAR_FORCE_PAGER=less first_non_empty_line "$BAR_CMD" --bare help --section git)"; then
+    echo "✗ help --section git command failed"
+    exit 1
+fi
+if [[ "$section_line" =~ ^[[:space:]]*git[[:space:]]- ]]; then
+    echo "✓ help --section git limits output to git section"
+else
+    echo "✗ help --section git should start at git section (got: $section_line)"
+    exit 1
+fi
