@@ -233,14 +233,14 @@ QUICKSTART
    ./bar watch fastchk  # watches the project for changes and runs fast checks
    ./bar activate       # installs githooks and other local prep work
 
-  When you want to install and use it in your own projects
+  When you want to install and use it in your own projects:
 
    git clone https://seed.pipapo.org/z3WhBdHt1VVNyeQ61zpY66pNzuSrP.git bar
    cd bar
    ./bar init_install ~/.local/
    git pull   # to get updates
 
-  Then you can initialize it in your projects with
+  Then you can initialize it in your projects with:
 
    bar init
    git add Barf Bar.d .gitignore
@@ -256,10 +256,10 @@ QUICKSTART
 
 INVOCATION AND SEMANTICS
 
-    bar [rulefile] [--bare] [rule [arguments..]]
-    please [rulefile] [--bare] [rule [arguments..]]
-    ./bar [rulefile] [--bare] [rule [arguments..]]
-    <symlink> [arguments..]
+   bar [rulefile] [--bare] [rule [arguments..]]
+   please [rulefile] [--bare] [rule [arguments..]]
+   ./bar [rulefile] [--bare] [rule [arguments..]]
+   <symlink> [arguments..]
 
   Starts by loading all initial modules (those which have underscores in their name) and the
   rulefile, which is either "Barf", "barf", ".Barf", ".barf" when called as 'bar' or "Pleasef"
@@ -293,86 +293,61 @@ MODULE API/RULES
 $(help_describe_files "$BAR_DIR"/* )
 
 
-
-BASH COMPLETION
-
-  Bar supports bash completion for rulefiles, rules, functions, and their arguments. Completion
-  is automatically installed when you run 'bar init_install'.
-
-  The completion script is installed to '~/.bash_completion/bar_complete'. To enable it,
-  either source it in your .bashrc:
-
-    source ~/.bash_completion/bar_complete
-
-  Or if you have bash-completion package installed, it should be automatically loaded.
-
-  Completion works for:
-  - bar <TAB>       - completes rulefiles, rules, and functions in current directory
-  - please <TAB>    - completes rulefiles, rules, and functions
-  - ./bar <TAB>     - completes rulefiles, rules, and functions from local bar
-
-  The completion logic will:
-  1. Find any user rule files in current directory (files containing 'function' or 'rule',
-     or with shebang pointing to bar/please)
-  2. Complete available bash functions and rules from default rule file and Bar.d/ modules
-  3. Provide context-aware argument completion based on parameter types
-
-
 INITIAL INSTALLATION
 
   Bar can be invoked in different ways:
 
-  1. Installed in \$PATH:
-     To make this work it is best to clone bar locally and symlink the checked out files
-     to your '.local/' tree. This allows easy upgrades via git:
+  1.  Installed in \$PATH:
+      To make this work it is best to clone bar locally and symlink the checked out files
+      to your '.local/' tree. This allows easy upgrades via git:
 
-     When you have radicle (https://radicle.xyz/) installed you can clone it with:
+      When you have radicle (https://radicle.xyz/) installed you can clone it with:
 
        rad clone rad:z3WhBdHt1VVNyeQ61zpY66pNzuSrP
 
-     Otherwise it can be cloned by git with:
+      Otherwise it can be cloned by git with:
 
        git clone https://seed.pipapo.org/z3WhBdHt1VVNyeQ61zpY66pNzuSrP.git bar
 
-     Then you can install it in your ~/.local tree with:
+      Then you can install it in your ~/.local tree with:
 
        cd bar
        ./bar init_install ~/.local/
 
-     This creates symlinks to 'bar', 'please', 'Bar.d', 'Barf.default', 'Please.default' in ~/.local
-     and symlinks 'Bar.d/*' to '~/.config/please/'.
+      This creates symlinks to 'bar', 'please', 'Bar.d', 'Barf.default', 'Please.default' in ~/.local
+      and symlinks 'Bar.d/*' to '~/.config/please/'.
 
-     Now 'bar' is installed, check it with 'bar help'
+      Now 'bar' is installed, check it with 'bar help'
 
-  2. The local './.bar' initialized from above:
-     Since bar is a bash script, it’s easy to version and ship it with other software.
-     To initialize it in a current directory use either of:
+  2.  The local './bar' initialized from above:
+      Since bar is a bash script, it’s easy to version and ship it with other software.
+      To initialize it in a current directory use either of:
 
        bar init          # creates bar, Barf, Bar.d/
        bar init --hidden # creates .bar, .Barf, .Bar.d/
 
-     After that Barf can be customized, unnecessary modules in Bar.d/ may be deleted.
-     Once that is done these files should be put under version control.
+      After that Barf can be customized, unnecessary modules in Bar.d/ may be deleted.
+      Once that is done these files should be put under version control.
 
-     When the installed bar from 1. becomes updated then a local version can be updated by:
+      When the installed bar from 1. becomes updated then a local version can be updated by:
 
        bar init --update
 
-     This only updates 'bar' and any existing modules in 'Bar.d/' but will not touch the
-     'Barf' file since that is meant for local customszation.
+      This only updates 'bar' and any existing modules in 'Bar.d/' but will not touch the
+      'Barf' file since that is meant for local customization.
 
        bar init_update_merge_barf
 
-     Will do a merge of the installed 'Barf' file with the local one. This *will* leave 3-way
-     conflict markers behind when there are changes. These must be manually resolved!
+      Will do a merge of the installed 'Barf' file with the local one. This *will* leave 3-way
+      conflict markers behind when there are changes. These must be manually resolved!
 
-     The updated files should then be committed to version control.
+      The updated files should then be committed to version control.
 
-  3. githooks symlinked from './.git/hooks/*' -> '../../bar'
-     'bar' has support to be used as githooks. This needs manual enabling. Individual hooks can be
-     enabled or disabled with 'bar githook_enable <hook>' and 'bar githook_disable <hook>'.
-     For existing projects using 'bar' a maintainer can setup rules to activate all necessary hooks.
-     This then can be activated by './bar activate'.
+  3.  githooks symlinked from './.git/hooks/*' -> '../../bar'
+      'bar' has support to be used as githooks. This needs manual enabling. Individual hooks can be
+      enabled or disabled with 'bar githook_enable <hook>' and 'bar githook_disable <hook>'.
+      For existing projects using 'bar' a maintainer can setup rules to activate all necessary hooks.
+      This then can be activated by './bar activate'.
 
 
 GIT HOOK ACTIVATION
@@ -417,11 +392,9 @@ RULE SEMANTICS
 
 RULE DEFINITION SYNTAX
 
-  rule [[--rule-flag].. <name>:] [--clause-flag].. [[!]deps[?|~][??] args..]..
-  rule [[--rule-flag].. <name>:] [--clause-flag].. [[!]deps[?|~][??] args..].. -
-  rule [[--rule-flag].. <name>:] [--clause-flag].. [[!]deps[?|~][??] args..].. -- [body..]
-
-  Adds a clause to 'name' or 'MAIN'.
+   rule [[--rule-flag].. <name>:] [--clause-flag].. [[!]deps[?|~][??] args..]..
+   rule [[--rule-flag].. <name>:] [--clause-flag].. [[!]deps[?|~][??] args..].. -
+   rule [[--rule-flag].. <name>:] [--clause-flag].. [[!]deps[?|~][??] args..].. -- [body..]
 
   * [--rule-flag]
 
@@ -555,26 +528,26 @@ RULE DEFINITION SYNTAX
     time then 'MAIN' will be evaluated.
 
     If exist 'SETUP', 'PREPROCESS', 'POSTPROCESS' and 'CLEANUP' will be called.
-     * SETUP
-       Should set up the environment for all subsequent evaluation. Rules in 'SETUP'
-       should be self-sufficient and not expect a working environment yet.
-       A failure here will abort bar.
-     * PREPROCESS
-       Doing any preparatory tasks within the set up environmnet.
-       A failure here will abort bar.
-     * MAIN
-       When the bar is not called via a symlink or the user did not provide a rule to
-       evaluate, then MAIN is the default rule. Otherwise the user supplied or symlink-deduced
-       rulename will be evaluated. The result of this rule determines the exitcode of bar.
-     * POSTPROCESS
-       Is for evaluating things after the main rule finsihed. The environment and
-       state is still the same as in the main rule. A failure here will be reported but not
-       reflected in the exitode.
-     * CLEANUP
-       Is for removing temporary resources and doing any other kind of cleanup work. This
-       means the state and environment at cleanup time may be differen/partially destructed and
-       should not be relied upon. Clauses in the CLEANUP rule are evaluated in reverse order of
-       their definition. A failure here will be reported but not reflected in the exitcode.
+    * SETUP
+      Should set up the environment for all subsequent evaluation. Rules in 'SETUP'
+      should be self-sufficient and not expect a working environment yet.
+      A failure here will abort bar.
+    * PREPROCESS
+      Doing any preparatory tasks within the set up environment.
+      A failure here will abort bar.
+    * MAIN
+      When the bar is not called via a symlink or the user did not provide a rule to
+      evaluate, then MAIN is the default rule. Otherwise the user supplied or symlink-deduced
+      rulename will be evaluated. The result of this rule determines the exitcode of bar.
+    * POSTPROCESS
+      Is for evaluating things after the main rule finished. The environment and
+      state is still the same as in the main rule. A failure here will be reported but not
+      reflected in the exitode.
+    * CLEANUP
+      Is for removing temporary resources and doing any other kind of cleanup work. This
+      means the state and environment at cleanup time may be differen/partially destructed and
+      should not be relied upon. Clauses in the CLEANUP rule are evaluated in reverse order of
+      their definition. A failure here will be reported but not reflected in the exitcode.
 
     After a rule that is not flagged with '--always' got evaluated it is not allowed to add
     more clauses to it anymore, as the outcome would be unexpected and impure.
@@ -586,128 +559,6 @@ RULE ENVIRONMENT
   other state or environment variable is not considered. When the result of a rule would
   depend on such external state then the rule is impure and may lead to wrong
   results.
-
-
-WRITING DOCUMENTATION
-
-  Bar uses a structured documentation format that serves both human readers and automated
-  tools like help generation and bash completion. Documentation uses '##' comment markers.
-
-  File-Level Documentation:
-    Use '###' at the start of a file to describe the module/file:
-
-      ### This module provides cargo/rust support.
-
-  Variable Documentation:
-    Variables declared with 'declare' can be documented on the same line:
-
-      declare -g MYVAR="value" ## Description of the variable
-
-  Function Documentation:
-    Functions should have documentation in the form:
-
-      function name ## [--opt] <required> [optional..] - Short description
-
-    The parameter list uses a formal syntax:
-    - <param>    - Mandatory parameter (prototype)
-    - [param]    - Optional parameter (prototype)
-    - <param..>  - One or more occurrences (suffix .. after closing >)
-    - <param>..  - One or more occurrences (suffix .. after closing >)
-    - [param..]  - Zero or more occurrences (suffix .. after closing ])
-    - [param]..  - Zero or more occurrences (suffix .. after closing ])
-    - <> and []  - Can be nested
-    - word       - Anything not in <> or [] is a literal (like 'as', 'into', ':')
-    - --flag     - Literal flag (can be in <--flag> for prototype completion)
-    - -f         - Literal short flag
-    - a|b        - Alternatives where a and b can be any of the above
-                   (a|b|c|d etc. any number allowed)
-                   Note: <a..|b> is at least one 'a' or a single 'b'
-                         <a|b>.. is at least one of 'a' or 'b'
-    - param      - Parameter names serve as prototypes for completion
-
-    Examples:
-    - function rename ## <this> as|into <that> - rename this as/into that
-      Requires literal 'as' or 'into' at the 2nd position.
-    - function process ## <input>: <output> - process input to output
-      The colon ':' after <input> is a literal character.
-
-    Parameter identifiers start with an alphabetic character followed by [[:alnum:]-_].
-    These serve as prototypes for completion and are refined in following documentation.
-
-    Multi-line documentation continues on following lines starting with '##':
-
-      function foo ## [--verbose|-v] <input> [output] - Process files
-      {
-          ## [--verbose|-v] - Enable verbose output
-          ## <input>         - Input file to process
-          ## [output]        - Optional output file (defaults to stdout)
-          ...
-      }
-
-    For complex option groups, you can use indirection:
-
-      function foo ## [--opts] <input> - Process files
-      {
-          ## [--opts] -
-          ##     --verbose - Enable verbose output
-          ##     --quiet   - Suppress output
-          ## <input> - Input file to process
-          ...
-      }
-
-  Rule Documentation:
-    Rules are documented with '##' lines before the rule definition:
-
-      ## <target> - Build the specified target
-      rule build:
-
-    For rules with parameters, use the same formal syntax as functions:
-
-      ## [--toolchain] <target> [options..] - Build target
-      rule build:
-
-  Documentation Prototypes for Completion:
-    Parameter identifiers map to completion functions. Common prototypes include:
-
-    - <file>      - Any file on filesystem
-    - <directory> - Any directory
-    - <path>      - Any valid path
-    - <text>      - Any text input
-    - <number>    - Numeric input
-    - <rule>      - Existing rule name
-    - <command>   - Command or function name
-
-    Module-specific prototypes can be defined (e.g., <toolchain> in cargo module).
-    See contrib/bar_complete for completion implementation details.
-    
-  Defining Custom Completion Prototypes:
-    Modules can define custom prototypes for parameter completion using single-hash comments
-    that must start at column 0 (no leading whitespace):
-    
-      # prototype: "mytype" = "file"
-      # prototype: "myfile" = "file existing local"
-      # prototype: "mycommand" = "command"
-  # prototype: "toolchain" = "extcomp cargo"
-      # prototype: "gitargs" = "extcomp git"
-    
-    These definitions register a prototype with a completer. The format is:
-      # prototype: "prototype_name" = "completer_spec"
-    
-    Where completer_spec is either:
-    - A built-in completer name (file, directory, path, rule, command, etc.)
-    - A completer with predicates (e.g., "file existing local")
-    - "ext function_name" for external/custom completers (calls bar --bare function_name)
-    - "extcomp command" for black-box external command completion (invokes command's native bash completion)
-    
-    The "extcomp" type enables leveraging any command's existing bash completion by invoking
-    it as a black box. For example, "extcomp git" will use git's native completion for all
-    git subcommands and flags. This works with git, cargo, ssh, and any other command that
-    has bash completion support.
-    
-    Note: The '# prototype:' comment must start at the beginning of the line (column 0).
-    
-    These are registered as "module@prototype" in the completion registry, allowing
-    module-specific completion behavior while maintaining fallback to global prototypes.
 
 
 MODULES
@@ -780,6 +631,150 @@ MAIN API
 
 $(help_describe_files "$BAR_SELF")
 
+
+DOCUMENTATION WRITING GUIDELINES
+
+  Bar uses a structured documentation format that serves both human readers and automated
+  tools like help generation and bash completion. Documentation uses '##' comment markers.
+
+  File-Level Documentation:
+
+    Use '###' at the start of a file to describe the module/file:
+
+     ### This module provides cargo/rust support.
+
+  Variable Documentation:
+
+    Variables declared with 'declare' can be documented on the same line:
+
+     declare -g MYVAR="value" ## Description of the variable
+
+  Function Documentation:
+
+    Functions should have documentation in the form:
+
+     function name ## [--opt] <required> [optional..] - Short description
+
+    The parameter list uses a formal syntax:
+    - <param>    - Mandatory parameter (prototype)
+    - [param]    - Optional parameter (prototype)
+    - <param..>  - One or more occurrences (suffix .. after closing >)
+    - <param>..  - One or more occurrences (suffix .. after closing >)
+    - [param..]  - Zero or more occurrences (suffix .. after closing ])
+    - [param]..  - Zero or more occurrences (suffix .. after closing ])
+    - <> and []  - Can be nested
+    - word       - Anything not in <> or [] is a literal (like 'as', 'into', ':')
+    - --flag     - Literal flag (can be in <--flag> for prototype completion)
+    - -f         - Literal short flag
+    - a|b        - Alternatives where a and b can be any of the above
+                   (a|b|c|d etc. any number allowed)
+                   Note: <a..|b> is at least one 'a' or a single 'b'
+                         <a|b>.. is at least one of 'a' or 'b'
+    - param      - Parameter names serve as prototypes for completion
+
+    Examples:
+
+    - function rename ## <this> as|into <that> - rename this as/into that
+      Requires literal 'as' or 'into' at the 2nd position.
+    - function process ## <input:> <output> - process input to output
+      The colon ':' after <input> is a literal character.
+
+    Parameter identifiers start with an alphabetic character followed by [[:alnum:]-_].
+    These serve as prototypes for completion and are refined in following documentation.
+
+    Multi-line documentation continues on following lines starting with '##':
+
+     function foo ## [--verbose|-v] <input> [output] - Process files
+     {
+         ## [--verbose|-v] - Enable verbose output
+         ## <input>         - Input file to process
+         ## [output]        - Optional output file (defaults to stdout)
+         ...
+     }
+
+  Rule Documentation:
+
+    Rules are documented with '##' lines before the rule definition:
+
+     ## <target> - Build the specified target
+     rule build:
+
+    For rules with parameters, use the same formal syntax as functions:
+
+     ## [--toolchain] <target> [options..] - Build target
+     rule build:
+
+  Documentation Prototypes for Completion:
+
+    Parameter identifiers map to completion functions. Common prototypes include:
+
+    - <file>      - Any file on filesystem
+    - <directory> - Any directory
+    - <path>      - Any valid path
+    - <text>      - Any text input
+    - <number>    - Numeric input
+    - <rule>      - Existing rule name
+    - <command>   - Command or function name
+
+    Module-specific prototypes can be defined (e.g., <toolchain> in cargo module).
+    See contrib/bar_complete for completion implementation details.
+    
+  Defining Custom Completion Prototypes:
+
+    Modules can define custom prototypes for parameter completion using single-hash comments
+    that must start at column 0 (no leading whitespace):
+    
+      # prototype: "mytype" = "file"
+      # prototype: "myfile" = "file existing local"
+      # prototype: "mycommand" = "command"
+      # prototype: "toolchain" = "extcomp cargo"
+      # prototype: "gitargs" = "extcomp git"
+    
+    These definitions register a prototype with a completer. The format is:
+
+      # prototype: "prototype_name" = "completer_spec"
+    
+    Where completer_spec is either:
+    - A built-in completer name (file, directory, path, rule, command, etc.)
+    - A completer with predicates (e.g., "file existing local")
+    - "ext function_name" for external/custom completers (calls bar --bare function_name)
+    - "extcomp command" for black-box external command completion (invokes command's native bash completion)
+    
+    The "extcomp" type enables leveraging any command's existing bash completion by invoking
+    it as a black box. For example, "extcomp git" will use git's native completion for all
+    git subcommands and flags. This works with git, cargo, ssh, and any other command that
+    has bash completion support.
+    
+    Note: The '# prototype:' comment must start at the beginning of the line (column 0).
+    
+    These are registered as "module@prototype" in the completion registry, allowing
+    module-specific completion behavior while maintaining fallback to global prototypes.
+
+
+BASH COMPLETION
+
+  Bar supports bash completion for rulefiles, rules, functions, and their arguments. Completion
+  is automatically installed when you run 'bar init_install'.
+
+  The completion script is installed to '~/.bash_completion/bar_complete'. To enable it,
+  either source it in your .bashrc:
+
+   source ~/.bash_completion/bar_complete
+
+  Or if you have bash-completion package installed, it should be automatically loaded.
+
+  Completion works for:
+
+  - bar <TAB>       - completes rulefiles, rules, and functions in current directory
+  - please <TAB>    - completes rulefiles, rules, and functions
+  - ./bar <TAB>     - completes rulefiles, rules, and functions from local bar
+
+  The completion logic will:
+
+  1.  Find any user rule files in current directory (files containing 'function' or 'rule',
+      or with shebang pointing to bar/please)
+  2.  Complete available bash functions and rules from default rule file and Bar.d/ modules
+  3.  Provide context-aware argument completion based on parameter types
 
 
 LICENSE
