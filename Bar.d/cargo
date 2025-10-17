@@ -1,7 +1,7 @@
 #!/bash
 # shellcheck disable=2016,2086
 
-### Rust/cargo support.
+### Rust/cargo support
 
 # prototype: "toolchain" = "extcomp cargo"
 # prototype: "tool" = "ext cargo_tool_complete"

@@ -199,6 +199,36 @@ test_bar_help_invocation_completer() {
         return 1
     fi
 
+    COMPREPLY=()
+    COMP_WORDS=("bar" "help" "--short" "")
+    COMP_CWORD=3
+    COMP_LINE="bar help --short "
+    COMP_POINT=${#COMP_LINE}
+
+    _bar_complete
+
+    if [[ ${#COMPREPLY[@]} -eq 0 ]]; then
+        echo "✗ bar help --short completion returned no suggestions"
+        if [[ -n "$debug_backup" ]]; then
+            BAR_COMPLETE_DEBUG="$debug_backup"
+        else
+            unset BAR_COMPLETE_DEBUG
+        fi
+        return 1
+    fi
+
+    if printf '%s\n' "${COMPREPLY[@]}" | grep -Fxq "ABOUT"; then
+        echo "✓ bar help --short produces help topic completions"
+    else
+        echo "✗ bar help --short should complete help topics (got: ${COMPREPLY[*]})"
+        if [[ -n "$debug_backup" ]]; then
+            BAR_COMPLETE_DEBUG="$debug_backup"
+        else
+            unset BAR_COMPLETE_DEBUG
+        fi
+        return 1
+    fi
+
     if [[ -n "$debug_backup" ]]; then
         BAR_COMPLETE_DEBUG="$debug_backup"
     else
@@ -303,30 +333,58 @@ test_completion_cache_reuse() {
 }
 
 main() {
+    local status=0
+
     echo "=========================================="
     echo "Bar Completion Tests"
     echo "=========================================="
     echo
-    
-    test_parse_params
+
+    if ! test_parse_params; then
+        status=1
+    fi
     echo
-    test_registry_init
+
+    if ! test_registry_init; then
+        status=1
+    fi
     echo
-    test_generic_completers
+
+    if ! test_generic_completers; then
+        status=1
+    fi
     echo
-    test_completer_lookup
+
+    if ! test_completer_lookup; then
+        status=1
+    fi
     echo
-    test_predicate_filtering
+
+    if ! test_predicate_filtering; then
+        status=1
+    fi
     echo
-    test_help_completer
+
+    if ! test_help_completer; then
+        status=1
+    fi
     echo
-    test_bar_help_invocation_completer
+
+    if ! test_bar_help_invocation_completer; then
+        status=1
+    fi
     echo
-    test_completion_cache_reuse
-    
+
+    if ! test_completion_cache_reuse; then
+        status=1
+    fi
+
     echo "=========================================="
     echo "Tests complete"
     echo "=========================================="
+
+    return "$status"
 }
 
-main
+main "$@"
+exit $?

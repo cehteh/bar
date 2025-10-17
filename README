@@ -536,21 +536,10 @@ MODULE API/RULES
     
     Only variables, functions and rules that have doc comments are included in the output.
 
-    Variables:
-
-       ()
-        Description of the variable
-        Default: value
-
-    Functions:
-
-      help [[-s|--section] topic|rule|function|variable|text]
-        Show help
-
     Rules:
 
       help:
-        [topic|rule|function|variable|text] - Show help topics
+        [[-s|--short] topic|rule|function|variable|text] - Show help topics
 
 
   init - Module to install, initialize and update bar itself.
@@ -1646,37 +1635,6 @@ MAIN API
     
     Provides only basic functionality for module loading and debugging and starting rule
     evaluation. Loads the 'std_lib' and 'rule_lib' to make them omnipresent.
-
-    Variables:
-
-       ()
-        Path to bar itself.
-        Default: $(realpath "$BASH_ARGV0")
-
-       ()
-        Name of bar when called by symlink.
-        Default: ${BASH_ARGV0
-
-       ()
-        Directory to load rules from.
-
-       ()
-        When set, don't eval SETUP, PREPROCESS, POSTPROCESS and CLEANUP.
-
-       ()
-        The Barf file used.
-
-       ()
-        Initial working directory.
-        Default: $PWD
-
-       ()
-        Verbosity level from 0 (silent) to 6 (trace).
-        Default: ${BAR_VERBOSITY_LEVEL:-2}
-
-       ()
-        Timestamp in microseconds since epoch of this invocation
-        Default: $(bar_now)
 
     Functions:
 

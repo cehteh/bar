@@ -1,7 +1,7 @@
 #!/bash
 # shellcheck disable=2016
 
-### Library for parsing and manipulating (simplified) semver.
+### Parsing and manipulating (simplified) semantic versioning strings
 ###
 ### For the sake of sanity not all possible semver syntax variants are
 ### handled. Esp. manipulation is only implemented for the common cases. Patches welcome.

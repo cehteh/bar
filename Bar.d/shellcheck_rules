@@ -1,6 +1,6 @@
 #!/bash
 
-### Hooks shellcheck_lint into the std lint rule.
+### Hooks shellcheck_lint into the std lint rule
 
 ## Checks if shellcheck is installed and the project has any shell scripts.
 rule is_shellcheck_available: 'is_command_installed shellcheck' shellcheck_has_shscripts

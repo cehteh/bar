@@ -1,6 +1,6 @@
 #!/bash
 
-### Creating an isolated directory for testing.
+### Creating an isolated directory for testing
 ###
 ### Unlike other frameworks which do 'pre-commit' processing bar will not modify, block or
 ### stash the users workdir. Instead it creates and manages directories which become populated

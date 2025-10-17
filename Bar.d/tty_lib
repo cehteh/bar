@@ -1,6 +1,6 @@
 #!/bash
 
-### This module adds some support for conditional terminal control codes.
+### Module for terminal control codes
 ###
 ### These codes are stored in the 'TTYCTL' associative array.  The 'TTYNIL' mirrors the keys
 ### from 'TTYCTL' but maps them to empty strings.  Finally 'TTYOUT' and 'TTYERR' refer to

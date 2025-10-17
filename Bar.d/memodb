@@ -1,6 +1,6 @@
 #!/bash
 
-### The memodb is a persistent database which memoizes command results.
+### A persistent database which memoizes command results
 ###
 ### It records the stdout, stderr and state/exitcode commands and functions.  Commands and
 ### functions that are used with the memodb must be pure as their result must only depend on

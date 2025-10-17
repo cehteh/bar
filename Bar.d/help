@@ -22,6 +22,8 @@
 # prototype: "rule" = "help"
 # prototype: "function" = "help"
 # prototype: "variable" = "help"
+# prototype: "-s" = "literal -s"
+# prototype: "--short" = "literal --short"
 
 function help
 {
@@ -30,7 +32,7 @@ function help
 
   if (( ${#args[@]} > 0 )); then
     case "${args[0]}" in
-      -s|--section)
+      -s|--short)
         section_only=1
         args=("${args[@]:1}")
         ;;
@@ -1321,7 +1323,7 @@ function help_describe_variables
 }
 
 # Define --bare rule for help (reads existing module files)
-## [[-s|--section] topic|rule|function|variable|text] - Show help topics
+## [[-s|--short] topic|rule|function|variable|text] - Show help topics
 rule --bare help:
 
 # Provide indexer via bare rule for external consumers like completion

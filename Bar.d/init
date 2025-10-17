@@ -1,7 +1,7 @@
 #!/bash
 # shellcheck disable=2016
 
-### Module to install, initialize and update bar itself.
+### Module to install, initialize and update bar itself
 
 function init # --hidden|--update|--update-existing - initialize bar in a workdir.
 {

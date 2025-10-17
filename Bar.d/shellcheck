@@ -1,6 +1,6 @@
 #!/bash
 
-### Support for the shellcheck shell linter.
+### Support for the shellcheck shell linter
 ###
 ### Shellcheck is surprisingly slow.  In projects using bar one can prevent the bar files
 ### themselves being checked by setting in 'Barf':

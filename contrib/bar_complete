@@ -737,10 +737,10 @@ _bar_complete_params()
     
     # Get parameter spec for this function/rule
     local param_spec=""
-    if [[ -v _bar_completion_func_params["$func_or_rule"] ]]; then
-        param_spec="${_bar_completion_func_params[$func_or_rule]}"
-    elif [[ -v _bar_completion_rule_params["$func_or_rule"] ]]; then
+    if [[ -v _bar_completion_rule_params["$func_or_rule"] ]]; then
         param_spec="${_bar_completion_rule_params[$func_or_rule]}"
+    elif [[ -v _bar_completion_func_params["$func_or_rule"] ]]; then
+        param_spec="${_bar_completion_func_params[$func_or_rule]}"
     fi
     
     # If no parameter spec, try generic completions
@@ -1325,19 +1325,42 @@ _bar_complete()
             _bar_complete_dbg "  Nested proto detected, first part: $first_part"
         fi
         
-        # Check if this matches a literal (check in registry if it has _bar_complete_comp_literal)
-        if [[ -v _bar_complete_protoregistry["$proto_name"] ]]; then
-            local completer="${_bar_complete_protoregistry[$proto_name]}"
-            if [[ "$completer" == "_bar_complete_comp_literal "* ]]; then
-                # This is a literal prototype - check for exact match
+        # Check if this matches a literal (supports alternation like [-s|--short])
+        local -a proto_variants=("$proto_name")
+        if [[ "$proto_name" == *'|'* ]]; then
+            IFS='|' read -ra proto_variants <<< "$proto_name"
+        fi
+
+        local proto_variant
+        for proto_variant in "${proto_variants[@]}"; do
+            [[ -n "$proto_variant" ]] || continue
+
+            # Direct literal equality (covers documented literals)
+            if [[ "$word" == "$proto_variant" ]]; then
+                matched=true
+                _bar_complete_dbg "  Matched literal variant: $proto_variant"
+                proto_idx=$((proto_idx + 1))
+                break
+            fi
+
+            # Try lookup via completion registry (handles literal prototypes declared elsewhere)
+            local completer=""
+            if [[ -v _bar_complete_protoregistry["$proto_variant"] ]]; then
+                completer="${_bar_complete_protoregistry[$proto_variant]}"
+            elif [[ -n "$active_func_or_rule" ]]; then
+                completer=$(_bar_get_completer "$active_func_or_rule" "$proto_variant") || true
+            fi
+
+            if [[ -n "$completer" && "$completer" == "_bar_complete_comp_literal "* ]]; then
                 local literal="${completer#_bar_complete_comp_literal }"
                 if [[ "$literal" == "$word" ]]; then
                     matched=true
-                    _bar_complete_dbg "  Matched literal prototype: $proto_name"
+                    _bar_complete_dbg "  Matched literal variant via completer: $proto_variant -> $literal"
                     proto_idx=$((proto_idx + 1))
+                    break
                 fi
             fi
-        fi
+        done
         
         # If not matched yet, check for special prototype types
         if [[ $matched == false ]]; then
@@ -1365,10 +1388,10 @@ _bar_complete()
                     
                     # Get parameter spec for this rule/function
                     local param_spec=""
-                    if [[ -v _bar_completion_func_params["$word"] ]]; then
-                        param_spec="${_bar_completion_func_params[$word]}"
-                    elif [[ -v _bar_completion_rule_params["$word"] ]]; then
+                    if [[ -v _bar_completion_rule_params["$word"] ]]; then
                         param_spec="${_bar_completion_rule_params[$word]}"
+                    elif [[ -v _bar_completion_func_params["$word"] ]]; then
+                        param_spec="${_bar_completion_func_params[$word]}"
                     fi
                     
                     if [[ -n "$param_spec" ]]; then
