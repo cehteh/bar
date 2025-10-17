@@ -28,6 +28,44 @@ function example
     echo "I am example called with $*"
 }
 
+require help
+
+function example_benchmark ## <count> <command> [args..] - Benchmark command invocations
+{
+     local count=$1
+     shift || true
+
+     if [[ -z "$count" || ! "$count" =~ ^[0-9]+$ ]]; then
+          printf 'benchmark: count must be a positive integer\n' >&2
+          return 1
+     fi
+
+     local -i iterations=$count
+     if (( iterations <= 0 )); then
+          printf 'benchmark: count must be greater than zero\n' >&2
+          return 1
+     fi
+
+     if (( $# == 0 )); then
+          printf 'benchmark: missing command to execute\n' >&2
+          return 1
+     fi
+
+          local -a cmd=("$@")
+          local start_ns end_ns elapsed_ns avg_ns i
+
+               start_ns=$(date +%s%N)
+          for ((i = 0; i < iterations; i++)); do
+               "${cmd[@]}" >/dev/null 2>&1 || return 1
+          done
+          end_ns=$(date +%s%N)
+
+               elapsed_ns=$(( 10#$end_ns - 10#$start_ns ))
+     avg_ns=$(( elapsed_ns / iterations ))
+
+          printf 'iterations=%d total_ns=%d avg_ns=%d\n' "$iterations" "$elapsed_ns" "$avg_ns"
+}
+
 # add a tests rule with 3 clauses
 rule tests: example_ok? !example_fail 'example "argument"' -- echo "example_ok success"
 rule tests: !example_ok -- echo "This is never called, but test still passes"

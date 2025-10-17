@@ -76,7 +76,6 @@ function help ## [topic|rule|function|variable|text] - Show help
 
   local target_line=""
   local search_term=""
-  local lc_query=""
 
   if [[ -n "$query" ]]; then
     # Smart case: if query contains any uppercase letter -> case-sensitive search
@@ -84,8 +83,6 @@ function help ## [topic|rule|function|variable|text] - Show help
     if [[ "$query" =~ [A-Z] ]]; then
       case_sensitive=1
     fi
-
-    lc_query="${query,,}"
 
   local entry lineno remainder value
     local found_line=""
@@ -147,15 +144,6 @@ function help ## [topic|rule|function|variable|text] - Show help
         if (( idx >= 0 && idx < total )); then
           start_idx=$idx
         fi
-      elif [[ -n "$lc_query" ]]; then
-        local idx
-        for idx in "${!help_lines[@]}"; do
-          local lower="${help_lines[idx],,}"
-          if [[ "$lower" == *"$lc_query"* ]]; then
-            start_idx=$idx
-            break
-          fi
-        done
       fi
 
       if (( start_idx < 0 || start_idx >= total )); then
@@ -206,9 +194,9 @@ function help ## [topic|rule|function|variable|text] - Show help
 # - Lists start at the same indentation level as the text.
 function help_render
 {
-  # @copilot this can be cached when the variable `help_render_cache` does not exist then `declare -ga help_render_cache` and populate it with mapfile.
-  #          when it exits then print the cached version and return.
-  cat <<EOF
+  if ! declare -p help_render_cache >/dev/null 2>&1; then
+    declare -ga help_render_cache=()
+  mapfile -t help_render_cache <<EOF
 
   bar -- BAshRulez the bash rule evaluator
 
@@ -812,6 +800,9 @@ LICENSE
     You should have received a copy of the GNU Affero General Public License
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 EOF
+  fi
+
+  printf '%s\n' "${help_render_cache[@]}"
 }
 
 
@@ -823,9 +814,36 @@ function help_indexer
       return str
     }
 
+    BEGIN {
+      code_indent = 0
+    }
+
     {
       line = $0
+      indent = 0
+      if (match(line, /^ +/)) {
+        indent = RLENGTH
+      }
+
       trimmed = trim(line)
+
+      if (code_indent > 0) {
+        if (trimmed != "" && indent < code_indent) {
+          code_indent = 0
+        } else {
+          trimmed_lines[NR] = ""
+          blank[NR] = 1
+          next
+        }
+      }
+
+      if (trimmed != "" && (indent % 2) == 1) {
+        code_indent = indent
+        trimmed_lines[NR] = ""
+        blank[NR] = 1
+        next
+      }
+
       trimmed_lines[NR] = trimmed
       blank[NR] = (trimmed == "") ? 1 : 0
 
