@@ -150,6 +150,14 @@ test_help_completer() {
         echo "✗ Help completer should escape multi-word topics"
         return 1
     fi
+
+    result=$(_bar_complete_comp_help "foo")
+    if [[ -z "$result" ]]; then
+        echo "✓ Help completer ignores documentation examples"
+    else
+        echo "✗ Help completer should not include documentation examples (got: $result)"
+        return 1
+    fi
 }
 
 main() {

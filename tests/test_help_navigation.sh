@@ -56,6 +56,18 @@ else
     exit 1
 fi
 
+# 2b. Example documentation should not be treated as real symbol
+if ! foo_line="$(BAR_FORCE_PAGER=less first_non_empty_line "$BAR_CMD" --bare help foo)"; then
+    echo "✗ help foo command failed"
+    exit 1
+fi
+if [[ "$foo_line" =~ foo ]]; then
+    echo "✗ help foo should not jump to documentation example (got: $foo_line)"
+    exit 1
+else
+    echo "✓ help foo does not treat documentation example as symbol"
+fi
+
 # 3. Partial function name should resolve to git_ls_files
 if ! ls_line="$(BAR_FORCE_PAGER=less first_line "$BAR_CMD" --bare help ls_files)"; then
     echo "✗ help ls_files command failed"

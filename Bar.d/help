@@ -938,14 +938,14 @@ function help_describe_functions
             out = out text "\n"
         }
 
-        /function[ \t]+[A-Za-z_][A-Za-z0-9_]*[ \t]*##/ {
+    /^function[ \t]+[A-Za-z_][A-Za-z0-9_]*[ \t]*##/ {
             split($0, parts, "##")
             if (length(parts) < 2) {
                 next
             }
 
             namepart = parts[1]
-            sub(/^.*function[ \t]+/, "", namepart)
+      sub(/^function[ \t]+/, "", namepart)
             sub(/[ \t].*$/, "", namepart)
 
             infopart = parts[2]

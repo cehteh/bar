@@ -1055,7 +1055,7 @@ _bar_complete_parse_file()
             fi
             
         # Check for documented function: function name ## [params] - description
-        elif [[ "$line" =~ ^[[:space:]]*function[[:space:]]+([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*##[[:space:]]*(.*)$ ]]; then
+    elif [[ "$line" =~ ^function[[:space:]]+([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*##[[:space:]]*(.*)$ ]]; then
             local func="${BASH_REMATCH[1]}"
             local doc="${BASH_REMATCH[2]}"
             _bar_completion_functions+=("$func")
@@ -1086,7 +1086,7 @@ _bar_complete_parse_file()
             doc_params=""
             
         # Check for function preceded by doc comment
-        elif [[ $in_doc_comment == true && "$line" =~ ^[[:space:]]*function[[:space:]]+([A-Za-z_][A-Za-z0-9_]*) ]]; then
+    elif [[ $in_doc_comment == true && "$line" =~ ^function[[:space:]]+([A-Za-z_][A-Za-z0-9_]*) ]]; then
             local func="${BASH_REMATCH[1]}"
             _bar_completion_functions+=("$func")
             
@@ -1114,7 +1114,7 @@ _bar_complete_parse_file()
             doc_params=""
             
         # In public mode, also capture undocumented functions
-        elif [[ $public_mode == true && "$line" =~ ^[[:space:]]*function[[:space:]]+([A-Za-z_][A-Za-z0-9_]*) ]]; then
+    elif [[ $public_mode == true && "$line" =~ ^function[[:space:]]+([A-Za-z_][A-Za-z0-9_]*) ]]; then
             local func="${BASH_REMATCH[1]}"
             # Only add if not already added (documented ones are already in)
             local already_added=false
@@ -1136,7 +1136,7 @@ _bar_complete_parse_file()
             if [[ "$last_doc_line" =~ ^(.+)[[:space:]]+-[[:space:]] ]]; then
                 doc_params="${BASH_REMATCH[1]}"
             fi
-        elif [[ $in_doc_comment == true && "$line" =~ ^[[:space:]]*rule[[:space:]]+(--[a-z_-]*[[:space:]]+)*([A-Za-z_-][A-Za-z0-9_-]*): ]]; then
+    elif [[ $in_doc_comment == true && "$line" =~ ^rule[[:space:]]+(--[a-z_-]*[[:space:]]+)*([A-Za-z_-][A-Za-z0-9_-]*): ]]; then
             local rule="${BASH_REMATCH[2]}"
             _bar_completion_rules+=("$rule")
             
@@ -1152,7 +1152,7 @@ _bar_complete_parse_file()
             
             in_doc_comment=false
             doc_params=""
-        elif [[ "$line" =~ ^[[:space:]]*rule[[:space:]]+(--[a-z_-]*[[:space:]]+)*([A-Za-z_-][A-Za-z0-9_-]*): ]]; then
+    elif [[ "$line" =~ ^rule[[:space:]]+(--[a-z_-]*[[:space:]]+)*([A-Za-z_-][A-Za-z0-9_-]*): ]]; then
             # In public mode, also capture undocumented rules
             if [[ $public_mode == true ]]; then
                 local rule="${BASH_REMATCH[2]}"
@@ -1174,7 +1174,7 @@ _bar_complete_parse_file()
             fi
             in_doc_comment=false
             doc_params=""
-        elif [[ "$line" =~ ^[[:space:]]*rule[[:space:]] ]]; then
+    elif [[ "$line" =~ ^rule[[:space:]] ]]; then
             in_doc_comment=false
             doc_params=""
         fi
