@@ -86,19 +86,3 @@ rule dbgsh: -- '
           "
      )
 '
-
-# for debugging
-rule --debug: -- '
-     BAR_VERBOSITY_LEVEL=5
-     rule_eval "${RULE_ARGS[@]:-MAIN}"
-'
-
-rule --trace: -- '
-     BAR_VERBOSITY_LEVEL=6
-     rule_eval "${RULE_ARGS[@]:-MAIN}"
-'
-
-rule --verbose: -- '
-     BAR_VERBOSITY_LEVEL+=1
-     rule_eval "${RULE_ARGS[@]:-MAIN}"
-'

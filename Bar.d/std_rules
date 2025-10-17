@@ -134,3 +134,35 @@ rule activate: -- debug "Activating bar..."
 
 # create a hash over all source files (non ignored, non generated) in the project.
 # TODO: rule hash_sources: -- debug "Hashing sources"
+
+
+# common options as rules
+
+## Show help.
+rule --bare --help: help
+## Show help.
+rule --bare -h: help
+
+## [rule] [args] - Evaluate a rule with at debug level.
+rule --always --conclusive --debug: -- '
+     BAR_VERBOSITY_LEVEL=5
+     rule_eval "${RULE_ARGS[@]:-MAIN}"
+'
+
+## [rule] [args] - Evaluate a rule with at trace level.
+rule --always --conclusive --trace: -- '
+     BAR_VERBOSITY_LEVEL=6
+     rule_eval "${RULE_ARGS[@]:-MAIN}"
+'
+
+## [rule] [args] - Evaluate a rule at increased verbosity level.
+rule --always --conclusive --verbose: -- '
+     BAR_VERBOSITY_LEVEL+=1
+     rule_eval "${RULE_ARGS[@]:-MAIN}"
+'
+
+## [rule] [args] - Evaluate a rule with supressed output.
+rule --always --conclusive --quiet: -- '
+     BAR_VERBOSITY_LEVEL=0
+     rule_eval "${RULE_ARGS[@]:-MAIN}"
+'
