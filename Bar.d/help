@@ -974,7 +974,7 @@ function help_describe_functions
             next
         }
 
-        /^[ \t]+##.*/ {
+        /^([ \t][ \t])+##[^#].*/ {
             line = $0
             sub(/^.*##[ ]?/, "", line)
             printout("        " line)
@@ -1015,7 +1015,7 @@ function help_describe_rules
             next
         }
 
-        /^##/ {
+        /^##[^.]/ {
             line = $0
             sub(/^##[ ]?/, "", line)
             descr = descr "        " line "\n"

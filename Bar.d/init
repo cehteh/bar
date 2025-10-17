@@ -136,12 +136,12 @@ function init_update_merge_barf
     fi
 }
 
-function init_install ## [prefix] - install links in [prefix] or '~/.local'
+function init_install ## [prefix] - install links in [prefix] or '~/.local'.
 {
-    ## Bar is distributed by radicle/git. Usually it will exist somewhere in a users home
-    ## directory where it got checked out. Bar does rolling releases, it is continuously
-    ## improved. To make this checked out version available for use this 'init_install' will
-    ## create symlinks at the given [prefix] directory or in '~/.local' by default.
+    ## Bar will usually exist somewhere in a users home directory where it got checked
+    ## out. Bar does rolling releases, it is continuously improved. To make this checked out
+    ## version available for use this 'init_install' will create symlinks at the given
+    ## [prefix] directory or in '~/.local' by default.
     local prefix="${1:-$HOME/.local}"
     shift
 

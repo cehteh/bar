@@ -17,32 +17,32 @@
 ### 'release_rules'.
 ###
 ### We still make a few fixed assumptions:
-###  - Versioning is based on semver
-###  - Releases are called 'release'
-###  - The main branch can be named 'main' or 'master'
-###  - Development branches matching 'devel' 'devel-*' or 'devel/*'
+### - Versioning is based on semver
+### - Releases are called 'release'
+### - The main branch can be named 'main' or 'master'
+### - Development branches matching 'devel' 'devel-*' or 'devel/*'
 ###
 ### The worktree tracks its state in a local git config bar.release.state:
-###  - start:
-###    The worktree is created but not tested yet.
-###  - tested:
-###    All test passed.
-###  - changelog:
-###    generated the changelog and committed it.
-###  - ready:
-###    The worktree/branch is ready for publishing
-###  - published:
-###    Uploads succeeded.
-###  - done:
-###    Postprocessing done.
-###  - finished:
-###    Final state, everything finished.
+### - start:
+###   The worktree is created but not tested yet.
+### - tested:
+###   All test passed.
+### - changelog:
+###   generated the changelog and committed it.
+### - ready:
+###   The worktree/branch is ready for publishing
+### - published:
+###   Uploads succeeded.
+### - done:
+###   Postprocessing done.
+### - finished:
+###   Final state, everything finished.
 ###
 ### Further following git config variables are set:
-###  - bar.release.startbranch:
-###    Branch this release initiated from (usually main or devel).
-###  - bar.release.version:
-###    The (semver) version of this release.
+### - bar.release.startbranch:
+###   Branch this release initiated from (usually main or devel).
+### - bar.release.version:
+###   The (semver) version of this release.
 ###
 ### Release Configuration and Workflow
 ###
@@ -52,27 +52,27 @@
 ### Configuration of release workflows is done by extending the rules from 'release_rules'.
 ### Many other '*_rules' modules already hook into these rules and do the 'right thing'.
 ### The parts that can configured in Barf are:
-###   - release_prepare:
-###     Any extra preparation for releases. 'cargo_rules' already bumps the version.
-###   - release_tests:
-###     Whatever tests are necessary for making a software release. 'lints' and 'tests' are
-###     already defined dependencies. Anything more needs to be added in Barf.
-###   - release_preprocess:
-###     Any final work that needs to be done before publishing. This should not change the
-###     project files anymore. This is the place to do git tags, merge/fast-forward branches
-###     or switch over to other worktrees. For convenience the 'release_as_*' rules exist to
-###     do this work.
-###   - release_publish:
-###     The actual publishing part. May need access to the internet.
-###     The 'git_rules' and 'cargo_rules' already hook into this.
-###   - release_postprocess:
-###     Any work to be done after the publishing. Like rebase work/devel branches on the
-###     release and so on. For example resetting the main branch and rebase the branch from
-###     where the release started:
-###      rule release_postprocess: release_reset_mainbranch release_rebase_startbranch
-###   - release_cleanup:
-###     Final clean up work to remove artifacts not needed after the release.
-###     May just use 'rule release_cleanup: clean' when build artifacts can be deleted.
+### - release_prepare:
+###   Any extra preparation for releases. 'cargo_rules' already bumps the version.
+### - release_tests:
+###   Whatever tests are necessary for making a software release. 'lints' and 'tests' are
+###   already defined dependencies. Anything more needs to be added in Barf.
+### - release_preprocess:
+###   Any final work that needs to be done before publishing. This should not change the
+###   project files anymore. This is the place to do git tags, merge/fast-forward branches
+###   or switch over to other worktrees. For convenience the 'release_as_*' rules exist to
+###   do this work.
+### - release_publish:
+###   The actual publishing part. May need access to the internet.
+###   The 'git_rules' and 'cargo_rules' already hook into this.
+### - release_postprocess:
+###   Any work to be done after the publishing. Like rebase work/devel branches on the
+###   release and so on. For example resetting the main branch and rebase the branch from
+###   where the release started:
+###    rule release_postprocess: release_reset_mainbranch release_rebase_startbranch
+### - release_cleanup:
+###   Final clean up work to remove artifacts not needed after the release.
+###   May just use 'rule release_cleanup: clean' when build artifacts can be deleted.
 
 # ## rule --disjunct release_generate_version_hook: -- false
 

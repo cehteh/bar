@@ -140,6 +140,7 @@ function uncond_call # <rc> [message..] - Message for unconditional dependency c
 
 function rule_autoload # <name> - module autoloader
 {
+    [[ "$1" = -* ]] && return 0
     trace "$*"
     local modname="${1#always_}"
     modname="${modname#is_}"

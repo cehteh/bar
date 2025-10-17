@@ -144,25 +144,25 @@ rule --bare --help: help
 rule --bare -h: help
 
 ## [rule] [args] - Evaluate a rule with at debug level.
-rule --always --conclusive --debug: -- '
+rule --always --debug: --conclusive -- '
      BAR_VERBOSITY_LEVEL=5
      rule_eval "${RULE_ARGS[@]:-MAIN}"
 '
 
 ## [rule] [args] - Evaluate a rule with at trace level.
-rule --always --conclusive --trace: -- '
+rule --always --trace: --conclusive -- '
      BAR_VERBOSITY_LEVEL=6
      rule_eval "${RULE_ARGS[@]:-MAIN}"
 '
 
 ## [rule] [args] - Evaluate a rule at increased verbosity level.
-rule --always --conclusive --verbose: -- '
+rule --always --verbose: --conclusive -- '
      BAR_VERBOSITY_LEVEL+=1
      rule_eval "${RULE_ARGS[@]:-MAIN}"
 '
 
 ## [rule] [args] - Evaluate a rule with supressed output.
-rule --always --conclusive --quiet: -- '
+rule --always --quiet: --conclusive -- '
      BAR_VERBOSITY_LEVEL=0
      rule_eval "${RULE_ARGS[@]:-MAIN}"
 '
