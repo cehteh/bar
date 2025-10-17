@@ -206,6 +206,102 @@ test_bar_help_invocation_completer() {
     fi
 }
 
+test_completion_cache_reuse() {
+    echo "Testing completion caching..."
+
+    _bar_complete_cache=()
+    _bar_complete_cache_signature=""
+    _bar_complete_cache_prefix=""
+
+    COMPREPLY=()
+    COMP_WORDS=("bar" "help" "")
+    COMP_CWORD=2
+    COMP_LINE="bar help "
+    COMP_POINT=${#COMP_LINE}
+
+    _bar_complete
+
+    if [[ ${#COMPREPLY[@]} -eq 0 ]]; then
+        echo "✗ initial completion returned no suggestions"
+        return 1
+    fi
+
+    local first_result
+    first_result=$(printf '%s\n' "${COMPREPLY[@]}")
+    local -a first_array=("${COMPREPLY[@]}")
+    local first_signature="$_bar_complete_cache_signature"
+
+    _bar_completion_rules=("__cache_test_rule")
+    _bar_completion_functions=("__cache_test_func")
+
+    COMPREPLY=()
+    _bar_complete
+
+    local second_result
+    second_result=$(printf '%s\n' "${COMPREPLY[@]}")
+
+    if [[ "$first_result" == "$second_result" ]]; then
+        echo "✓ cache reuses previous completions for identical context"
+    else
+        echo "✗ cache should return identical completions"
+        echo "  First:"
+        printf '    %s\n' "${first_result}"
+        echo "  Second:"
+        printf '    %s\n' "${second_result}"
+        return 1
+    fi
+
+    COMP_WORDS=("bar" "help" "A")
+    COMP_CWORD=2
+    COMP_LINE="bar help A"
+    COMP_POINT=${#COMP_LINE}
+
+    COMPREPLY=()
+    _bar_complete
+
+    local -a second_prefix_array=("${COMPREPLY[@]}")
+    local filtered_expected=()
+    local item
+    for item in "${first_array[@]}"; do
+        if [[ "$item" == A* ]]; then
+            filtered_expected+=("$item")
+        fi
+    done
+
+    local expected_filtered_str
+    expected_filtered_str=$(printf '%s\n' "${filtered_expected[@]}")
+    local second_filtered_str
+    second_filtered_str=$(printf '%s\n' "${second_prefix_array[@]}")
+
+    if [[ "$second_filtered_str" == "$expected_filtered_str" ]]; then
+        echo "✓ cache filters previous completions for extended prefix"
+    else
+        echo "✗ cache should reuse and filter previous completions"
+        echo "  Expected:"
+        printf '    %s\n' "${expected_filtered_str}"
+        echo "  Actual:"
+        printf '    %s\n' "${second_filtered_str}"
+        return 1
+    fi
+
+    if [[ "$_bar_complete_cache_signature" == "$first_signature" ]]; then
+        echo "✓ cache signature unchanged for extended prefix"
+    else
+        echo "✗ cache signature should stay the same for extended prefix"
+        echo "  First:  $first_signature"
+        echo "  Second: $_bar_complete_cache_signature"
+        return 1
+    fi
+
+    if [[ "$_bar_complete_cache_prefix" == "A" ]]; then
+        echo "✓ cache prefix tracks latest user input"
+    else
+        echo "✗ cache prefix should update to current input"
+        echo "  Got: $_bar_complete_cache_prefix"
+        return 1
+    fi
+}
+
 main() {
     echo "=========================================="
     echo "Bar Completion Tests"
@@ -225,6 +321,8 @@ main() {
     test_help_completer
     echo
     test_bar_help_invocation_completer
+    echo
+    test_completion_cache_reuse
     
     echo "=========================================="
     echo "Tests complete"

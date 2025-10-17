@@ -57,6 +57,15 @@ declare -gA _bar_complete_protoregistry=()
 # Examples: actions["rulefile"]="_bar_action_parse_rulefile"
 declare -gA _bar_completion_actions=()
 
+# _bar_complete_cache: array caching the completions for the current word
+declare -ga _bar_complete_cache=()
+
+# _bar_complete_cache_signature: signature of the current completion context
+declare -g _bar_complete_cache_signature=""
+
+# _bar_complete_cache_prefix: prefix used when populating the cache
+declare -g _bar_complete_cache_prefix=""
+
 # _bar_completion_extcomplete_cache: associative array "completer_name" -> "cached_results"
 # Cache for external completion results
 declare -gA _bar_completion_extcomplete_cache=()
@@ -1302,6 +1311,39 @@ _bar_complete()
         cur="${COMP_WORDS[COMP_CWORD]}"
         cword=$COMP_CWORD
     fi
+
+    # Ensure cur/cword populated when _init_completion is available
+    local cur_input="${COMP_WORDS[COMP_CWORD]}"
+    cur="$cur_input"
+    cword=$COMP_CWORD
+
+    local -a cache_signature_words=("${COMP_WORDS[@]}")
+    cache_signature_words[cword]=""
+
+    local cache_signature="$cword|"
+    local cache_sig_part
+    for cache_sig_part in "${cache_signature_words[@]}"; do
+        cache_signature+="${cache_sig_part}"$'\037'
+    done
+
+    if [[ "$_bar_complete_cache_signature" == "$cache_signature" && "$cur_input" == "${_bar_complete_cache_prefix}"* ]]; then
+        _bar_complete_dbg "Using cached completions for signature: $cache_signature (prefix: $_bar_complete_cache_prefix -> $cur_input)"
+        local -a filtered_reply=()
+        if [[ ${#_bar_complete_cache[@]} -gt 0 ]]; then
+            local cached_item
+            for cached_item in "${_bar_complete_cache[@]}"; do
+                if [[ -z "$cur_input" || "$cached_item" == "$cur_input"* ]]; then
+                    filtered_reply+=("$cached_item")
+                fi
+            done
+        fi
+        COMPREPLY=("${filtered_reply[@]}")
+        _bar_complete_cache_prefix="$cur_input"
+        return 0
+    fi
+
+    _bar_complete_cache=()
+    COMPREPLY=()
     
     _bar_complete_dbg "Command line: ${COMP_WORDS[*]}"
     _bar_complete_dbg "Current word index: $cword"
@@ -1540,11 +1582,11 @@ _bar_complete()
             fi
 
             # Cache key combines completer, request prefix, literals, and current word
-            local cache_key="${completer}::${cur_for_completer}::${literal_prefix}::${literal_suffix}::${cur}"
+            local completer_cache_key="${completer}::${cur_for_completer}::${literal_prefix}::${literal_suffix}::${cur}"
 
-            if [[ -v cache["$cache_key"] ]]; then
-                _bar_complete_dbg "  Using cached results for $cache_key"
-                local cached_results="${cache[$cache_key]}"
+            if [[ -v cache["$completer_cache_key"] ]]; then
+                _bar_complete_dbg "  Using cached results for $completer_cache_key"
+                local cached_results="${cache[$completer_cache_key]}"
                 if [[ -n "$cached_results" ]]; then
                     local -a cached_comps=()
                     mapfile -t cached_comps <<< "$cached_results"
@@ -1607,9 +1649,9 @@ _bar_complete()
             fi
 
             if [[ ${#new_comps[@]} -gt 0 ]]; then
-                cache["$cache_key"]="$(printf '%s\n' "${new_comps[@]}")"
+                cache["$completer_cache_key"]="$(printf '%s\n' "${new_comps[@]}")"
             else
-                cache["$cache_key"]=""
+                cache["$completer_cache_key"]=""
             fi
         done
 
@@ -1635,6 +1677,10 @@ _bar_complete()
     if [[ ${#all_completions[@]} -gt 0 ]]; then
         mapfile -t COMPREPLY < <(printf '%s\n' "${all_completions[@]}" | sort -u)
     fi
+
+    _bar_complete_cache=("${COMPREPLY[@]}")
+    _bar_complete_cache_signature="$cache_signature"
+    _bar_complete_cache_prefix="$cur_input"
     
     return 0
 }
