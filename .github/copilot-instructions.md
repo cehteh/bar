@@ -33,6 +33,7 @@ Bar is a rule-based command runner implementing a declarative workflow system fo
 - Regenerate the README with `./bar doc` after material help changes and include it in commits when content meaningfully changes.
 - Headings: use three leading hashes for file-level descriptions and two leading hashes for individual rules or functions inside help modules.
 - Follow the documented parameter grammar: `<param>` for required values, `[param]` for optional, `..` for repetition, `a|b` for alternatives, and literal tokens for fixed strings. Prototypes bind specific completers.
+- Study `README` when you are tasked to write bar rules.
 
 ## Completion System Reference
 
