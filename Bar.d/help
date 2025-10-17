@@ -79,74 +79,53 @@ function help ## [topic|rule|function|variable|text] - Show help
   local lc_query=""
 
   if [[ -n "$query" ]]; then
-    lc_query="${query,,}"
-    local best_line=""
-    local best_score=0
-    local best_length=0
-    local entry
+    # Smart case: if query contains any uppercase letter -> case-sensitive search
+    local case_sensitive=0
+    if [[ "$query" =~ [A-Z] ]]; then
+      case_sensitive=1
+    fi
 
+  local entry lineno remainder value
+    local found_line=""
+
+    # Iterate index (which preserves case) and perform a prefix match.
     while IFS= read -r entry; do
       [[ -z "$entry" ]] && continue
-
-      local lineno="${entry%%:*}"
-      local remainder="${entry#*:}"
-      local type="${remainder%%:*}"
-      local value="${remainder#*:}"
-
+      lineno="${entry%%:*}"
+      remainder="${entry#*:}"
+      value="${remainder#*:}"
       [[ -z "$value" ]] && continue
 
-      local lc_value="${value,,}"
-      local min_len="${#lc_query}"
-      if (( ${#lc_value} < min_len )); then
-        min_len=${#lc_value}
-      fi
+      # Escape regex metacharacters in query for safe use in =~
+      local q_escaped
+      q_escaped=$(printf '%s' "$query" | sed -e 's/[]\\.^$*+?()[\]{}|]/\\&/g')
 
-      local prefix_len=0
-      local i
-      for ((i=0; i<min_len; i++)); do
-        if [[ ${lc_query:i:1} == "${lc_value:i:1}" ]]; then
-          ((prefix_len++))
-        else
+      if (( case_sensitive == 1 )); then
+        # token-start prefix match: either at beginning or preceded by non-alnum
+        if [[ "$value" =~ (^|[^[:alnum:]])$q_escaped ]]; then
+          # ensure the match is a prefix of a token: check that matched substring
+          # starts at position 1 or immediately after a separator
+          found_line="$lineno"
           break
         fi
-      done
-
-      local substring_bonus=0
-      if [[ -n "$lc_query" && "$lc_value" == *"$lc_query"* ]]; then
-        local before="${lc_value%%"$lc_query"*}"
-        local match_pos=${#before}
-        substring_bonus=$(( ${#lc_query} - match_pos ))
-        if (( substring_bonus <= 0 )); then
-          substring_bonus=1
-        fi
-      fi
-
-      local base_score=$prefix_len
-      if (( base_score == 0 )); then
-        base_score=$substring_bonus
-      fi
-
-      if (( base_score > 0 )); then
-        local multiplier=1
-        if [[ "$type" == "function" || "$type" == "rule" ]]; then
-          multiplier=3
-        elif [[ "$type" == "variable" ]]; then
-          multiplier=2
-        fi
-
-        local score=$(( base_score * multiplier ))
-        if (( score > best_score || (score == best_score && ${#value} > best_length) )); then
-          best_score=$score
-          best_length=${#value}
-          best_line="$lineno"
+      else
+        # case-insensitive: lower both value and query then apply same token-start logic
+        local lower_value lower_q_escaped
+        lower_value="${value,,}"
+        lower_q_escaped=$(printf '%s' "${q_escaped,,}")
+        if [[ "$lower_value" =~ (^|[^[:alnum:]])$lower_q_escaped ]]; then
+          found_line="$lineno"
+          break
         fi
       fi
     done < <(help_indexer)
 
-    if [[ -n "$best_line" ]]; then
-      target_line="$best_line"
+    if [[ -n "$found_line" ]]; then
+      target_line="$found_line"
     else
-      search_term="${query//\//\/}"
+      # Not found in index -> forward as text search to pager
+      # Escape forward slashes for pager search patterns
+      search_term="${query//\//\\/}"
     fi
   fi
 
@@ -195,8 +174,13 @@ function help ## [topic|rule|function|variable|text] - Show help
   if [[ -n "$target_line" ]]; then
     pager_cmd+=("+$target_line")
   elif [[ -n "$search_term" ]]; then
+    # Only include case-insensitive flag for less when we used smart-case (case-insensitive)
     if [[ "$pager" == "less" ]]; then
-      pager_cmd+=(-I "+/${search_term}")
+      if [[ "$case_sensitive" -eq 0 ]]; then
+        pager_cmd+=(-I "+/${search_term}")
+      else
+        pager_cmd+=("+/${search_term}")
+      fi
     else
       pager_cmd+=("+/${search_term}")
     fi
