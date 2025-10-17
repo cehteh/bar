@@ -94,7 +94,7 @@ function bar_main ## [rulefile] [--bare] [rule [arguments..]] - Loads a rulefile
             debug "using: $BARF_FILE"
             [[ "$BARF_FILE" = "$maybe_barf" ]] && shift
             # shellcheck disable=SC1090 # dynamic source
-            source "$BARF_FILE"
+            require "$BARF_FILE"
             break
         fi
     done
@@ -137,7 +137,7 @@ function bar_main ## [rulefile] [--bare] [rule [arguments..]] - Loads a rulefile
 
         return $rc
     else
-        die "No Barf/Pleasef file found in current directory and no rule defined.
+        die "Initial rule: '$initial_rule' not defined (or missing rule file).
 
 USAGE
 
