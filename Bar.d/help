@@ -23,7 +23,7 @@
 # prototype: "function" = "help"
 # prototype: "variable" = "help"
 
-function help ## [[-s|--section] topic|rule|function|variable|text] - Show help
+function help
 {
   local -a args=("$@")
   local section_only=0
@@ -916,27 +916,9 @@ EOF
   if [[ "$span" =~ ^([0-9]+)-([0-9]+)$ ]]; then
     local start="${BASH_REMATCH[1]}"
     local end="${BASH_REMATCH[2]}"
-    local total=${#help_render_cache[@]}
-    if (( total == 0 )); then
-      return
-    fi
-    if (( start < 1 )); then
-      start=1
-    fi
-    if (( end < start )); then
-      end=$start
-    fi
-    local start_idx=$(( start - 1 ))
-    local end_idx=$(( end - 1 ))
-    if (( start_idx >= total )); then
-      return
-    fi
-    if (( end_idx >= total )); then
-      end_idx=$(( total - 1 ))
-    fi
     local i
-    for ((i=start_idx; i<=end_idx; i++)); do
-      printf '%s\n' "${help_render_cache[i]}"
+    for ((i=start; i<=end; i++)); do
+      printf '%s\n' "${help_render_cache[i-1]}"
     done
     return
   fi
@@ -1281,44 +1263,53 @@ function help_describe_variables
             out = out text "\n"
         }
 
-        /declare[ \t]+.*##/ {
-            before = $0
-            sub(/[ \t]*##.*/, "", before)
-            desc = $0
-            sub(/^.*##[ ]?/, "", desc)
+    /declare[ \t]+.*##/ {
+      before = $0
+      sub(/[ \t]*##.*/, "", before)
+      desc = $0
+      sub(/^.*##[ ]?/, "", desc)
 
-            rest = before
-            sub(/^declare[ \t]+/, "", rest)
+      rest = before
+      sub(/^declare[ \t]+/, "", rest)
 
-            flags = ""
-            if (rest ~ /^-[A-Za-zA-Z]+/) {
-                flags = rest
-                sub(/[ \t].*$/, "", flags)
-                sub(/^-/, "", flags)
-                sub(/^[^ \t]+[ \t]*/, "", rest)
-            }
+      flags = ""
+      if (rest ~ /^-[A-Za-zA-Z]+/) {
+        flags = rest
+        sub(/[ \t].*$/, "", flags)
+        sub(/^-/, "", flags)
+        sub(/^[^ \t]+[ \t]*/, "", rest)
+      }
 
-            varname = rest
-            sub(/[ \t=].*$/, "", varname)
+      varname = rest
+      sub(/[ \t=].*$/, "", varname)
 
-            value = rest
-            if (value ~ /=/) {
-                equals = index(value, "=")
-                value = substr(value, equals + 1)
-                sub(/^[ \t]*"?/, "", value)
-                sub(/"?[ \t]*$/, "", value)
-            } else {
-                value = ""
-            }
+      if (varname == "") {
+        next
+      }
 
-            printout("")
-            printout("      " varname " (" flags ")")
-            printout("        " desc)
-            if (value != "") {
-                printout("        Default: " value)
-            }
-            next
-        }
+      value = rest
+      if (value ~ /=/) {
+        equals = index(value, "=")
+        value = substr(value, equals + 1)
+        sub(/^[ \t]*"?/, "", value)
+        sub(/"?[ \t]*$/, "", value)
+      } else {
+        value = ""
+      }
+
+      line = "      " varname
+      if (flags != "") {
+        line = line " (" flags ")"
+      }
+
+      printout("")
+      printout(line)
+      printout("        " desc)
+      if (value != "") {
+        printout("        Default: " value)
+      }
+      next
+    }
 
         END {
             if (out != "") {
@@ -1330,7 +1321,7 @@ function help_describe_variables
 }
 
 # Define --bare rule for help (reads existing module files)
-## [topic|rule|function|variable|text] - Show help topics
+## [[-s|--section] topic|rule|function|variable|text] - Show help topics
 rule --bare help:
 
 # Provide indexer via bare rule for external consumers like completion
