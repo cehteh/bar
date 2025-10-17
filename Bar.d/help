@@ -18,15 +18,196 @@
 ###
 ### Only variables, functions and rules that have doc comments are included in the output.
 
-function help
+# prototype: "topic" = "help"
+# prototype: "rule" = "help"
+# prototype: "function" = "help"
+# prototype: "variable" = "help"
+
+function help ## [topic|rule|function|variable|text] - Show help
 {
+  local query="$*"
+  local force_pager="${BAR_FORCE_PAGER:-}"
+  local pager=""
+  local -a pager_cmd=()
+  local pager_available=1
+  local use_pager=1
+  local stdout_is_tty=1
+  [[ -t 1 ]] || stdout_is_tty=0
+
+  if [[ -n "$force_pager" ]]; then
+    case "$force_pager" in
+      less)
+        if is_command_installed less; then
+          pager="less"
+        else
+          pager_available=0
+        fi
+        ;;
+      more)
+        if is_command_installed more; then
+          pager="more"
+        else
+          pager_available=0
+        fi
+        ;;
+      *)
+        pager_available=0
+        ;;
+    esac
+  else
     if is_command_installed less; then
-        less -R
+      pager="less"
     elif is_command_installed more; then
-        more
+      pager="more"
     else
-        cat
-    fi < <(render_help)
+      pager_available=0
+    fi
+  fi
+
+  if [[ "$pager" == "less" ]]; then
+    pager_cmd=(less -R)
+  elif [[ "$pager" == "more" ]]; then
+    pager_cmd=(more)
+  fi
+
+  if [[ $stdout_is_tty -eq 0 || $pager_available -eq 0 ]]; then
+    use_pager=0
+  fi
+
+  local target_line=""
+  local search_term=""
+  local lc_query=""
+
+  if [[ -n "$query" ]]; then
+    lc_query="${query,,}"
+    local best_line=""
+    local best_score=0
+    local best_length=0
+    local entry
+
+    while IFS= read -r entry; do
+      [[ -z "$entry" ]] && continue
+
+      local lineno="${entry%%:*}"
+      local remainder="${entry#*:}"
+      local type="${remainder%%:*}"
+      local value="${remainder#*:}"
+
+      [[ -z "$value" ]] && continue
+
+      local lc_value="${value,,}"
+      local min_len="${#lc_query}"
+      if (( ${#lc_value} < min_len )); then
+        min_len=${#lc_value}
+      fi
+
+      local prefix_len=0
+      local i
+      for ((i=0; i<min_len; i++)); do
+        if [[ ${lc_query:i:1} == "${lc_value:i:1}" ]]; then
+          ((prefix_len++))
+        else
+          break
+        fi
+      done
+
+      local substring_bonus=0
+      if [[ -n "$lc_query" && "$lc_value" == *"$lc_query"* ]]; then
+        local before="${lc_value%%"$lc_query"*}"
+        local match_pos=${#before}
+        substring_bonus=$(( ${#lc_query} - match_pos ))
+        if (( substring_bonus <= 0 )); then
+          substring_bonus=1
+        fi
+      fi
+
+      local base_score=$prefix_len
+      if (( base_score == 0 )); then
+        base_score=$substring_bonus
+      fi
+
+      if (( base_score > 0 )); then
+        local multiplier=1
+        if [[ "$type" == "function" || "$type" == "rule" ]]; then
+          multiplier=3
+        elif [[ "$type" == "variable" ]]; then
+          multiplier=2
+        fi
+
+        local score=$(( base_score * multiplier ))
+        if (( score > best_score || (score == best_score && ${#value} > best_length) )); then
+          best_score=$score
+          best_length=${#value}
+          best_line="$lineno"
+        fi
+      fi
+    done < <(help_indexer)
+
+    if [[ -n "$best_line" ]]; then
+      target_line="$best_line"
+    else
+      search_term="${query//\//\/}"
+    fi
+  fi
+
+  if [[ $use_pager -eq 0 ]]; then
+    if (( stdout_is_tty == 0 )); then
+      local -a help_lines=()
+      mapfile -t help_lines < <(help_render)
+
+      local total=${#help_lines[@]}
+      if (( total == 0 )); then
+        return
+      fi
+
+      local start_idx=0
+      if [[ -n "$target_line" && "$target_line" =~ ^[0-9]+$ ]]; then
+        local idx=$(( target_line - 1 ))
+        if (( idx >= 0 && idx < total )); then
+          start_idx=$idx
+        fi
+      elif [[ -n "$lc_query" ]]; then
+        local idx
+        for idx in "${!help_lines[@]}"; do
+          local lower="${help_lines[idx],,}"
+          if [[ "$lower" == *"$lc_query"* ]]; then
+            start_idx=$idx
+            break
+          fi
+        done
+      fi
+
+      if (( start_idx < 0 || start_idx >= total )); then
+        start_idx=0
+      fi
+
+      local i
+      for ((i=start_idx; i<total; i++)); do
+        printf '%s\n' "${help_lines[i]}" || return 0
+      done
+      return
+    fi
+
+    help_render
+    return
+  fi
+
+  if [[ -n "$target_line" ]]; then
+    pager_cmd+=("+$target_line")
+  elif [[ -n "$search_term" ]]; then
+    if [[ "$pager" == "less" ]]; then
+      pager_cmd+=(-I "+/${search_term}")
+    else
+      pager_cmd+=("+/${search_term}")
+    fi
+  fi
+
+  if (( ${#pager_cmd[@]} == 0 )); then
+    help_render
+    return
+  fi
+
+  "${pager_cmd[@]}" < <(help_render)
 }
 
 # Help text formatting rules:
@@ -39,6 +220,8 @@ function help
 # - Lists start at the same indentation level as the text.
 function help_render
 {
+  # @copilot this can be cached when the variable `help_render_cache` does not exist then `declare -ga help_render_cache` and populate it with mapfile.
+  #          when it exits then print the cached version and return.
   cat <<EOF
 
   bar -- BAshRulez the bash rule evaluator
@@ -646,6 +829,66 @@ EOF
 }
 
 
+function help_indexer
+{
+  help_render | awk '
+    function trim(str) {
+      gsub(/^[ \t]+|[ \t]+$/, "", str)
+      return str
+    }
+
+    {
+      line = $0
+      trimmed = trim(line)
+      trimmed_lines[NR] = trimmed
+      blank[NR] = (trimmed == "") ? 1 : 0
+
+      if (line ~ /^    Functions:/) {
+        section = "function"
+        next
+      }
+      if (line ~ /^    Rules:/) {
+        section = "rule"
+        next
+      }
+      if (line ~ /^    Variables:/) {
+        section = "variable"
+        next
+      }
+
+      if (section != "" && line ~ /^      [^[:space:]]/) {
+        name = trimmed
+        split(name, parts, /[[:space:]]+/)
+        name = parts[1]
+        sub(/:$/, "", name)
+        printf "%d:%s:%s\n", NR, section, name
+      }
+
+      if (trimmed != "" && line !~ /^      / && line !~ /^        / && line !~ /^    (Functions|Rules|Variables):/) {
+        section = ""
+      }
+    }
+
+    END {
+      for (i = 1; i <= NR; i++) {
+        candidate = trimmed_lines[i]
+        if (candidate == "") {
+          continue
+        }
+        if (candidate ~ /^[[:punct:]]/ || candidate ~ /[[:punct:]]$/) {
+          continue
+        }
+        prev_blank = (i == 1) ? 1 : blank[i - 1]
+        next_blank = (i == NR) ? 0 : blank[i + 1]
+        if (prev_blank && next_blank) {
+          printf "%d:topic:%s\n", i, candidate
+        }
+      }
+    }
+  '
+}
+
+
 function help_describe_files
 {
     local file
@@ -854,4 +1097,7 @@ function help_describe_variables
 
 # Define --bare rule for help (reads existing module files)
 rule --bare help:
+
+# Provide indexer via bare rule for external consumers like completion
+rule --bare help_indexer:
 

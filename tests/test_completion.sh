@@ -126,6 +126,32 @@ test_predicate_filtering() {
 }
 
 # Run all tests
+test_help_completer() {
+    echo "Testing help completer..."
+
+    unset _bar_complete_help_index
+    unset _bar_complete_help_rindex
+
+    _bar_complete_invocation="$REPO_ROOT/bar"
+
+    local result
+    result=$(_bar_complete_comp_help "abo")
+    if grep -Fxq "ABOUT" <<<"$result"; then
+        echo "✓ Help completer finds ABOUT"
+    else
+        echo "✗ Help completer should include ABOUT"
+        return 1
+    fi
+
+    result=$(_bar_complete_comp_help "invocation")
+    if grep -Fxq 'INVOCATION\ AND\ SEMANTICS' <<<"$result"; then
+        echo "✓ Help completer escapes multi-word topics"
+    else
+        echo "✗ Help completer should escape multi-word topics"
+        return 1
+    fi
+}
+
 main() {
     echo "=========================================="
     echo "Bar Completion Tests"
@@ -142,6 +168,7 @@ main() {
     echo
     test_predicate_filtering
     echo
+    test_help_completer
     
     echo "=========================================="
     echo "Tests complete"

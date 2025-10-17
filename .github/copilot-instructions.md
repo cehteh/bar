@@ -140,8 +140,3 @@ function mymodule_mytype_complete ## Emit completions for mytype
 - `example/` - comprehensive syntax demonstrations and fixtures.
 - `Pleasef.default` - please integration example.
 - Use `./bar help` and module sources in `Bar.d/` as primary references when extending functionality.
-
-# Tasks
-
-The user adds new tasks or requirements here for further assistance.
-Once completed and tested/validated remove them.

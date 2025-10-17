@@ -341,6 +341,96 @@ _bar_complete_comp_literal()
     fi
 }
 
+# Complete help topics, rules, functions, and variables via help_indexer
+_bar_complete_comp_help()
+{
+    local cur="${1:-}"
+
+    if ! declare -p _bar_complete_help_index &>/dev/null; then
+        declare -ga _bar_complete_help_index=()
+    fi
+    if ! declare -p _bar_complete_help_rindex &>/dev/null; then
+        declare -gA _bar_complete_help_rindex=()
+    fi
+
+    if (( ${#_bar_complete_help_index[@]} == 0 )); then
+        local -a index_lines=()
+        local zero_base="${0##*/}"
+
+        if [[ "$zero_base" == "bar" || "$zero_base" == "please" ]]; then
+            if ! mapfile -t index_lines < <("$0" help_indexer 2>/dev/null); then
+                index_lines=()
+            fi
+        fi
+
+        if (( ${#index_lines[@]} == 0 )); then
+            if [[ "$zero_base" == "bar" || "$zero_base" == "please" ]]; then
+                if mapfile -t index_lines < <("$0" --bare help_indexer 2>/dev/null); then
+                    :
+                fi
+            fi
+        fi
+
+        if (( ${#index_lines[@]} == 0 )); then
+            local fallback="${_bar_complete_invocation:-}"
+
+            if [[ -z "$fallback" ]]; then
+                if command -v bar >/dev/null 2>&1; then
+                    fallback="bar"
+                elif command -v please >/dev/null 2>&1; then
+                    fallback="please"
+                elif [[ -x ./bar ]]; then
+                    fallback="./bar"
+                fi
+            fi
+
+            if [[ -n "$fallback" ]]; then
+                if ! mapfile -t index_lines < <("$fallback" --bare help_indexer 2>/dev/null); then
+                    mapfile -t index_lines < <("$fallback" help_indexer 2>/dev/null)
+                fi
+            fi
+        fi
+
+        if (( ${#index_lines[@]} > 0 )); then
+            _bar_complete_help_index=("${index_lines[@]}")
+            local idx
+            for idx in "${!_bar_complete_help_index[@]}"; do
+                local entry="${_bar_complete_help_index[$idx]}"
+                [[ -z "$entry" ]] && continue
+                local value="${entry#*:*:}"
+                [[ -z "$value" ]] && continue
+                local key="${value,,}"
+                if [[ -n "$key" && ! -v _bar_complete_help_rindex["$key"] ]]; then
+                    _bar_complete_help_rindex["$key"]="$idx"
+                fi
+            done
+        fi
+    fi
+
+    if (( ${#_bar_complete_help_rindex[@]} == 0 )); then
+        return 0
+    fi
+
+    local lc_cur="${cur,,}"
+    local -a matches=()
+    local key
+    for key in "${!_bar_complete_help_rindex[@]}"; do
+        if [[ -z "$lc_cur" || "$key" == "$lc_cur"* ]]; then
+            local idx="${_bar_complete_help_rindex[$key]}"
+            local entry="${_bar_complete_help_index[$idx]}"
+            local value="${entry#*:*:}"
+            [[ -z "$value" ]] && continue
+            matches+=("$value")
+        fi
+    done
+
+    if (( ${#matches[@]} > 0 )); then
+        printf '%s\n' "${matches[@]}" | sort -u | while IFS= read -r item; do
+            printf '%q\n' "$item"
+        done
+    fi
+}
+
 # External completer - calls bar --bare <completer_name> to get completions
 _bar_complete_comp_ext()
 {
@@ -498,6 +588,7 @@ _bar_init_completion_registry()
     _bar_complete_protoregistry[rule]="rule_or_function"
     _bar_complete_protoregistry[command]="command"
     _bar_complete_protoregistry[command_or_rule]="command_or_rule"
+    _bar_complete_protoregistry[help]="help"
     
     # Rulefile completer - uses file completer with rulefile predicate
     _bar_complete_protoregistry[rulefile]="file rulefile"
