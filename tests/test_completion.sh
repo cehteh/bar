@@ -160,6 +160,52 @@ test_help_completer() {
     fi
 }
 
+test_bar_help_invocation_completer() {
+    echo "Testing bar help invocation completion..."
+
+    local debug_backup="${BAR_COMPLETE_DEBUG-}"
+    unset BAR_COMPLETE_DEBUG
+
+    unset _bar_complete_help_index
+    unset _bar_complete_help_rindex
+
+    COMPREPLY=()
+    COMP_WORDS=("bar" "help" "")
+    COMP_CWORD=2
+    COMP_LINE="bar help "
+    COMP_POINT=${#COMP_LINE}
+
+    _bar_complete
+
+    if [[ ${#COMPREPLY[@]} -eq 0 ]]; then
+        echo "✗ bar help completion returned no suggestions"
+        if [[ -n "$debug_backup" ]]; then
+            BAR_COMPLETE_DEBUG="$debug_backup"
+        else
+            unset BAR_COMPLETE_DEBUG
+        fi
+        return 1
+    fi
+
+    if printf '%s\n' "${COMPREPLY[@]}" | grep -Fxq "ABOUT"; then
+        echo "✓ bar help produces help topic completions"
+    else
+        echo "✗ bar help should complete help topics (got: ${COMPREPLY[*]})"
+        if [[ -n "$debug_backup" ]]; then
+            BAR_COMPLETE_DEBUG="$debug_backup"
+        else
+            unset BAR_COMPLETE_DEBUG
+        fi
+        return 1
+    fi
+
+    if [[ -n "$debug_backup" ]]; then
+        BAR_COMPLETE_DEBUG="$debug_backup"
+    else
+        unset BAR_COMPLETE_DEBUG
+    fi
+}
+
 main() {
     echo "=========================================="
     echo "Bar Completion Tests"
@@ -177,6 +223,8 @@ main() {
     test_predicate_filtering
     echo
     test_help_completer
+    echo
+    test_bar_help_invocation_completer
     
     echo "=========================================="
     echo "Tests complete"

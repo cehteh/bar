@@ -85,6 +85,8 @@ function help ## [topic|rule|function|variable|text] - Show help
       case_sensitive=1
     fi
 
+    lc_query="${query,,}"
+
   local entry lineno remainder value
     local found_line=""
 
@@ -1080,6 +1082,7 @@ function help_describe_variables
 }
 
 # Define --bare rule for help (reads existing module files)
+## [topic|rule|function|variable|text] - Show help topics
 rule --bare help:
 
 # Provide indexer via bare rule for external consumers like completion

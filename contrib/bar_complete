@@ -374,6 +374,16 @@ _bar_complete_comp_help()
         if (( ${#index_lines[@]} == 0 )); then
             local fallback="${_bar_complete_invocation:-}"
 
+            if [[ -n "$fallback" ]]; then
+                if [[ "$fallback" == ./* || "$fallback" == ../* ]]; then
+                    [[ -x "$fallback" ]] || fallback=""
+                elif [[ "$fallback" == */bar ]]; then
+                    [[ -x "$fallback" ]] || fallback=""
+                elif ! command -v "$fallback" >/dev/null 2>&1; then
+                    fallback=""
+                fi
+            fi
+
             if [[ -z "$fallback" ]]; then
                 if command -v bar >/dev/null 2>&1; then
                     fallback="bar"
@@ -1484,36 +1494,53 @@ _bar_complete()
         proto_name="${proto_name%..\$}"
         proto_name="${proto_name%..}"
 
-        # Extract literal punctuation so lookups ignore prefix/suffix
-        local -a punct_parts
-        mapfile -t punct_parts < <(_bar_extract_literal_punct "$proto_name")
-        local proto_clean="${punct_parts[0]}"
-        local literal_prefix="${punct_parts[1]}"
-        local literal_suffix="${punct_parts[2]}"
+        local completions_before=${#all_completions[@]}
+        local have_variant_completer=false
 
-        # Get completer for this prototype from registry with module context
-        local completer
-        completer=$(_bar_get_completer "$active_func_or_rule" "$proto_clean")
-
-        # Decide which prefix to pass to the completer. When the literal prefix/suffix
-        # has not been typed yet, request the full result set so we can add literals
-        # ourselves before filtering.
-        local cur_for_completer
-        if [[ -n "$literal_prefix" ]]; then
-            if [[ "$cur" == "$literal_prefix"* ]]; then
-                cur_for_completer="$cur"
-            else
-                cur_for_completer="${literal_prefix}${cur}"
-            fi
-        else
-            cur_for_completer="$cur"
+        local -a proto_variants=("$proto_name")
+        if [[ "$proto_name" == *"|"* ]]; then
+            IFS='|' read -r -a proto_variants <<< "$proto_name"
         fi
 
-        # Cache key combines completer, request prefix, literals, and current word
-        local cache_key="${completer}::${cur_for_completer}::${literal_prefix}::${literal_suffix}::${cur}"
+        local proto_variant
+        for proto_variant in "${proto_variants[@]}"; do
+            [[ -z "$proto_variant" ]] && continue
 
-        if [[ -n "$completer" ]]; then
+            # Extract literal punctuation so lookups ignore prefix/suffix per variant
+            local -a punct_parts
+            mapfile -t punct_parts < <(_bar_extract_literal_punct "$proto_variant")
+            local proto_clean="${punct_parts[0]}"
+            local literal_prefix="${punct_parts[1]}"
+            local literal_suffix="${punct_parts[2]}"
+
+            # Get completer for this prototype from registry with module context
+            local completer
+            completer=$(_bar_get_completer "$active_func_or_rule" "$proto_clean") || true
+
+            if [[ -z "$completer" ]]; then
+                _bar_complete_dbg "  No completer found for variant '$proto_clean'"
+                continue
+            fi
+
+            have_variant_completer=true
             _bar_complete_dbg "  Found completer for '$proto_clean': $completer"
+
+            # Decide which prefix to pass to the completer. When the literal prefix/suffix
+            # has not been typed yet, request the full result set so we can add literals
+            # ourselves before filtering.
+            local cur_for_completer
+            if [[ -n "$literal_prefix" ]]; then
+                if [[ "$cur" == "$literal_prefix"* ]]; then
+                    cur_for_completer="$cur"
+                else
+                    cur_for_completer="${literal_prefix}${cur}"
+                fi
+            else
+                cur_for_completer="$cur"
+            fi
+
+            # Cache key combines completer, request prefix, literals, and current word
+            local cache_key="${completer}::${cur_for_completer}::${literal_prefix}::${literal_suffix}::${cur}"
 
             if [[ -v cache["$cache_key"] ]]; then
                 _bar_complete_dbg "  Using cached results for $cache_key"
@@ -1523,68 +1550,77 @@ _bar_complete()
                     mapfile -t cached_comps <<< "$cached_results"
                     all_completions+=("${cached_comps[@]}")
                 fi
-            else
-                local -a new_comps=()
+                continue
+            fi
 
-                if [[ "$completer" == "_bar_complete_comp_ext "* ]]; then
-                    local ext_name="${completer#_bar_complete_comp_ext }"
-                    while IFS= read -r comp; do
-                        [[ -z "$comp" ]] && continue
-                        local adjusted
-                        adjusted=$(_bar_complete_apply_literals "$comp" "$literal_prefix" "$literal_suffix")
-                        if [[ -z "$cur" || "$adjusted" == "$cur"* ]]; then
-                            new_comps+=("$adjusted")
-                            all_completions+=("$adjusted")
-                        fi
-                    done < <(_bar_complete_comp_ext "$ext_name" "$cur_for_completer")
-                elif [[ "$completer" == "_bar_complete_comp_extcomp "* ]]; then
-                    local ext_cmd="${completer#_bar_complete_comp_extcomp }"
-                    while IFS= read -r comp; do
-                        [[ -z "$comp" ]] && continue
-                        local adjusted
-                        adjusted=$(_bar_complete_apply_literals "$comp" "$literal_prefix" "$literal_suffix")
-                        if [[ -z "$cur" || "$adjusted" == "$cur"* ]]; then
-                            new_comps+=("$adjusted")
-                            all_completions+=("$adjusted")
-                        fi
-                    done < <(_bar_complete_comp_extcomp "$ext_cmd" "$cur_for_completer")
-                elif [[ "$completer" == "_bar_complete_comp_literal "* ]]; then
-                    local literal="${completer#_bar_complete_comp_literal }"
+            local -a new_comps=()
+
+            if [[ "$completer" == "_bar_complete_comp_ext "* ]]; then
+                local ext_name="${completer#_bar_complete_comp_ext }"
+                while IFS= read -r comp; do
+                    [[ -z "$comp" ]] && continue
                     local adjusted
-                    adjusted=$(_bar_complete_apply_literals "$literal" "$literal_prefix" "$literal_suffix")
+                    adjusted=$(_bar_complete_apply_literals "$comp" "$literal_prefix" "$literal_suffix")
                     if [[ -z "$cur" || "$adjusted" == "$cur"* ]]; then
                         new_comps+=("$adjusted")
                         all_completions+=("$adjusted")
+                        _bar_complete_dbg "     adding completion: $adjusted"
                     fi
-                else
-                    local -a completer_parts
-                    read -ra completer_parts <<< "$completer"
-                    local comp_func="${completer_parts[0]}"
-                    local -a comp_args=("${completer_parts[@]:1}")
-
-                    while IFS= read -r comp; do
-                        [[ -z "$comp" ]] && continue
-                        local adjusted
-                        adjusted=$(_bar_complete_apply_literals "$comp" "$literal_prefix" "$literal_suffix")
-                        if [[ -z "$cur" || "$adjusted" == "$cur"* ]]; then
-                            new_comps+=("$adjusted")
-                            all_completions+=("$adjusted")
-                        fi
-                    done < <("$comp_func" "$cur_for_completer" "${comp_args[@]}")
+                done < <(_bar_complete_comp_ext "$ext_name" "$cur_for_completer")
+            elif [[ "$completer" == "_bar_complete_comp_extcomp "* ]]; then
+                local ext_cmd="${completer#_bar_complete_comp_extcomp }"
+                while IFS= read -r comp; do
+                    [[ -z "$comp" ]] && continue
+                    local adjusted
+                    adjusted=$(_bar_complete_apply_literals "$comp" "$literal_prefix" "$literal_suffix")
+                    if [[ -z "$cur" || "$adjusted" == "$cur"* ]]; then
+                        new_comps+=("$adjusted")
+                        all_completions+=("$adjusted")
+                        _bar_complete_dbg "     adding completion: $adjusted"
+                    fi
+                done < <(_bar_complete_comp_extcomp "$ext_cmd" "$cur_for_completer")
+            elif [[ "$completer" == "_bar_complete_comp_literal "* ]]; then
+                local literal="${completer#_bar_complete_comp_literal }"
+                local adjusted
+                adjusted=$(_bar_complete_apply_literals "$literal" "$literal_prefix" "$literal_suffix")
+                if [[ -z "$cur" || "$adjusted" == "$cur"* ]]; then
+                    new_comps+=("$adjusted")
+                    all_completions+=("$adjusted")
+                    _bar_complete_dbg "     adding completion: $adjusted"
                 fi
+            else
+                local -a completer_parts
+                read -ra completer_parts <<< "$completer"
+                local comp_func="${completer_parts[0]}"
+                local -a comp_args=("${completer_parts[@]:1}")
 
-                if [[ ${#new_comps[@]} -gt 0 ]]; then
-                    cache["$cache_key"]="$(printf '%s\n' "${new_comps[@]}")"
-                else
-                    cache["$cache_key"]=""
-                fi
+                while IFS= read -r comp; do
+                    [[ -z "$comp" ]] && continue
+                    local adjusted
+                    adjusted=$(_bar_complete_apply_literals "$comp" "$literal_prefix" "$literal_suffix")
+                    if [[ -z "$cur" || "$adjusted" == "$cur"* ]]; then
+                        new_comps+=("$adjusted")
+                        all_completions+=("$adjusted")
+                        _bar_complete_dbg "     adding completion: $adjusted"
+                    fi
+                done < <("$comp_func" "$cur_for_completer" "${comp_args[@]}")
             fi
-        else
-            _bar_complete_dbg "  No completer found for '$proto_clean', using file completion"
+
+            if [[ ${#new_comps[@]} -gt 0 ]]; then
+                cache["$cache_key"]="$(printf '%s\n' "${new_comps[@]}")"
+            else
+                cache["$cache_key"]=""
+            fi
+        done
+
+        if [[ $have_variant_completer == false ]]; then
+            _bar_complete_dbg "  No completer found for '$proto_name', using file completion"
             while IFS= read -r comp; do
                 [[ -z "$comp" ]] && continue
                 all_completions+=("$comp")
             done < <(_bar_complete_comp_file "$cur")
+        elif (( ${#all_completions[@]} == completions_before )); then
+            _bar_complete_dbg "  Completer for '$proto_name' returned no results"
         fi
         
         # If this proto is not optional, stop collecting
