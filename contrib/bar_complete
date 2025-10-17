@@ -77,46 +77,6 @@ declare -ga _bar_completion_module_completers=()
 # Command used to invoke completion (bar, please, ./bar, etc.)
 declare -g _bar_complete_invocation=""
 
-# Helper: Find free slot in an array or append
-# Kept for future use, currently not actively used
-_bar_alloc_slot()
-{
-    local freelist_var="$1"
-    local array_var="$2"
-    
-    # Get the freelist value
-    local freelist="${!freelist_var}"
-    
-    if [[ -n "$freelist" ]]; then
-        local slot
-        read -r slot freelist <<< "$freelist"
-        # Update the freelist variable
-        printf -v "$freelist_var" '%s' "$freelist"
-        echo "$slot"
-    else
-        # Get array size using nameref
-        local -n arr="$array_var"
-        echo "${#arr[@]}"
-    fi
-}
-
-# Helper: Free a slot in an array
-# Kept for future use, currently not actively used
-_bar_free_slot()
-{
-    local freelist_var="$1"
-    local array_var="$2"
-    local slot="$3"
-
-    # Add slot to freelist
-    local freelist="${!freelist_var}"
-    printf -v "$freelist_var" '%s' "$slot $freelist"
-
-    # Clear the array entry
-    local -n arr="$array_var"
-    arr[slot]=""
-}
-
 # Generic completion functions
 
 # Apply predicate filters to completions
@@ -1245,51 +1205,6 @@ _bar_scan_files()
             break
         fi
     done
-}
-
-# Get completions
-_bar_get_completions()
-{
-    local prefix="$1"
-    
-    _bar_complete_dbg "Getting completions for prefix: '$prefix'"
-
-    local completions=()
-
-    # Get all rules
-    _bar_complete_dbg "Checking rules..."
-    for rule in "${_bar_completion_rules[@]}"; do
-        if [[ "$rule" == "$prefix"* ]]; then
-            _bar_complete_dbg "  Adding rule: $rule"
-            completions+=("$rule")
-        fi
-    done
-
-    # Get all functions
-    _bar_complete_dbg "Checking functions..."
-    for func in "${_bar_completion_functions[@]}"; do
-        if [[ "$func" == "$prefix"* ]]; then
-            _bar_complete_dbg "  Adding function: $func"
-            completions+=("$func")
-        fi
-    done
-
-    # Add rulefile names
-    _bar_complete_dbg "Checking rulefiles..."
-    for file in "${_bar_completion_rulefiles[@]}"; do
-        if [[ "$file" == "$prefix"* ]]; then
-            _bar_complete_dbg "  Adding rulefile: $file"
-            completions+=("$file")
-        fi
-    done
-
-    # Remove duplicates and sort
-    if [[ ${#completions[@]} -gt 0 ]]; then
-        _bar_complete_dbg "Total completions found: ${#completions[@]}"
-        printf '%s\n' "${completions[@]}" | sort -u
-    else
-        _bar_complete_dbg "No completions found"
-    fi
 }
 
 # Main completion function
