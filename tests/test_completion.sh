@@ -332,6 +332,66 @@ test_completion_cache_reuse() {
     fi
 }
 
+test_flag_completion_order() {
+    echo "Testing flag-first completion ordering..."
+
+    local result
+    result=$(_bar_complete_finalize_completions "--bare" "build" "--debug" "doc" "build")
+    local expected=$'--bare\n--debug\nbuild\ndoc'
+
+    if [[ "$result" == "$expected" ]]; then
+        echo "✓ flag completions sort ahead of other items"
+    else
+        echo "✗ flag completion ordering mismatch"
+        echo "  Expected:"
+        while IFS= read -r line; do
+            printf '    %s\n' "$line"
+        done <<< "$expected"
+        echo "  Actual:"
+        while IFS= read -r line; do
+            printf '    %s\n' "$line"
+        done <<< "$result"
+        return 1
+    fi
+}
+
+test_completion_uses_nosort() {
+    echo "Testing completion nosort option..."
+
+    if ! type compopt >/dev/null 2>&1; then
+        echo "✓ compopt unavailable; skipping nosort assertion"
+        return 0
+    fi
+
+    local compopt_called=0
+    compopt() {
+        compopt_called=1
+        builtin compopt "$@" 2>/dev/null || true
+    }
+
+    _bar_complete_cache=()
+    _bar_complete_cache_signature=""
+    _bar_complete_cache_prefix=""
+
+    COMPREPLY=()
+    COMP_WORDS=("bar" "help" "")
+    COMP_CWORD=2
+    COMP_LINE="bar help "
+    COMP_POINT=${#COMP_LINE}
+
+    _bar_complete
+
+    unset -f compopt
+
+    if [[ $compopt_called -eq 1 ]]; then
+        echo "✓ completion requests nosort from bash"
+        return 0
+    else
+        echo "✗ completion should call compopt -o nosort"
+        return 1
+    fi
+}
+
 main() {
     local status=0
 
@@ -371,6 +431,16 @@ main() {
     echo
 
     if ! test_bar_help_invocation_completer; then
+        status=1
+    fi
+    echo
+
+    if ! test_flag_completion_order; then
+        status=1
+    fi
+    echo
+
+    if ! test_completion_uses_nosort; then
         status=1
     fi
     echo

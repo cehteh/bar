@@ -979,6 +979,38 @@ _bar_complete_apply_literals()
     printf '%s\n' "$item"
 }
 
+# Sort completions so flagged options stay visible first, then cleanly deduplicate.
+_bar_complete_finalize_completions()
+{
+    local -a items=("$@")
+    local -A seen=()
+    local -a flags=()
+    local -a nonflags=()
+    local item
+
+    for item in "${items[@]}"; do
+        [[ -n "$item" ]] || continue
+        if [[ -v seen["$item"] ]]; then
+            continue
+        fi
+        seen["$item"]=1
+        if [[ "$item" == -* ]]; then
+            flags+=("$item")
+        else
+            nonflags+=("$item")
+        fi
+    done
+
+    if [[ ${#flags[@]} -gt 0 ]]; then
+        mapfile -t flags < <(printf '%s\n' "${flags[@]}" | sort)
+    fi
+    if [[ ${#nonflags[@]} -gt 0 ]]; then
+        mapfile -t nonflags < <(printf '%s\n' "${nonflags[@]}" | sort)
+    fi
+
+    printf '%s\n' "${flags[@]}" "${nonflags[@]}"
+}
+
 # Parse a file for documented rules and functions
 _bar_complete_parse_file()
 {
@@ -1242,6 +1274,10 @@ _bar_complete()
     for cache_sig_part in "${cache_signature_words[@]}"; do
         cache_signature+="${cache_sig_part}"$'\037'
     done
+
+    if type compopt >/dev/null 2>&1; then
+        compopt -o nosort 2>/dev/null || true
+    fi
 
     if [[ "$_bar_complete_cache_signature" == "$cache_signature" && "$cur_input" == "${_bar_complete_cache_prefix}"* ]]; then
         _bar_complete_dbg "Using cached completions for signature: $cache_signature (prefix: $_bar_complete_cache_prefix -> $cur_input)"
@@ -1615,7 +1651,7 @@ _bar_complete()
     
     # Return the collected completions
     if [[ ${#all_completions[@]} -gt 0 ]]; then
-        mapfile -t COMPREPLY < <(printf '%s\n' "${all_completions[@]}" | sort -u)
+        mapfile -t COMPREPLY < <(_bar_complete_finalize_completions "${all_completions[@]}")
     fi
 
     _bar_complete_cache=("${COMPREPLY[@]}")
@@ -1626,11 +1662,11 @@ _bar_complete()
 }
 
 # Register completion for bar and please
-complete -F _bar_complete bar
-complete -F _bar_complete please
+complete -o nosort -F _bar_complete bar
+complete -o nosort -F _bar_complete please
 
 # Also register for ./bar pattern (when bar is in current directory)
 # This won't work perfectly for all cases, but handles the common ./bar case
 if [[ -x ./bar ]]; then
-    complete -F _bar_complete ./bar
+    complete -o nosort -F _bar_complete ./bar
 fi
