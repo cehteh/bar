@@ -1398,6 +1398,38 @@ _bar_complete()
                     break
                 fi
             fi
+
+            # Handle variants with literal prefix/suffix (e.g. +toolchain, rule:)
+            local -a variant_parts
+            mapfile -t variant_parts < <(_bar_extract_literal_punct "$proto_variant")
+            local literal_prefix="${variant_parts[1]}"
+            local literal_suffix="${variant_parts[2]}"
+
+            if [[ -n "$literal_prefix" || -n "$literal_suffix" ]]; then
+                local remaining="$word"
+
+                if [[ -n "$literal_prefix" ]]; then
+                    if [[ "$remaining" == "$literal_prefix"* ]]; then
+                        remaining="${remaining#"$literal_prefix"}"
+                    else
+                        continue
+                    fi
+                fi
+
+                if [[ -n "$literal_suffix" ]]; then
+                    if [[ "$remaining" == *"$literal_suffix" ]]; then
+                        remaining="${remaining%"$literal_suffix"}"
+                    else
+                        continue
+                    fi
+                fi
+
+                # When both literals match, consider the prototype satisfied
+                matched=true
+                _bar_complete_dbg "  Matched literal variant via punct: $proto_variant (${literal_prefix}_ ${literal_suffix})"
+                proto_idx=$((proto_idx + 1))
+                break
+            fi
         done
         
         # If not matched yet, check for special prototype types

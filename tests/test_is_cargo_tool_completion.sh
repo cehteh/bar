@@ -122,6 +122,39 @@ else
 fi
 
 echo ""
+echo "=== Test 9: Completion after selecting toolchain ==="
+_bar_complete_comp_ext()
+{
+    local completer_name="$1"
+    local cur="$2"
+
+    if [[ "$completer_name" == "cargo_tool_complete" ]]; then
+        for item in fmt clippy; do
+            if [[ -z "$cur" || "$item" == "$cur"* ]]; then
+                echo "$item"
+            fi
+        done
+        return 0
+    fi
+
+    return 1
+}
+
+COMPREPLY=()
+COMP_WORDS=("./bar" "is_cargo_tool_installed" "+nightly" "")
+COMP_CWORD=3
+
+_bar_complete
+
+if [[ " ${COMPREPLY[*]} " == *" fmt "* && " ${COMPREPLY[*]} " == *" clippy "* ]]; then
+    echo "✓ Completion offers cargo tools after toolchain"
+else
+    echo "✗ Completion should offer cargo tools after toolchain"
+    echo "  Got: ${COMPREPLY[*]}"
+    exit 1
+fi
+
+echo ""
 echo "=== All structural tests passed! ==="
 echo ""
 echo "Note: To test actual completion behavior interactively:"
