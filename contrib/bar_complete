@@ -785,14 +785,12 @@ _bar_expand_group_alternatives()
     local first_token=""
     local rest_of_spec=""
     local depth=0
-    local in_group=false
     
     local i
     for ((i=0; i<${#spec}; i++)); do
         local char="${spec:$i:1}"
         case "$char" in
             '[' | '<')
-                in_group=true
                 depth=$((depth + 1))
                 first_token+="$char"
                 ;;
