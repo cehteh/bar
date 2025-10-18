@@ -332,6 +332,45 @@ test_completion_cache_reuse() {
     fi
 }
 
+test_external_command_passthrough() {
+    echo "Testing external command passthrough..."
+
+    local test_cmd="bar_fake_extcomp_test"
+
+    bar_fake_extcomp_test_complete()
+    {
+        COMPREPLY=("fake-alpha" "fake-beta")
+    }
+
+    complete -F bar_fake_extcomp_test_complete "$test_cmd"
+
+    COMPREPLY=()
+    COMP_WORDS=("./bar" "$test_cmd" "")
+    COMP_CWORD=2
+    COMP_LINE="./bar $test_cmd "
+    COMP_POINT=${#COMP_LINE}
+
+    _bar_complete
+
+    local actual="${COMPREPLY[*]}"
+    local expected="fake-alpha fake-beta"
+
+    if [[ "$actual" == "$expected" ]]; then
+        echo "✓ external command completions forwarded"
+    else
+        echo "✗ external command completions should be forwarded"
+        echo "  Expected: $expected"
+        echo "  Actual:   $actual"
+        complete -r "$test_cmd" 2>/dev/null || true
+        unset -f bar_fake_extcomp_test_complete
+        return 1
+    fi
+
+    complete -r "$test_cmd" 2>/dev/null || true
+    unset -f bar_fake_extcomp_test_complete
+    return 0
+}
+
 test_flag_completion_order() {
     echo "Testing flag-first completion ordering..."
 
@@ -441,6 +480,11 @@ main() {
     echo
 
     if ! test_completion_uses_nosort; then
+        status=1
+    fi
+    echo
+
+    if ! test_external_command_passthrough; then
         status=1
     fi
     echo

@@ -77,6 +77,10 @@ declare -ga _bar_completion_module_completers=()
 # Command used to invoke completion (bar, please, ./bar, etc.)
 declare -g _bar_complete_invocation=""
 
+# State for dynamic external command completion passthrough
+declare -g _bar_extcomp_command=""
+declare -gi _bar_extcomp_command_index=-1
+
 # Generic completion functions
 
 # Apply predicate filters to completions
@@ -529,14 +533,17 @@ _bar_complete_comp_extcomp()
         fi
     fi
     
-    # Try to load completion for the command
-    if type -t _completion_loader &>/dev/null; then
-        _completion_loader "$cmd" 2>/dev/null || true
-    fi
-    
-    # Get the completion specification for the command
-    local comp_spec
+    # Capture any existing completion specification before attempting to load more
+    local comp_spec=""
     if ! comp_spec=$(complete -p "$cmd" 2>/dev/null); then
+        # Try to load completion for the command only if none exists yet
+        if type -t _completion_loader &>/dev/null; then
+            _completion_loader "$cmd" 2>/dev/null || true
+            comp_spec=$(complete -p "$cmd" 2>/dev/null)
+        fi
+    fi
+
+    if [[ -z "$comp_spec" ]]; then
         # No completion available, fall back to file completion
         compgen -f -- "$cur"
         return
@@ -575,6 +582,52 @@ _bar_complete_comp_extcomp()
     else
         printf '%s\n' "${COMPREPLY[@]}"
     fi
+}
+
+_bar_extcomp_has_completion()
+{
+    local cmd="$1"
+
+    # Ensure bash-completion is available so we can load specs on demand
+    if [[ ! $(type -t _completion_loader) == function ]]; then
+        if [[ -f /usr/share/bash-completion/bash_completion ]]; then
+            # shellcheck disable=SC1091
+            source /usr/share/bash-completion/bash_completion 2>/dev/null || true
+        elif [[ -f /etc/bash_completion ]]; then
+            # shellcheck disable=SC1091
+            source /etc/bash_completion 2>/dev/null || true
+        fi
+    fi
+
+    if complete -p "$cmd" >/dev/null 2>&1; then
+        return 0
+    fi
+
+    if type -t _completion_loader &>/dev/null; then
+        _completion_loader "$cmd" 2>/dev/null || true
+    fi
+
+    complete -p "$cmd" >/dev/null 2>&1
+}
+
+_bar_complete_comp_extcomp_context()
+{
+    local cur="$1"
+    local command="$2"
+    local start_index="${3:-$_bar_extcomp_command_index}"
+
+    local -a args=()
+
+    if [[ -n "$command" && $start_index -ge 0 ]]; then
+        local i
+        for ((i=start_index+1; i<COMP_CWORD; i++)); do
+            args+=("${COMP_WORDS[i]}")
+        done
+    fi
+
+    args+=("$cur")
+
+    _bar_complete_comp_extcomp "$command" "${args[@]}"
 }
 
 # Initialize default completion registry
@@ -893,6 +946,14 @@ _bar_get_completer()
     local func_or_rule="$1"
     local proto="$2"
     local spec=""
+
+    if [[ "$func_or_rule" == __extcomp::* ]]; then
+        local command="${func_or_rule#__extcomp::}"
+        if [[ "$proto" == "commandargs" ]]; then
+            echo "_bar_complete_comp_extcomp_context $command $_bar_extcomp_command_index"
+            return 0
+        fi
+    fi
     
     # Try to get module for this func/rule
     local module=""
@@ -1532,6 +1593,9 @@ _bar_complete()
     _bar_complete_dbg "Command line: ${COMP_WORDS[*]}"
     _bar_complete_dbg "Current word index: $cword"
     _bar_complete_dbg "Current word: '$cur'"
+
+    _bar_extcomp_command=""
+    _bar_extcomp_command_index=-1
     
     # Determine the command (bar, please, or a path like ./bar)
     local cmd="${COMP_WORDS[0]}"
@@ -1712,6 +1776,18 @@ _bar_complete()
                         fi
                     fi
                     matched=true
+                fi
+
+                if [[ $matched == false && -n "$word" ]]; then
+                    if _bar_extcomp_has_completion "$word"; then
+                        _bar_complete_dbg "  Delegating to external completion for command: $word"
+                        _bar_extcomp_command="$word"
+                        _bar_extcomp_command_index=$word_idx
+                        active_func_or_rule="__extcomp::$word"
+                        protos=("[commandargs..]")
+                        proto_idx=0
+                        matched=true
+                    fi
                 fi
             elif [[ "$proto_name" == "rulefile" ]]; then
                 # Check if this word is a file
