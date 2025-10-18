@@ -654,6 +654,219 @@ _bar_parse_protos()
     printf '%s\n' "${protos[@]}"
 }
 
+# Expand a proto spec to find alternatives at the beginning
+# Input: proto spec string like "[[--verbose] foo [bar|baz]]"
+# Output: List of alternatives available at start, one per line
+# Format: ALTERNATIVE (just the token, caller determines if literal)
+#
+# Algorithm:
+# - Recursively expand nested groups
+# - Return all alternatives at the start
+# - Continue through optional items and stop after first required item
+#
+# Note: This function expands ONE level of a proto spec.
+# For the protos array with multiple entries, the caller needs to handle
+# collecting from multiple proto entries.
+_bar_expand_group_alternatives()
+{
+    local spec="$1"
+    local collect_mode="${2:-first_required}"  # first_required or optional_only
+    
+    # Remove leading/trailing whitespace
+    spec="$(echo "$spec" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+    [[ -z "$spec" ]] && return 0
+    
+    # Check if entire spec is an optional group [...]
+    # Need to match brackets carefully - find the matching closing bracket
+    if [[ "${spec:0:1}" == "[" ]]; then
+        local depth=0
+        local i
+        for ((i=0; i<${#spec}; i++)); do
+            case "${spec:$i:1}" in
+                '[') depth=$((depth + 1)) ;;
+                ']') depth=$((depth - 1)) ;;
+            esac
+            if [[ $depth -eq 0 ]]; then
+                break
+            fi
+        done
+        # If the closing bracket is at the end, this is a complete [] group
+        if [[ $i -eq $((${#spec} - 1)) ]]; then
+            local inner="${spec:1:$((i-1))}"
+            # Optional group - expand inner and continue with optional_only mode
+            # since anything after an optional is also considered
+            _bar_expand_group_alternatives "$inner" "optional_only"
+            return 0
+        fi
+    fi
+    
+    # Check if entire spec is a required group <...>
+    if [[ "${spec:0:1}" == "<" ]]; then
+        local depth=0
+        local i
+        for ((i=0; i<${#spec}; i++)); do
+            case "${spec:$i:1}" in
+                '<') depth=$((depth + 1)) ;;
+                '>') depth=$((depth - 1)) ;;
+            esac
+            if [[ $depth -eq 0 ]]; then
+                break
+            fi
+        done
+        # If the closing angle is at the end, this is a complete <> group
+        if [[ $i -eq $((${#spec} - 1)) ]]; then
+            local inner="${spec:1:$((i-1))}"
+            _bar_expand_group_alternatives "$inner" "first_required"
+            return 0
+        fi
+    fi
+    
+    # Check for top-level alternatives (| outside groups)
+    # Need to split by | carefully, respecting nested groups
+    local has_top_level_alt=false
+    local depth=0
+    local i
+    for ((i=0; i<${#spec}; i++)); do
+        local char="${spec:$i:1}"
+        case "$char" in
+            '[' | '<') depth=$((depth + 1)) ;;
+            ']' | '>') depth=$((depth - 1)) ;;
+            '|')
+                if [[ $depth -eq 0 ]]; then
+                    has_top_level_alt=true
+                    break
+                fi
+                ;;
+        esac
+    done
+    
+    if [[ $has_top_level_alt == true ]]; then
+        # Split by top-level | and recursively expand each part
+        local depth=0
+        local current=""
+        local i
+        for ((i=0; i<${#spec}; i++)); do
+            local char="${spec:$i:1}"
+            case "$char" in
+                '[' | '<')
+                    depth=$((depth + 1))
+                    current+="$char"
+                    ;;
+                ']' | '>')
+                    depth=$((depth - 1))
+                    current+="$char"
+                    ;;
+                '|')
+                    if [[ $depth -eq 0 ]]; then
+                        # Split point
+                        _bar_expand_group_alternatives "$current" "$collect_mode"
+                        current=""
+                    else
+                        current+="$char"
+                    fi
+                    ;;
+                *)
+                    current+="$char"
+                    ;;
+            esac
+        done
+        # Process last part
+        if [[ -n "$current" ]]; then
+            _bar_expand_group_alternatives "$current" "$collect_mode"
+        fi
+        return 0
+    fi
+    
+    # No top-level alternatives - extract first token
+    # A token is either:
+    # - A group [...]  or <...>
+    # - A literal/proto word
+    
+    local first_token=""
+    local rest_of_spec=""
+    local depth=0
+    local in_group=false
+    
+    local i
+    for ((i=0; i<${#spec}; i++)); do
+        local char="${spec:$i:1}"
+        case "$char" in
+            '[' | '<')
+                in_group=true
+                depth=$((depth + 1))
+                first_token+="$char"
+                ;;
+            ']' | '>')
+                depth=$((depth - 1))
+                first_token+="$char"
+                if [[ $depth -eq 0 ]]; then
+                    # End of group - check for .. suffix
+                    if [[ "${spec:$((i+1)):2}" == ".." ]]; then
+                        first_token+=".."
+                        i=$((i + 2))
+                    fi
+                    # Get the rest of the spec
+                    rest_of_spec="${spec:$((i+1))}"
+                    break
+                fi
+                ;;
+            ' ' | $'\t')
+                if [[ $depth -eq 0 ]]; then
+                    # End of first token at top level
+                    rest_of_spec="${spec:$((i+1))}"
+                    break
+                else
+                    first_token+="$char"
+                fi
+                ;;
+            *)
+                first_token+="$char"
+                ;;
+        esac
+    done
+    
+    # If we consumed everything, first_token is the whole spec
+    if [[ $i -ge $((${#spec} - 1)) ]]; then
+        first_token="$spec"
+        rest_of_spec=""
+    fi
+    
+    # Remove leading/trailing whitespace from tokens
+    first_token="$(echo "$first_token" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+    rest_of_spec="$(echo "$rest_of_spec" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+    
+    # Check if first_token is optional
+    local token_is_optional=false
+    if [[ "$first_token" =~ ^\[.*\]$ ]]; then
+        token_is_optional=true
+    fi
+    
+    # If first_token is a group, recursively expand it
+    if [[ "$first_token" =~ ^\[.*\]$ ]] || [[ "$first_token" =~ ^\<.*\>$ ]]; then
+        _bar_expand_group_alternatives "$first_token" "$collect_mode"
+    else
+        # It's a literal or proto - output it
+        echo "$first_token"
+    fi
+    
+    # Continue with rest of spec based on mode and whether first was optional
+    if [[ -n "$rest_of_spec" ]]; then
+        if [[ $collect_mode == "first_required" ]]; then
+            if [[ $token_is_optional == true ]]; then
+                # First was optional, continue collecting (including first required)
+                _bar_expand_group_alternatives "$rest_of_spec" "first_required"
+            fi
+            # If first was required, we stop (already output it above)
+        elif [[ $collect_mode == "optional_only" ]]; then
+            if [[ $token_is_optional == true ]]; then
+                # Continue with optional_only mode
+                _bar_expand_group_alternatives "$rest_of_spec" "optional_only"
+            fi
+            # If we hit a required item, stop
+        fi
+    fi
+}
+
 # Get completer for a prototype
 # Looks up: module@proto (if module known), then func@proto, then proto
 # Returns expanded completer spec (with _bar_complete_comp_ prefix)
