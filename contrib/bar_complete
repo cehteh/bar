@@ -1349,12 +1349,10 @@ _bar_complete_parse_file()
             local proto_name="${BASH_REMATCH[1]}"
             local completer_spec="${BASH_REMATCH[2]}"
             
-            # Register the prototype with module prefix if module is known
+            # Only register prototypes with module scope
+            # Prototypes without module context are ignored to prevent overriding global prototypes
             if [[ -n "$module" ]]; then
                 _bar_complete_protoregistry["${module}@${proto_name}"]="$completer_spec"
-            else
-                # No module context, register as global
-                _bar_complete_protoregistry["$proto_name"]="$completer_spec"
             fi
             
         # Check for documented function: function name ## [params] - description
