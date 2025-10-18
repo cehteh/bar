@@ -467,6 +467,7 @@ _bar_complete_comp_extcomp()
     local cmd="$1"
     shift
     local -a args=()
+    local -a remaining_args=("$@")
 
     # Allow the command specification to contain preset arguments (e.g. "cargo +nightly")
     if [[ "$cmd" == *' '* ]]; then
@@ -478,9 +479,10 @@ _bar_complete_comp_extcomp()
         fi
     fi
     
-    # Process arguments, expanding ${VARIABLE} references
+    # Process arguments from cmd_parts first, expanding ${VARIABLE} references
+    local -a expanded_args=()
     local arg
-    for arg in "$@"; do
+    for arg in "${args[@]}"; do
         # Check if argument contains ${...} pattern
         if [[ "$arg" =~ \$\{[^}]+\} ]]; then
             # Use eval to expand the variable
@@ -488,12 +490,30 @@ _bar_complete_comp_extcomp()
             expanded=$(eval echo "$arg")
             # Only add if it's not empty (variable was set)
             if [[ -n "$expanded" ]]; then
-                args+=("$expanded")
+                expanded_args+=("$expanded")
             fi
         else
-            args+=("$arg")
+            expanded_args+=("$arg")
         fi
     done
+    
+    # Now add remaining arguments passed to the function
+    for arg in "${remaining_args[@]}"; do
+        # Check if argument contains ${...} pattern
+        if [[ "$arg" =~ \$\{[^}]+\} ]]; then
+            # Use eval to expand the variable
+            local expanded
+            expanded=$(eval echo "$arg")
+            # Only add if it's not empty (variable was set)
+            if [[ -n "$expanded" ]]; then
+                expanded_args+=("$expanded")
+            fi
+        else
+            expanded_args+=("$arg")
+        fi
+    done
+    
+    args=("${expanded_args[@]}")
     
     # Get the current word to complete (last argument)
     local cur="${args[-1]:-}"
