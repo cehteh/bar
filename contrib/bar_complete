@@ -1742,32 +1742,22 @@ _bar_complete()
         
         _bar_complete_dbg "  Checking proto[$check_idx]: '$proto' (optional=$is_optional)"
         
-        # Extract prototype name
-        local proto_name="$proto"
-        proto_name="${proto_name#[}"
-        proto_name="${proto_name%]}"
+        # Use _bar_expand_group_alternatives to properly handle nested groups
+        local -a expanded_alternatives=()
+        mapfile -t expanded_alternatives < <(_bar_expand_group_alternatives "$proto")
         
-        # Handle nested prototypes - extract first part for now
-        if [[ "$proto_name" =~ ^([a-zA-Z_-]+)[[:space:]] ]]; then
-            proto_name="${BASH_REMATCH[1]}"
-            _bar_complete_dbg "  Nested proto, using first part: $proto_name"
-        fi
+        _bar_complete_dbg "  Expanded to ${#expanded_alternatives[@]} alternatives: ${expanded_alternatives[*]}"
         
-        # Remove trailing .. if present
-        proto_name="${proto_name%..\$}"
-        proto_name="${proto_name%..}"
-
         local completions_before=${#all_completions[@]}
         local have_variant_completer=false
 
-        local -a proto_variants=("$proto_name")
-        if [[ "$proto_name" == *"|"* ]]; then
-            IFS='|' read -r -a proto_variants <<< "$proto_name"
-        fi
-
         local proto_variant
-        for proto_variant in "${proto_variants[@]}"; do
+        for proto_variant in "${expanded_alternatives[@]}"; do
             [[ -z "$proto_variant" ]] && continue
+            
+            # Remove trailing .. if present (repetition marker)
+            proto_variant="${proto_variant%..\$}"
+            proto_variant="${proto_variant%..}"
 
             # Extract literal punctuation so lookups ignore prefix/suffix per variant
             local -a punct_parts

@@ -27,80 +27,82 @@ assert_contains() {
     return 1
 }
 
-# Test 1: Simple alternative expansion
+# Test 1: Simple alternative expansion using _bar_expand_group_alternatives
 echo "Test 1: Simple alternatives (--flag|--other)"
 echo "-------------------------------------------"
-local -a alternatives=()
-# Simulate what we'd get from expanding "--flag|--other"
-IFS='|' read -ra alternatives <<< "--flag|--other"
-echo "Extracted alternatives: ${alternatives[*]}"
-if [[ ${#alternatives[@]} -eq 2 ]] && assert_contains "--flag" "${alternatives[@]}" && assert_contains "--other" "${alternatives[@]}"; then
-    echo "✓ PASS: Correctly split simple alternatives"
+alternatives=$(_bar_expand_group_alternatives "--flag|--other")
+echo "Result: $alternatives"
+if echo "$alternatives" | grep -q "^--flag$" && echo "$alternatives" | grep -q "^--other$"; then
+    echo "✓ PASS: Correctly expanded simple alternatives"
 else
-    echo "✗ FAIL: Did not correctly split alternatives"
+    echo "✗ FAIL: Did not correctly expand alternatives"
 fi
 echo
 
-# Test 2: Nested group expansion - basic case
-echo "Test 2: Nested optional group [[--verbose] foo]"
-echo "------------------------------------------------"
-echo "Expected: Should collect both --verbose (optional) and foo (required within group)"
-# For this test, we just document the expected behavior
-echo "ℹ INFO: This would require recursive group expansion"
-echo "  Current code extracts first token only"
-echo "  Improvement needed: Full nested group parser"
+# Test 2: Optional group expansion
+echo "Test 2: Optional group [--verbose]"
+echo "-----------------------------------"
+result=$(_bar_expand_group_alternatives "[--verbose]")
+echo "Result: $result"
+if [[ "$result" == "--verbose" ]]; then
+    echo "✓ PASS: Correctly extracted from optional group"
+else
+    echo "✗ FAIL: Expected --verbose, got: $result"
+fi
 echo
 
 # Test 3: Complex nested groups with alternatives
 echo "Test 3: Complex example [[--verbose] foo [bar|baz]]"
 echo "----------------------------------------------------"
-echo "Input: '[[--verbose] foo [bar|baz]]'"
-echo "Expected alternatives at start:"
-echo "  - --verbose (from optional group)"
-echo "  - foo (required after optional)"
-echo "  - bar|baz are NOT collected (foo is mandatory before them)"
-echo
-echo "ℹ INFO: Current implementation limitation documented"
-echo "  This test establishes the requirement for future implementation"
-echo
-
-# Test 4: Multi-entry proto array
-echo "Test 4: Multiple proto entries with optionals"
-echo "----------------------------------------------"
-echo "Input protos: ('[foo]' '--bar|--baz' '<required>')"
-echo "Expected at proto_idx=0:"
-echo "  - foo (optional)"
-echo "  - --bar, --baz (alternatives after optional)"
-echo "  - required is NOT collected (alternatives before it are not optional)"
-echo
-echo "ℹ INFO: This documents the stopping condition for alternative collection"
+result=$(_bar_expand_group_alternatives "[[--verbose] foo [bar|baz]]")
+echo "Result:"
+echo "$result"
+# Should get --verbose and foo, but NOT bar or baz
+if echo "$result" | grep -q "^--verbose$" && echo "$result" | grep -q "^foo$"; then
+    if ! echo "$result" | grep -q "^bar$" && ! echo "$result" | grep -q "^baz$"; then
+        echo "✓ PASS: Correctly expanded nested group (got --verbose and foo, not bar/baz)"
+    else
+        echo "✗ FAIL: Incorrectly included bar or baz"
+    fi
+else
+    echo "✗ FAIL: Did not get expected --verbose and foo"
+fi
 echo
 
-# Test 5: All optional protos
-echo "Test 5: All optional protos"
-echo "---------------------------"
-echo "Input protos: ('[foo]' '[bar]' '[baz]')"
-echo "Expected: Should collect foo, bar, and baz (all optional)"
+# Test 4: Alternatives within optional group
+echo "Test 4: Alternatives within optional group [foo|bar]"
+echo "-----------------------------------------------------"
+result=$(_bar_expand_group_alternatives "[foo|bar]")
+echo "Result:"
+echo "$result"
+if echo "$result" | grep -q "^foo$" && echo "$result" | grep -q "^bar$"; then
+    echo "✓ PASS: Correctly expanded alternatives within optional group"
+else
+    echo "✗ FAIL: Did not get both foo and bar"
+fi
 echo
-echo "ℹ INFO: When all are optional, keep collecting until end or required found"
+
+# Test 5: Required group
+echo "Test 5: Required group <file>"
+echo "------------------------------"
+result=$(_bar_expand_group_alternatives "<file>")
+echo "Result: $result"
+if [[ "$result" == "file" ]]; then
+    echo "✓ PASS: Correctly extracted from required group"
+else
+    echo "✗ FAIL: Expected file, got: $result"
+fi
 echo
 
 echo
 echo "========================================"
 echo "Summary"
 echo "========================================"
-echo "These tests document the required behavior for nested group expansion."
-echo "Current implementation handles:"
+echo "The _bar_expand_group_alternatives function now handles:"
 echo "  ✓ Simple alternatives (a|b)"
-echo "  ✓ Optional vs required distinction"
-echo "  ✓ First-level token extraction"
+echo "  ✓ Optional vs required groups"
+echo "  ✓ Nested group expansion"
+echo "  ✓ Complex patterns like [[optional] required]"
 echo
-echo "Improvements needed:"
-echo "  - Recursive expansion of nested groups"
-echo "  - Proper handling of [[optional] required [optional]]"
-echo "  - State refinement after matching (backup/restore)"
-echo
-echo "Next steps:"
-echo "  1. Implement _bar_expand_group_alternatives() helper"
-echo "  2. Use it in completion collection loop"
-echo "  3. Add proper tests that call the function"
+echo "This function is now integrated into the main completion engine"
+echo "and used during completion collection."
