@@ -141,3 +141,93 @@ function mymodule_mytype_complete ## Emit completions for mytype
 - `example/` - comprehensive syntax demonstrations and fixtures.
 - `Pleasef.default` - please integration example.
 - Use `./bar help` and module sources in `Bar.d/` as primary references when extending functionality.
+
+# Tasks
+
+## Rewrite the completion engine in contrib/bar_complete 
+
+The new implementation should be more streamlined and regular.
+
+general instructions:
+- Focus on rewriting the engine, but if necessary you can touch all other functions and refine them for the tasks.
+- make a plan for the rewrite, write that to a file, execute it step by step, confirm every step is working with tests
+- in the current engine we implemented some caching. the rewrite needs that too, but it should be readded as the last step.
+- When any existing test/completion breaks, consider the lack of a prototype definiton, predicate, completer (in that order). If neceessary implement those (also consider that order, new completers should be only implemented when the completion cant be composed by existing ones) 
+
+observations:
+- parameter specifications have the following syntax
+    - literal
+        - anything not inside `<>` or `[]` is considered literal, when one wants to have literals inside <> or [] one has to define a literal prototype for that `# prototype: "lit" = "literal lit"`, exception here is that `--` and `-` prefixes make the parameter literal even inside <> and []
+        - punctuation is literal except prefix `--` and `-` and the suffix `..` used for repetions and '|' which is the alternatives operator
+    - <proto>
+        - Mandatory parameter (prototype)
+        - the proto may be prefixed or suffixed by literal punctuation which then has a higher precedence than | or ..  ( [foo:..]  is many 'foo:' not foo with many colons) 
+            - this can should be implented by some hidden grouping.
+    - [proto]
+        - Optional parameter (prototype)
+    - group
+        - anything inside <> or [] or a hidden group
+            - groups can be nested ([foo [[bar] baz]])
+    - param
+        - is either a literal, proto or group
+    - proto.. or group..
+        - a `..` suffix means multiple occurences
+            - <proto..> or <proto>..
+                - One or more occurrences
+            - [proto..] or [proto]..
+                - Zero or more occurrences
+    - param|param
+        - the `|` is used for alternatives, can be used multiple times `--foo|--bar|--baz`
+        - can be outside groups (--foo|--bar) or inside ([this|that])
+        - has a lower precedence than `..` (<foo|bar..> is either one foo or many bar)
+    - --flag or -f
+        - Literal flag / short flag
+        - stays literal even inside <> and []
+- The engine has the protos array which can be an aribitrary list of parameters specs.
+
+
+
+Completion process:
+I sketch here a completion algorithm. before you start, check it for correctness and soundness. ask back if anything is not clear, correct any mistakes. Are there any corner cases and unclear specifications?
+
+- make a detailed plan on how you implement this algorithm
+- if possiblle and sound try to make it as minimal as possible, dont add things that are not necessary.
+
+- collect all prototypes for the current position. This means all alternative prototypes in the protos array up to the first non alternative part
+    - since each entry in the protos array can be a nested group, this needs to be handled as well:
+        `protos=("[[--verbose] foo [bar|baz]]" "--flag|--other" "<later>")` (proto_idx=0)
+        will collect '--verbose', foo, '--flag', '--other'
+        - remember somewhere (another array) for each collected item from what proto position it came: (0 0 1 1)
+        - the --flags are literal
+        - foo is a prototype and eventually resolves to a completer which returns a list of possible completions.
+        - [bar|baz] won't be reached because the foo before it is mandatory.
+        - <later> won't be reached because "--flag|--other" are non optional alternatives
+        - write a test for this, testing the good case, failures and corner cases
+    - once the completion is done, we need to calculate how to proceed:
+        - set proto_idx to the the index from what the completion came from, then refine that entry:
+            - backup the current entry (stack)
+            - remove the completed part eg:
+                - when the user completed `--verbose` then protos[0] becomes `[foo [bar]]` 
+                - when the user completed `foo` then protos[0] becomes `[[bar|baz]]` (or simplified to `[bar|baz]`)
+            - when the refined entry becomes empty then we increment proto_idx
+            - when the user stepped back we need to restore from the backup we made earlier
+                - when that stack becomes empty then decrement proto_pos
+
+- proto lookup rules
+    - every prototype eventually calls a completer
+    - prototyoes have a 1 level module "module:proto"
+    - lookup rules:
+        1. prototype for the current module
+        2. global prototype
+        3. completer function
+
+    example: when a module 'foo' has a `function bar ## <file> - foo:bar`
+    then it searches "foo:bar" and then "bar" in the prototype registry,
+    when that is not found it checks if a `_bar_complete_comp_file` function exists.
+                                                
+# COPILOT PLAN AND COMMENTS
+
+- Rewriting `contrib/bar_complete` will require a full grammar-driven parser for parameter specs so we can expand nested groups, repetitions, and literals deterministically before dispatching to completers.
+- We must stage the work: (1) design and document the parser/state machine in a plan file, (2) implement the new engine without caching, validating via existing completion tests plus new coverage for nested alternatives, (3) reintroduce caching and ensure no regressions.
+- Critical risks: faithfully handling hidden grouping precedence (`..` vs `|`), backward navigation stack mechanics, and ensuring prototype lookup order (`module@proto` → global → function) still works for legacy modules.
+- Extra test investments: targeted cases for mixed literal/prototype alternations, nested optional groups, and regression tests for cargo build/test args to prove the new traversal logic is sound.
