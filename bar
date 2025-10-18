@@ -89,11 +89,11 @@ function bar_main ## [rulefile] [--bare] [rule [arguments..]] - Loads a rulefile
         barfs=("Pleasef" "pleasef" ".Pleasef" ".pleasef" "$HOME/.Pleasef")
     fi
 
-    for BARF_FILE in "./$maybe_barf" "${barfs[@]}"; do
+    for BARF_FILE in "$maybe_barf" "${barfs[@]}"; do
         if [[ -f "$BARF_FILE" ]]; then
             debug "using: $BARF_FILE"
-            [[ "$BARF_FILE" = "./$maybe_barf" ]] && shift
-
+            [[ "$BARF_FILE" = "$maybe_barf" ]] && shift
+            BARF_FILE="$(realpath "$BARF_FILE")"
             require "$BARF_FILE"
             break
         fi
