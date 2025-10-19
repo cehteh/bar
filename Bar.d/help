@@ -366,6 +366,10 @@ QUICKSTART
    please wake <hostname>     # sends a wake-on-lan packet to a host
    please suspend <hostname>  # remotely sends a host to suspend-to-ram
 
+  Buildin help system:
+
+   bar help [topic]
+   ./bar help [topic]
 
 INVOCATION AND SEMANTICS
 
@@ -1295,7 +1299,6 @@ function help_describe_rules
     END {
       if (out != "") {
         print "    Rules:"
-        print ""
         print out
       }
     }
