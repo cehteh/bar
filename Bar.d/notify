@@ -1,0 +1,26 @@
+#!/bash
+
+### Desktop notification functions
+
+function notify ## <message> - Send a desktop notification to the user.
+{
+    ## <message> - The message to display in the notification
+    ##
+    ## Attempts to send a desktop notification using notify-send.
+    ## If notify-send is not available or fails, a warning is printed instead.
+    ## Always exits gracefully (returns 0).
+    
+    local message="$1"
+    
+    if command -v notify-send >/dev/null 2>&1; then
+        if notify-send "Bar" "$message" 2>/dev/null; then
+            return 0
+        else
+            warn "Failed to send desktop notification: $message"
+        fi
+    else
+        warn "notify-send not available, cannot send notification: $message"
+    fi
+    
+    return 0
+}
