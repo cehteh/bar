@@ -13,7 +13,7 @@ echo "========================================="
 echo
 
 # Initialize completion system
-_bar_init_completion_registry
+__bar_init_completion_registry
 
 echo "Test 1: Nested Optional Groups"
 echo "-------------------------------"

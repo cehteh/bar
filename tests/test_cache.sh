@@ -11,7 +11,7 @@ export BAR_COMPLETE_DEBUG=1
 echo "Testing completion caching..."
 
 # Initialize registry
-_bar_init_completion_registry
+__bar_init_completion_registry
 
 # Create a simple test to trigger caching
 # We'll simulate a completion scenario where the same completer is called multiple times
@@ -35,7 +35,7 @@ echo "Testing cache array behavior:"
 
 # Create a mock cache array and test the caching logic
 declare -a test_cache=()
-test_completer="_bar_complete_comp_file"
+test_completer="__bar_comp_file"
 test_cur="test"
 cache_key="${test_completer}:${test_cur}"
 
@@ -75,7 +75,7 @@ else
 fi
 
 # Test with different key (should not find in cache)
-different_key="_bar_complete_comp_directory:other"
+different_key="__bar_comp_directory:other"
 use_cache=false
 for ((cache_idx=0; cache_idx<${#test_cache[@]}; cache_idx++)); do
     if [[ "${test_cache[$cache_idx]}" == "$different_key"* ]]; then

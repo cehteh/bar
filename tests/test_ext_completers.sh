@@ -22,17 +22,17 @@ function test_ext_complete()
 }
 
 # Initialize registry and add the external completer
-_bar_init_completion_registry
-_bar_complete_protoregistry["testproto"]="ext test_ext_complete"
+__bar_init_completion_registry
+__bar_protoregistry["testproto"]="ext test_ext_complete"
 
 # Get the expanded completer
-completer=$(_bar_get_completer "" "testproto")
+completer=$(__bar_get_completer "" "testproto")
 echo "  Expanded completer: $completer"
 
-if [[ "$completer" == "_bar_complete_comp_ext test_ext_complete" ]]; then
+if [[ "$completer" == "__bar_comp_ext test_ext_complete" ]]; then
     echo "✓ PASS: External completer expanded correctly"
 else
-    echo "✗ FAIL: Expected '_bar_complete_comp_ext test_ext_complete', got '$completer'"
+    echo "✗ FAIL: Expected '__bar_comp_ext test_ext_complete', got '$completer'"
 fi
 
 # Test 2: Call the external completer
@@ -50,7 +50,7 @@ function bar()
     return 1
 }
 
-results=$(_bar_complete_comp_ext "test_ext_complete" "res")
+results=$(__bar_comp_ext "test_ext_complete" "res")
 result_count=$(echo "$results" | wc -l)
 
 if [[ $result_count -ge 2 ]]; then

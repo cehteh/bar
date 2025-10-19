@@ -7,13 +7,13 @@ REPO_ROOT="$(dirname "$SCRIPT_DIR")"
 
 source "$REPO_ROOT/contrib/bar_complete"
 
-echo "Testing variable expansion in _bar_complete_comp_extcomp..."
+echo "Testing variable expansion in __bar_comp_extcomp..."
 
 # Test 1: Variable expansion with empty variable
 echo ""
 echo "Test 1: Variable expansion with empty variable"
 export TEST_VAR=""
-result=$(_bar_complete_comp_extcomp "echo \${TEST_VAR} hello" "wor")
+result=$(__bar_comp_extcomp "echo \${TEST_VAR} hello" "wor")
 if [[ -n "$result" ]]; then
     echo "✓ PASS: Function handles empty variable correctly"
 else
@@ -96,7 +96,7 @@ fi
 echo ""
 echo "Test 4: Real-world git completion"
 if command -v git &>/dev/null; then
-    result=$(_bar_complete_comp_extcomp "git checkout" "")
+    result=$(__bar_comp_extcomp "git checkout" "")
     completion_count=$(echo "$result" | wc -l)
     
     if [[ $completion_count -gt 0 ]]; then

@@ -2105,27 +2105,6 @@ _bar_complete()
     return 0
 }
 
-# ==============================================================================
-# Compatibility aliases for tests
-# ==============================================================================
-__bar_parse_protos() { _bar_parse_protos "$@"; }
-__bar_expand_group_alternatives() { _bar_expand_group_alternatives "$@"; }
-__bar_extract_literal_punct() { _bar_extract_literal_punct "$@"; }
-_bar_get_completer() { __bar_get_completer "$@"; }
-_bar_complete_parse_file() { __bar_parse_file "$@"; }
-_bar_init_completion_registry() { __bar_init_completion_registry "$@"; }
-_bar_complete_comp_file() { __bar_comp_file "$@"; }
-_bar_complete_comp_directory() { __bar_comp_directory "$@"; }
-_bar_complete_comp_path() { __bar_comp_path "$@"; }
-_bar_complete_comp_rule() { __bar_comp_rule "$@"; }
-_bar_complete_comp_ext() { __bar_comp_ext "$@"; }
-_bar_complete_comp_extcomp() { __bar_comp_extcomp "$@"; }
-_bar_complete_comp_literal() { __bar_comp_literal "$@"; }
-_bar_complete_comp_help() { __bar_comp_help "$@"; }
-_bar_complete_comp_command() { __bar_comp_command "$@"; }
-_bar_complete_comp_command_or_rule() { __bar_comp_command_or_rule "$@"; }
-_bar_complete_comp_rule_or_function() { __bar_comp_rule_or_function "$@"; }
-
 # Register completion for bar and please
 complete -o nosort -F _bar_complete bar
 complete -o nosort -F _bar_complete please

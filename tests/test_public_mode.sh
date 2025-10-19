@@ -1,5 +1,5 @@
 #!/bin/bash
-# Test --public mode for _bar_complete_parse_file
+# Test --public mode for __bar_parse_file
 
 cd "$(dirname "$0")/.." || exit
 source contrib/bar_complete

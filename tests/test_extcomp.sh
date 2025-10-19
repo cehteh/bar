@@ -7,7 +7,7 @@ REPO_ROOT="$(dirname "$SCRIPT_DIR")"
 
 source "$REPO_ROOT/contrib/bar_complete"
 
-echo "Testing external command completion (_bar_complete_comp_extcomp)..."
+echo "Testing external command completion (__bar_comp_extcomp)..."
 
 # Test 1: Git completion
 echo ""
@@ -15,7 +15,7 @@ echo "Test 1: Testing git completion..."
 
 # Test git subcommand completion
 if command -v git &>/dev/null; then
-    completions=$(_bar_complete_comp_extcomp git che 2>/dev/null)
+    completions=$(__bar_comp_extcomp git che 2>/dev/null)
     
     if echo "$completions" | grep -q "checkout"; then
         echo "✓ PASS: git subcommand completion works ('che' → 'checkout')"
@@ -25,7 +25,7 @@ if command -v git &>/dev/null; then
     fi
     
     # Test git with no prefix
-    all_completions=$(_bar_complete_comp_extcomp git "" 2>/dev/null)
+    all_completions=$(__bar_comp_extcomp git "" 2>/dev/null)
     completion_count=$(echo "$all_completions" | wc -l)
     
     if [[ $completion_count -gt 20 ]]; then
@@ -42,7 +42,7 @@ fi
 echo ""
 echo "Test 2: Testing fallback for command without completion..."
 
-completions=$(_bar_complete_comp_extcomp nonexistent_cmd test 2>/dev/null)
+completions=$(__bar_comp_extcomp nonexistent_cmd test 2>/dev/null)
 
 if [[ -n "$completions" ]]; then
     echo "✓ PASS: Fallback to file completion works"
@@ -56,7 +56,7 @@ echo ""
 echo "Test 3: Testing ls completion..."
 
 if command -v ls &>/dev/null; then
-    completions=$(_bar_complete_comp_extcomp ls --col 2>/dev/null)
+    completions=$(__bar_comp_extcomp ls --col 2>/dev/null)
     
     if echo "$completions" | grep -q "color"; then
         echo "✓ PASS: ls flag completion works ('--col' → '--color')"
@@ -72,7 +72,7 @@ echo "Test 4: Testing ssh completion..."
 
 if command -v ssh &>/dev/null; then
     # SSH completion might complete hostnames from known_hosts
-    completions=$(_bar_complete_comp_extcomp ssh "" 2>/dev/null | head -10)
+    completions=$(__bar_comp_extcomp ssh "" 2>/dev/null | head -10)
     
     if [[ -n "$completions" ]]; then
         echo "✓ PASS: ssh completion returns results"
@@ -87,10 +87,10 @@ fi
 echo ""
 echo "Test 5: Testing function availability..."
 
-if type -t _bar_complete_comp_extcomp &>/dev/null; then
-    echo "✓ PASS: _bar_complete_comp_extcomp function is defined"
+if type -t __bar_comp_extcomp &>/dev/null; then
+    echo "✓ PASS: __bar_comp_extcomp function is defined"
 else
-    echo "✗ FAIL: _bar_complete_comp_extcomp function not found"
+    echo "✗ FAIL: __bar_comp_extcomp function not found"
 fi
 
 # Test 6: Test with multiple arguments
@@ -104,7 +104,7 @@ if command -v git &>/dev/null; then
     git checkout -b main &>/dev/null 2>&1
     git checkout -b feature/test &>/dev/null 2>&1
     
-    completions=$(_bar_complete_comp_extcomp git checkout fea 2>/dev/null)
+    completions=$(__bar_comp_extcomp git checkout fea 2>/dev/null)
     
     if echo "$completions" | grep -q "feature"; then
         echo "✓ PASS: git checkout branch completion works"

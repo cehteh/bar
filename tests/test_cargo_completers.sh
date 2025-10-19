@@ -45,10 +45,10 @@ fi
 echo ""
 echo "Test 2: Testing cargo toolchain completion via extcomp..."
 if command -v cargo &>/dev/null; then
-    toolchain_completions=$(_bar_complete_comp_extcomp cargo "+")
+    toolchain_completions=$(__bar_comp_extcomp cargo "+")
 
     if [[ -n "$toolchain_completions" ]]; then
-        echo "✓ PASS: _bar_complete_comp_extcomp returned toolchain suggestions"
+        echo "✓ PASS: __bar_comp_extcomp returned toolchain suggestions"
         echo "  Sample: $(echo "$toolchain_completions" | head -3 | tr '\n' ' ')"
     else
         echo "ℹ INFO: No toolchain suggestions returned (cargo completion may be unavailable)"
@@ -57,54 +57,54 @@ else
     echo "ℹ INFO: cargo not installed, skipping toolchain completion test"
 fi
 
-# Test 3: _bar_complete_comp_extcomp with cargo
+# Test 3: __bar_comp_extcomp with cargo
 echo ""
-echo "Test 3: Testing _bar_complete_comp_extcomp with cargo (black box forwarding)..."
+echo "Test 3: Testing __bar_comp_extcomp with cargo (black box forwarding)..."
 if command -v rustc &>/dev/null; then
     # Test completing cargo subcommands
-    completions=$(_bar_complete_comp_extcomp cargo "bui")
+    completions=$(__bar_comp_extcomp cargo "bui")
     
     if echo "$completions" | grep -q "build"; then
-        echo "✓ PASS: _bar_complete_comp_extcomp finds 'build' from 'bui' prefix"
+        echo "✓ PASS: __bar_comp_extcomp finds 'build' from 'bui' prefix"
     else
-        echo "ℹ INFO: _bar_complete_comp_extcomp fallback mode (no native completion)"
+        echo "ℹ INFO: __bar_comp_extcomp fallback mode (no native completion)"
         echo "  Got: $(echo "$completions" | head -3 | tr '\n' ' ')"
     fi
     
     # Test with no prefix
-    all_completions=$(_bar_complete_comp_extcomp cargo "")
+    all_completions=$(__bar_comp_extcomp cargo "")
     completion_count=$(echo "$all_completions" | wc -l)
     
     if [[ $completion_count -gt 20 ]]; then
-        echo "✓ PASS: _bar_complete_comp_extcomp returns many completions ($completion_count)"
+        echo "✓ PASS: __bar_comp_extcomp returns many completions ($completion_count)"
         echo "  Sample: $(echo "$all_completions" | head -5 | tr '\n' ' ')"
     else
-        echo "ℹ INFO: _bar_complete_comp_extcomp using fallback mode"
+        echo "ℹ INFO: __bar_comp_extcomp using fallback mode"
     fi
 else
-    echo "ℹ INFO: rustc not installed, skipping _bar_complete_comp_extcomp test"
+    echo "ℹ INFO: rustc not installed, skipping __bar_comp_extcomp test"
 fi
 
 # Test 4: Prototype definitions
 echo ""
 echo "Test 4: Testing prototype definitions..."
-_bar_init_completion_registry
+__bar_init_completion_registry
 
 # Parse cargo module
-_bar_complete_parse_file --module cargo "$REPO_ROOT/Bar.d/cargo"
+__bar_parse_file --module cargo "$REPO_ROOT/Bar.d/cargo"
 
 # Check if toolchain prototype is registered
-if [[ -v _bar_complete_protoregistry["cargo@toolchain"] ]]; then
+if [[ -v __bar_protoregistry["cargo@toolchain"] ]]; then
     echo "✓ PASS: toolchain prototype registered for cargo module"
-    echo "  Spec: ${_bar_complete_protoregistry[cargo@toolchain]}"
+    echo "  Spec: ${__bar_protoregistry[cargo@toolchain]}"
 else
     echo "✗ FAIL: toolchain prototype not registered"
 fi
 
 # Check if tool prototype is registered
-if [[ -v _bar_complete_protoregistry["cargo@tool"] ]]; then
+if [[ -v __bar_protoregistry["cargo@tool"] ]]; then
     echo "✓ PASS: tool prototype registered for cargo module"
-    echo "  Spec: ${_bar_complete_protoregistry[cargo@tool]}"
+    echo "  Spec: ${__bar_protoregistry[cargo@tool]}"
 else
     echo "✗ FAIL: tool prototype not registered"
 fi
@@ -112,21 +112,21 @@ fi
 # Test 5: Completer expansion
 echo ""
 echo "Test 5: Testing completer expansion..."
-toolchain_completer=$(_bar_get_completer "" "cargo@toolchain")
-if [[ "$toolchain_completer" == "_bar_complete_comp_extcomp cargo" ]]; then
+toolchain_completer=$(__bar_get_completer "" "cargo@toolchain")
+if [[ "$toolchain_completer" == "__bar_comp_extcomp cargo" ]]; then
     echo "✓ PASS: toolchain completer expands correctly"
 else
     echo "✗ FAIL: toolchain completer expansion incorrect"
-    echo "  Expected: _bar_complete_comp_extcomp cargo"
+    echo "  Expected: __bar_comp_extcomp cargo"
     echo "  Got: $toolchain_completer"
 fi
 
-tool_completer=$(_bar_get_completer "" "cargo@tool")
-if [[ "$tool_completer" == "_bar_complete_comp_ext cargo_tool_complete" ]]; then
+tool_completer=$(__bar_get_completer "" "cargo@tool")
+if [[ "$tool_completer" == "__bar_comp_ext cargo_tool_complete" ]]; then
     echo "✓ PASS: tool completer expands correctly"
 else
     echo "✗ FAIL: tool completer expansion incorrect"
-    echo "  Expected: _bar_complete_comp_ext cargo_tool_complete"
+    echo "  Expected: __bar_comp_ext cargo_tool_complete"
     echo "  Got: $tool_completer"
 fi
 

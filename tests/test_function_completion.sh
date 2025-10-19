@@ -9,7 +9,7 @@ source "$REPO_ROOT/contrib/bar_complete"
 
 echo "Testing function completion..."
 
-_bar_init_completion_registry
+__bar_init_completion_registry
 
 # Parse git_lib module
 __bar_parse_file --module git_lib "$REPO_ROOT/Bar.d/git_lib"
