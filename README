@@ -1820,14 +1820,6 @@ BASH COMPLETION
   2.  Complete available bash functions and rules from default rule file and Bar.d/ modules
   3.  Provide context-aware argument completion based on parameter types
 
-  Help completion implements smart case:
-
-  - When you type lowercase (e.g., 'bar help qu'), completions are returned in lowercase
-    ('quickstart') to work with bash's case-sensitive matching
-  - When you type with uppercase (e.g., 'bar help QU'), completions preserve their original
-    case ('QUICKSTART')
-  - This allows completion to work without requiring the 'completion-ignore-case' setting
-
 
 LICENSE
 
