@@ -733,11 +733,16 @@ _bar_parse_protos()
                 is_optional=false
                 ;;
             ' '|$'\t')
-                # Space separates tokens
-                if [[ -n "$current_token" && $in_bracket == false && $in_angle == false ]]; then
-                    # Literal word
-                    protos+=("$current_token")
-                    current_token=""
+                # Space separates tokens at top level, but is preserved inside groups
+                if [[ $in_bracket == false && $in_angle == false ]]; then
+                    # Top level space - token boundary
+                    if [[ -n "$current_token" ]]; then
+                        protos+=("$current_token")
+                        current_token=""
+                    fi
+                else
+                    # Space inside bracket/angle - preserve it
+                    current_token+="$char"
                 fi
                 ;;
             *)
