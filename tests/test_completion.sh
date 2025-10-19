@@ -136,16 +136,18 @@ test_help_completer() {
 
     local result
     result=$(__bar_comp_help "abo")
-    if grep -Fxq "ABOUT" <<<"$result"; then
-        echo "✓ Help completer finds ABOUT"
+    # When user types lowercase, completion should return lowercase for case-sensitive bash matching
+    if grep -Fxq "about" <<<"$result"; then
+        echo "✓ Help completer finds about (case-adjusted for lowercase input)"
     else
-        echo "✗ Help completer should include ABOUT"
+        echo "✗ Help completer should include about when typing 'abo'"
         return 1
     fi
 
     result=$(__bar_comp_help "invocation")
-    if grep -Fxq 'INVOCATION\ AND\ SEMANTICS' <<<"$result"; then
-        echo "✓ Help completer escapes multi-word topics"
+    # When user types lowercase, completion should return lowercase
+    if grep -Fxq 'invocation\ and\ semantics' <<<"$result"; then
+        echo "✓ Help completer escapes multi-word topics (case-adjusted)"
     else
         echo "✗ Help completer should escape multi-word topics"
         return 1

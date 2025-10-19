@@ -427,13 +427,28 @@ __bar_comp_help()
     local lc_cur="${cur,,}"
     local -a matches=()
     local key
+    
+    # Smart case: if cur contains uppercase, preserve case; otherwise adjust to lowercase
+    local has_upper=false
+    if [[ "$cur" =~ [A-Z] ]]; then
+        has_upper=true
+    fi
+    
     for key in "${!__bar_help_rindex[@]}"; do
         if [[ -z "$lc_cur" || "$key" == "$lc_cur"* ]]; then
             local idx="${__bar_help_rindex[$key]}"
             local entry="${__bar_help_index[$idx]}"
             local value="${entry#*:*:}"
             [[ -z "$value" ]] && continue
-            matches+=("$value")
+            
+            # Adjust case of completion to match user input
+            if [[ $has_upper == false && -n "$cur" ]]; then
+                # User typed lowercase - return lowercase version
+                matches+=("${value,,}")
+            else
+                # User typed with uppercase or empty - preserve original case
+                matches+=("$value")
+            fi
         fi
     done
 
