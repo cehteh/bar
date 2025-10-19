@@ -345,6 +345,10 @@ __bar_comp_literal()
 }
 
 # Complete help topics, rules, functions, and variables via help_indexer
+# Implements smart case matching similar to the help command:
+# - When user types lowercase, returns lowercase completions (for case-sensitive bash matching)
+# - When user types with uppercase, preserves original case from help index
+# This enables completion to work without requiring users to set completion-ignore-case
 __bar_comp_help()
 {
     local cur="${1:-}"
