@@ -1558,14 +1558,32 @@ __bar_scan_files()
     done
 
     # Add Bar.d modules if directory exists
+    # First try local directories, then fall back to installed location or repo location
     local bar_d_dirs=()
     if [[ "$cmd" == *please* ]]; then
         bar_d_dirs=("$HOME/.config/please")
     else
+        # Try to find Bar.d in multiple locations:
+        # 1. Local directory (current working directory)
+        bar_d_dirs=("Bar.d" "bar.d" ".Bar.d" ".bar.d")
+        
+        # 2. Installed location (if bar command is in PATH)
         # shellcheck disable=2155
-        local prefix="$(command -v bar)"
-        prefix="${prefix%/bin/*}"
-        bar_d_dirs=("Bar.d" "bar.d" ".Bar.d" ".bar.d" "${prefix:+$prefix/share/bar/Bar.d}")
+        local origin="$(command -v bar 2>/dev/null)"
+        if [[ -n "$origin" ]]; then
+            local prefix="${origin%/bin/*}"
+            bar_d_dirs+=("$prefix/share/bar/Bar.d")
+        fi
+        
+        # 3. Repository location (relative to this completion script)
+        # This allows completion to work when sourced from repo but bar not installed
+        if [[ -n "${BASH_SOURCE[0]:-}" ]]; then
+            local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+            local repo_bar_d="$script_dir/../Bar.d"
+            if [[ -d "$repo_bar_d" ]]; then
+                bar_d_dirs+=("$repo_bar_d")
+            fi
+        fi
     fi
 
     for bar_d in "${bar_d_dirs[@]}"; do

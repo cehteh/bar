@@ -26,6 +26,7 @@ Bar is a rule-based command runner implementing a declarative workflow system fo
 - The `shellcheckrc` configuration governs linting expectations; follow it for consistent shellcheck runs.
 - New tests belong in `tests/` with the `test_*.sh` naming convention and executable bit set.
 - Reuse existing helpers such as the `testdir` system for isolated environments instead of custom scaffolding.
+- **IMPORTANT: For each bug found, add a reproducer test to `tests/` before fixing it.** This ensures the bug is properly captured and prevents regressions.
 
 ## Documentation
 
