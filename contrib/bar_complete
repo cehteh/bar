@@ -27,8 +27,8 @@ declare -ga __bar_rules=()
 # __bar_functions: array storing function names
 declare -ga __bar_functions=()
 
-# __bar_rulefiles: array storing rulefile names
-declare -ga __bar_rulefiles=()
+# __bar_rulefiles: array storing rulefile names (internal to __bar_scan_files)
+# declare -ga __bar_rulefiles=()
 
 # Parameter completion data structures
 # __bar_func_params: associative array "funcname" -> "param_list"
@@ -55,7 +55,8 @@ declare -gA __bar_protoregistry=()
 # __bar_actions: associative array "prototype" -> "action_function"
 # Maps prototypes to actions that should be executed when that prototype is matched
 # Examples: actions["rulefile"]="_bar_action_parse_rulefile"
-declare -gA __bar_actions=()
+# Currently unused - reserved for future action-based completion extensions
+# declare -gA __bar_actions=()
 
 # __bar_cache: array caching the completions for the current word
 declare -ga __bar_cache=()
@@ -72,7 +73,8 @@ declare -gA __bar_extcomplete_cache=()
 
 # __bar_module_completers: indexed array storing module-specific completers
 # Format: "module:completer_name"
-declare -ga __bar_module_completers=()
+# Currently populated but unused - reserved for future completer introspection
+# declare -ga __bar_module_completers=()
 
 # Command used to invoke completion (bar, please, ./bar, etc.)
 declare -g __bar_invocation=""
@@ -1379,8 +1381,8 @@ __bar_parse_file()
                 local proto="${BASH_REMATCH[2]}"
                 # Register in completion registry
                 __bar_protoregistry["${mod}@${proto}"]="ext $func"
-                # Store in module completers list
-                __bar_module_completers+=("${mod}:${func}")
+                # Store in module completers list (currently unused)
+                # __bar_module_completers+=("${mod}:${func}")
             fi
 
             in_doc_comment=false
@@ -1407,8 +1409,8 @@ __bar_parse_file()
                 local proto="${BASH_REMATCH[2]}"
                 # Register in completion registry
                 __bar_protoregistry["${mod}@${proto}"]="ext $func"
-                # Store in module completers list
-                __bar_module_completers+=("${mod}:${func}")
+                # Store in module completers list (currently unused)
+                # __bar_module_completers+=("${mod}:${func}")
             fi
 
             in_doc_comment=false
@@ -1492,7 +1494,8 @@ __bar_scan_files()
     # Clear existing data
     __bar_rules=()
     __bar_functions=()
-    __bar_rulefiles=()
+    # Use local variable for rulefiles tracking
+    local -a rulefiles=()
 
     # Determine which files to look for
     local default_barfs=()
@@ -1506,7 +1509,7 @@ __bar_scan_files()
     local barf
     for barf in "${default_barfs[@]}"; do
         if [[ -f "$barf" && -r "$barf" ]]; then
-            __bar_rulefiles+=("$barf")
+            rulefiles+=("$barf")
             __bar_parse_file --public "$barf"
             break
         fi
