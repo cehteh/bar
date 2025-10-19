@@ -66,8 +66,8 @@ echo ""
 
 # Verify manual completers still work
 echo "Manual Completers Test:"
-result1=$(_bar_complete_comp_file "" rulefile | wc -l)
-result2=$(_bar_complete_comp_literal "--" --bare)
+result1=$(__bar_comp_file "" rulefile | wc -l)
+result2=$(__bar_comp_literal "--" --bare)
 
 if [ "$result1" -gt 0 ] && [ "$result2" = "--bare" ]; then
     echo "  ✓ PASS: Manual completers work correctly"

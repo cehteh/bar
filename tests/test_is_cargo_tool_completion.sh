@@ -11,12 +11,12 @@ cd "$(dirname "$0")/.." || exit 1
 
 echo "=== Test 1: Source completion and parse cargo module ==="
 source contrib/bar_complete
-_bar_complete_parse_file Bar.d/cargo
+__bar_parse_file Bar.d/cargo
 echo "✓ Completion script sourced and cargo module parsed"
 
 echo ""
 echo "=== Test 2: Verify function is tracked ==="
-if [[ " ${_bar_completion_functions[*]} " == *" is_cargo_tool_installed "* ]]; then
+if [[ " ${__bar_functions[*]} " == *" is_cargo_tool_installed "* ]]; then
     echo "✓ is_cargo_tool_installed is tracked"
 else
     echo "✗ is_cargo_tool_installed is NOT tracked"
@@ -25,7 +25,7 @@ fi
 
 echo ""
 echo "=== Test 3: Verify params are stored correctly ==="
-params="${_bar_completion_func_params[is_cargo_tool_installed]}"
+params="${__bar_func_params[is_cargo_tool_installed]}"
 expected="[+toolchain] <tool> [args..]"
 if [[ "$params" == "$expected" ]]; then
     echo "✓ Params stored correctly: '$params'"
@@ -36,15 +36,15 @@ fi
 
 echo ""
 echo "=== Test 4: Verify prototypes are registered for cargo module ==="
-if [[ -v _bar_complete_protoregistry[cargo@toolchain] ]]; then
-    echo "✓ cargo@toolchain prototype registered: ${_bar_complete_protoregistry[cargo@toolchain]}"
+if [[ -v __bar_protoregistry[cargo@toolchain] ]]; then
+    echo "✓ cargo@toolchain prototype registered: ${__bar_protoregistry[cargo@toolchain]}"
 else
     echo "✗ cargo@toolchain prototype NOT registered"
     exit 1
 fi
 
-if [[ -v _bar_complete_protoregistry[cargo@tool] ]]; then
-    echo "✓ cargo@tool prototype registered: ${_bar_complete_protoregistry[cargo@tool]}"
+if [[ -v __bar_protoregistry[cargo@tool] ]]; then
+    echo "✓ cargo@tool prototype registered: ${__bar_protoregistry[cargo@tool]}"
 else
     echo "✗ cargo@tool prototype NOT registered"
     exit 1
@@ -52,10 +52,10 @@ fi
 
 echo ""
 echo "=== Test 5: Verify module tracking ==="
-if [[ "${_bar_completion_func_module[is_cargo_tool_installed]}" == "cargo" ]]; then
+if [[ "${__bar_func_module[is_cargo_tool_installed]}" == "cargo" ]]; then
     echo "✓ Module tracked correctly: cargo"
 else
-    echo "✗ Module not tracked. Got: '${_bar_completion_func_module[is_cargo_tool_installed]}'"
+    echo "✗ Module not tracked. Got: '${__bar_func_module[is_cargo_tool_installed]}'"
     exit 1
 fi
 
@@ -79,8 +79,8 @@ fi
 
 echo ""
 echo "=== Test 7: Verify completer lookup ==="
-completer=$(_bar_get_completer "is_cargo_tool_installed" "toolchain")
-expected_completer="_bar_complete_comp_extcomp cargo"
+completer=$(__bar_get_completer "is_cargo_tool_installed" "toolchain")
+expected_completer="__bar_comp_extcomp cargo"
 if [[ "$completer" == "$expected_completer" ]]; then
     echo "✓ Completer lookup successful: '$completer'"
 else
@@ -91,7 +91,7 @@ fi
 echo ""
 echo "=== Test 8: Verify end-to-end completion ==="
 # Stub the external completer so we do not depend on cargo's native completion results.
-_bar_complete_comp_extcomp()
+__bar_comp_extcomp()
 {
     local command_name="$1"
     local cur="$2"
@@ -123,7 +123,7 @@ fi
 
 echo ""
 echo "=== Test 9: Completion after selecting toolchain ==="
-_bar_complete_comp_ext()
+__bar_comp_ext()
 {
     local completer_name="$1"
     local cur="$2"

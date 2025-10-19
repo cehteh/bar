@@ -9,37 +9,37 @@ echo ""
 
 # Test 1: Default mode (only documented rules)
 echo "Test 1: Parse example without --public (only documented rules)"
-_bar_completion_rules=()
-_bar_completion_functions=()
-_bar_complete_parse_file "example"
-if [ ${#_bar_completion_rules[@]} -eq 0 ]; then
+__bar_rules=()
+__bar_functions=()
+__bar_parse_file "example"
+if [ ${#__bar_rules[@]} -eq 0 ]; then
     echo "  ✓ PASS: No undocumented rules found (0 rules)"
 else
-    echo "  ✗ FAIL: Found ${#_bar_completion_rules[@]} rules (expected 0)"
+    echo "  ✗ FAIL: Found ${#__bar_rules[@]} rules (expected 0)"
 fi
 echo ""
 
 # Test 2: Public mode (all rules)
 echo "Test 2: Parse example with --public (all rules)"
-_bar_completion_rules=()
-_bar_completion_functions=()
-_bar_complete_parse_file --public "example"
-if [ ${#_bar_completion_rules[@]} -gt 20 ]; then
-    echo "  ✓ PASS: Found ${#_bar_completion_rules[@]} rules (including undocumented)"
-    echo "  Sample rules: ${_bar_completion_rules[*]:0:5}"
+__bar_rules=()
+__bar_functions=()
+__bar_parse_file --public "example"
+if [ ${#__bar_rules[@]} -gt 20 ]; then
+    echo "  ✓ PASS: Found ${#__bar_rules[@]} rules (including undocumented)"
+    echo "  Sample rules: ${__bar_rules[*]:0:5}"
 else
-    echo "  ✗ FAIL: Found only ${#_bar_completion_rules[@]} rules (expected >20)"
+    echo "  ✗ FAIL: Found only ${#__bar_rules[@]} rules (expected >20)"
 fi
 echo ""
 
 # Test 3: Bar.d modules should only show documented rules
 echo "Test 3: Parse Bar.d/git_rules without --public"
-_bar_completion_rules=()
-_bar_completion_functions=()
+__bar_rules=()
+__bar_functions=()
 if [ -f "Bar.d/git_rules" ]; then
-    _bar_complete_parse_file "Bar.d/git_rules"
-    if [ ${#_bar_completion_rules[@]} -gt 0 ]; then
-        echo "  ✓ PASS: Found ${#_bar_completion_rules[@]} documented git rules"
+    __bar_parse_file "Bar.d/git_rules"
+    if [ ${#__bar_rules[@]} -gt 0 ]; then
+        echo "  ✓ PASS: Found ${#__bar_rules[@]} documented git rules"
     else
         echo "  ✗ FAIL: No rules found in Bar.d/git_rules"
     fi
@@ -70,9 +70,9 @@ echo ""
 
 # Test 5: Default rulefile should use --public
 echo "Test 5: _bar_scan_files should parse default Barf with --public"
-_bar_scan_files bar
-if [ ${#_bar_completion_rules[@]} -gt 0 ]; then
-    echo "  ✓ PASS: Default Barf parsed, found ${#_bar_completion_rules[@]} rules"
+__bar_scan_files bar
+if [ ${#__bar_rules[@]} -gt 0 ]; then
+    echo "  ✓ PASS: Default Barf parsed, found ${#__bar_rules[@]} rules"
 else
     echo "  ✗ FAIL: No rules found from default Barf"
 fi

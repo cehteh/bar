@@ -30,7 +30,7 @@ test_parse_params() {
     echo "Testing parameter parsing..."
     
     local result
-    result=$(_bar_parse_protos "[--opt] <file> [output]")
+    result=$(__bar_parse_protos "[--opt] <file> [output]")
     # The new parser extracts protos differently - it keeps the structure
     # Just check that it returns something and doesn't error
     if [[ -n "$result" ]]; then
@@ -39,7 +39,7 @@ test_parse_params() {
         echo "✗ Parse basic parameters - got empty result"
     fi
     
-    result=$(_bar_parse_protos "<file..>")
+    result=$(__bar_parse_protos "<file..>")
     if [[ -n "$result" ]]; then
         echo "✓ Parse repeated parameter (returns: $(echo "$result" | tr '\n' ' '))"
     else
@@ -51,12 +51,12 @@ test_parse_params() {
 test_registry_init() {
     echo "Testing registry initialization..."
     
-    _bar_init_completion_registry
+    __bar_init_completion_registry
     
     # Check that basic completers are registered
-    [[ -v _bar_complete_protoregistry[file] ]] && echo "✓ file completer registered" || echo "✗ file completer not registered"
-    [[ -v _bar_complete_protoregistry[directory] ]] && echo "✓ directory completer registered" || echo "✗ directory completer not registered"
-    [[ -v _bar_complete_protoregistry[rule] ]] && echo "✓ rule completer registered" || echo "✗ rule completer not registered"
+    [[ -v __bar_protoregistry[file] ]] && echo "✓ file completer registered" || echo "✗ file completer not registered"
+    [[ -v __bar_protoregistry[directory] ]] && echo "✓ directory completer registered" || echo "✗ directory completer not registered"
+    [[ -v __bar_protoregistry[rule] ]] && echo "✓ rule completer registered" || echo "✗ rule completer not registered"
 }
 
 # Test generic completers
@@ -65,11 +65,11 @@ test_generic_completers() {
     
     # Test file completer (basic functionality)
     local result
-    result=$(_bar_complete_comp_file "test" 2>/dev/null | wc -l)
+    result=$(__bar_comp_file "test" 2>/dev/null | wc -l)
     echo "✓ File completer executed (found $result matches)"
     
     # Test rule completer
-    result=$(_bar_complete_comp_rule "test" 2>/dev/null | wc -l)
+    result=$(__bar_comp_rule "test" 2>/dev/null | wc -l)
     echo "✓ Rule completer executed (found $result matches)"
 }
 
@@ -77,50 +77,50 @@ test_generic_completers() {
 test_completer_lookup() {
     echo "Testing completer lookup..."
     
-    _bar_init_completion_registry
+    __bar_init_completion_registry
     
     local result
-    result=$(_bar_get_completer "myfunction" "file")
-    assert_equals "_bar_complete_comp_file" "$result" "Lookup file completer"
+    result=$(__bar_get_completer "myfunction" "file")
+    assert_equals "__bar_comp_file" "$result" "Lookup file completer"
     
-    result=$(_bar_get_completer "myfunction" "directory")
-    assert_equals "_bar_complete_comp_directory" "$result" "Lookup directory completer"
+    result=$(__bar_get_completer "myfunction" "directory")
+    assert_equals "__bar_comp_directory" "$result" "Lookup directory completer"
     
-    result=$(_bar_get_completer "myfunction" "unknown")
+    result=$(__bar_get_completer "myfunction" "unknown")
     assert_equals "" "$result" "Lookup unknown returns empty"
     
-    result=$(_bar_get_completer "myfunction" "command_or_rule")
-    assert_equals "_bar_complete_comp_command_or_rule" "$result" "Lookup command_or_rule completer"
+    result=$(__bar_get_completer "myfunction" "command_or_rule")
+    assert_equals "__bar_comp_command_or_rule" "$result" "Lookup command_or_rule completer"
 }
 
 # Test predicate filtering
 test_predicate_filtering() {
     echo "Testing predicate filtering..."
     
-    # Test _bar_complete_comp_file with empty string and rulefile predicate
+    # Test __bar_comp_file with empty string and rulefile predicate
     local result
-    result=$(_bar_complete_comp_file "" rulefile 2>/dev/null | wc -l)
+    result=$(__bar_comp_file "" rulefile 2>/dev/null | wc -l)
     if [[ "$result" -gt 0 ]]; then
-        echo "✓ _bar_complete_comp_file \"\" rulefile works (found $result files)"
+        echo "✓ __bar_comp_file \"\" rulefile works (found $result files)"
     else
-        echo "✗ _bar_complete_comp_file \"\" rulefile should return files"
+        echo "✗ __bar_comp_file \"\" rulefile should return files"
         return 1
     fi
     
-    # Test _bar_complete_comp_file with partial name and predicate
-    result=$(_bar_complete_comp_file test rulefile 2>/dev/null)
+    # Test __bar_comp_file with partial name and predicate
+    result=$(__bar_comp_file test rulefile 2>/dev/null)
     if [[ -n "$result" ]]; then
-        echo "✓ _bar_complete_comp_file test rulefile works (found matches)"
+        echo "✓ __bar_comp_file test rulefile works (found matches)"
     else
-        echo "✓ _bar_complete_comp_file test rulefile works (no matches expected if no test* rulefiles)"
+        echo "✓ __bar_comp_file test rulefile works (no matches expected if no test* rulefiles)"
     fi
     
-    # Test _bar_complete_comp_file with multiple predicates
-    result=$(_bar_complete_comp_file "" local rulefile 2>/dev/null | wc -l)
+    # Test __bar_comp_file with multiple predicates
+    result=$(__bar_comp_file "" local rulefile 2>/dev/null | wc -l)
     if [[ "$result" -gt 0 ]]; then
-        echo "✓ _bar_complete_comp_file \"\" local rulefile works (found $result files)"
+        echo "✓ __bar_comp_file \"\" local rulefile works (found $result files)"
     else
-        echo "✗ _bar_complete_comp_file \"\" local rulefile should return files"
+        echo "✗ __bar_comp_file \"\" local rulefile should return files"
         return 1
     fi
 }
@@ -129,13 +129,13 @@ test_predicate_filtering() {
 test_help_completer() {
     echo "Testing help completer..."
 
-    unset _bar_complete_help_index
-    unset _bar_complete_help_rindex
+    unset __bar_help_index
+    unset __bar_help_rindex
 
-    _bar_complete_invocation="$REPO_ROOT/bar"
+    __bar_invocation="$REPO_ROOT/bar"
 
     local result
-    result=$(_bar_complete_comp_help "abo")
+    result=$(__bar_comp_help "abo")
     if grep -Fxq "ABOUT" <<<"$result"; then
         echo "✓ Help completer finds ABOUT"
     else
@@ -143,7 +143,7 @@ test_help_completer() {
         return 1
     fi
 
-    result=$(_bar_complete_comp_help "invocation")
+    result=$(__bar_comp_help "invocation")
     if grep -Fxq 'INVOCATION\ AND\ SEMANTICS' <<<"$result"; then
         echo "✓ Help completer escapes multi-word topics"
     else
@@ -151,7 +151,7 @@ test_help_completer() {
         return 1
     fi
 
-    result=$(_bar_complete_comp_help "foo")
+    result=$(__bar_comp_help "foo")
     if [[ -z "$result" ]]; then
         echo "✓ Help completer ignores documentation examples"
     else
@@ -166,8 +166,8 @@ test_bar_help_invocation_completer() {
     local debug_backup="${BAR_COMPLETE_DEBUG-}"
     unset BAR_COMPLETE_DEBUG
 
-    unset _bar_complete_help_index
-    unset _bar_complete_help_rindex
+    unset __bar_help_index
+    unset __bar_help_rindex
 
     COMPREPLY=()
     COMP_WORDS=("bar" "help" "")
@@ -239,9 +239,9 @@ test_bar_help_invocation_completer() {
 test_completion_cache_reuse() {
     echo "Testing completion caching..."
 
-    _bar_complete_cache=()
-    _bar_complete_cache_signature=""
-    _bar_complete_cache_prefix=""
+    __bar_cache=()
+    __bar_cache_signature=""
+    __bar_cache_prefix=""
 
     COMPREPLY=()
     COMP_WORDS=("bar" "help" "")
@@ -259,10 +259,10 @@ test_completion_cache_reuse() {
     local first_result
     first_result=$(printf '%s\n' "${COMPREPLY[@]}")
     local -a first_array=("${COMPREPLY[@]}")
-    local first_signature="$_bar_complete_cache_signature"
+    local first_signature="$__bar_cache_signature"
 
-    _bar_completion_rules=("__cache_test_rule")
-    _bar_completion_functions=("__cache_test_func")
+    __bar_completion_rules=("__cache_test_rule")
+    __bar_completion_functions=("__cache_test_func")
 
     COMPREPLY=()
     _bar_complete
@@ -314,20 +314,20 @@ test_completion_cache_reuse() {
         return 1
     fi
 
-    if [[ "$_bar_complete_cache_signature" == "$first_signature" ]]; then
+    if [[ "$__bar_cache_signature" == "$first_signature" ]]; then
         echo "✓ cache signature unchanged for extended prefix"
     else
         echo "✗ cache signature should stay the same for extended prefix"
         echo "  First:  $first_signature"
-        echo "  Second: $_bar_complete_cache_signature"
+        echo "  Second: $__bar_cache_signature"
         return 1
     fi
 
-    if [[ "$_bar_complete_cache_prefix" == "A" ]]; then
+    if [[ "$__bar_cache_prefix" == "A" ]]; then
         echo "✓ cache prefix tracks latest user input"
     else
         echo "✗ cache prefix should update to current input"
-        echo "  Got: $_bar_complete_cache_prefix"
+        echo "  Got: $__bar_cache_prefix"
         return 1
     fi
 }
@@ -375,7 +375,7 @@ test_flag_completion_order() {
     echo "Testing flag-first completion ordering..."
 
     local result
-    result=$(_bar_complete_finalize_completions "--bare" "build" "--debug" "doc" "build")
+    result=$(__bar_finalize_completions "--bare" "build" "--debug" "doc" "build")
     local expected=$'--bare\n--debug\nbuild\ndoc'
 
     if [[ "$result" == "$expected" ]]; then
@@ -408,9 +408,9 @@ test_completion_uses_nosort() {
         builtin compopt "$@" 2>/dev/null || true
     }
 
-    _bar_complete_cache=()
-    _bar_complete_cache_signature=""
-    _bar_complete_cache_prefix=""
+    __bar_cache=()
+    __bar_cache_signature=""
+    __bar_cache_prefix=""
 
     COMPREPLY=()
     COMP_WORDS=("bar" "help" "")

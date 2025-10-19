@@ -14,24 +14,24 @@ cd "$SCRIPT_DIR"
 source "$REPO_ROOT/contrib/bar_complete"
 
 # Initialize the completion system
-_bar_init_completion_registry
+__bar_init_completion_registry
 
 # Parse the cargo module to register prototypes
 echo "Parsing Bar.d/cargo module..."
-_bar_complete_parse_file --module cargo "$REPO_ROOT/Bar.d/cargo"
+__bar_parse_file --module cargo "$REPO_ROOT/Bar.d/cargo"
 
 echo "Testing cargo completion with variable expansion..."
 
 # Test 1: Verify prototypes are registered
 echo -n "Test 1: Check buildargs prototype registered... "
-if [[ -n "${_bar_complete_protoregistry[cargo@buildargs]:-}" ]]; then
+if [[ -n "${__bar_protoregistry[cargo@buildargs]:-}" ]]; then
     echo "PASS (registered as cargo@buildargs)"
 else
     echo "FAIL: buildargs prototype not found"
     echo "Available prototypes:"
-    for key in "${!_bar_complete_protoregistry[@]}"; do
+    for key in "${!__bar_protoregistry[@]}"; do
         if [[ "$key" == *"build"* ]] || [[ "$key" == *"args"* ]]; then
-            echo "  $key = ${_bar_complete_protoregistry[$key]}"
+            echo "  $key = ${__bar_protoregistry[$key]}"
         fi
     done
     exit 1
@@ -39,7 +39,7 @@ fi
 
 # Test 2: Verify prototype contains extcomp and variable reference
 echo -n "Test 2: Check buildargs prototype format... "
-proto_val="${_bar_complete_protoregistry[cargo@buildargs]}"
+proto_val="${__bar_protoregistry[cargo@buildargs]}"
 if [[ "$proto_val" == "extcomp cargo \${CARGO_TOOLCHAIN} build --workspace" ]]; then
     echo "PASS"
 else
@@ -52,9 +52,9 @@ echo -n "Test 3: Test get completer for cargo_build function with buildargs... "
 unset CARGO_TOOLCHAIN
 # Register cargo_build as coming from cargo module
 # shellcheck disable=SC2154
-_bar_completion_func_module[cargo_build]="cargo"
-completer=$(_bar_get_completer "cargo_build" "buildargs")
-if [[ "$completer" =~ _bar_complete_comp_extcomp ]]; then
+__bar_func_module[cargo_build]="cargo"
+completer=$(__bar_get_completer "cargo_build" "buildargs")
+if [[ "$completer" =~ __bar_comp_extcomp ]]; then
     echo "PASS"
 else
     echo "FAIL: Completer not properly expanded: '$completer'"
@@ -74,7 +74,7 @@ fi
 
 # Test 5: Verify testargs prototype
 echo -n "Test 5: Check testargs prototype... "
-proto_val="${_bar_complete_protoregistry[cargo@testargs]}"
+proto_val="${__bar_protoregistry[cargo@testargs]}"
 if [[ "$proto_val" == "extcomp cargo \${CARGO_TOOLCHAIN} test --workspace" ]]; then
     echo "PASS"
 else
@@ -84,7 +84,7 @@ fi
 
 # Test 6: Verify docargs prototype
 echo -n "Test 6: Check docargs prototype... "
-proto_val="${_bar_complete_protoregistry[cargo@docargs]}"
+proto_val="${__bar_protoregistry[cargo@docargs]}"
 if [[ "$proto_val" == "extcomp cargo \${CARGO_TOOLCHAIN} doc --workspace" ]]; then
     echo "PASS"
 else
@@ -94,7 +94,7 @@ fi
 
 # Test 7: Verify miriargs prototype
 echo -n "Test 7: Check miriargs prototype... "
-proto_val="${_bar_complete_protoregistry[cargo@miriargs]}"
+proto_val="${__bar_protoregistry[cargo@miriargs]}"
 if [[ "$proto_val" == "extcomp cargo +nightly miri test" ]]; then
     echo "PASS"
 else
@@ -104,12 +104,12 @@ fi
 
 # Test 8: Test variable expansion in extcomp
 echo -n "Test 8: Test \${CARGO_TOOLCHAIN} expansion... "
-# Directly test the _bar_complete_comp_extcomp function with a variable
+# Directly test the __bar__comp_extcomp function with a variable
 export CARGO_TOOLCHAIN="+stable"
 # Create a simple test: the function should expand ${CARGO_TOOLCHAIN}
 # We'll test this by checking if it processes the arguments correctly
 # shellcheck disable=SC2016
-if _bar_complete_comp_extcomp cargo '${CARGO_TOOLCHAIN}' build --workspace --help &>/dev/null; then
+if __bar_comp_extcomp cargo '${CARGO_TOOLCHAIN}' build --workspace --help &>/dev/null; then
     echo "PASS (function executed without error)"
 else
     echo "PASS (function may not have cargo completion, but processed args)"
@@ -123,7 +123,7 @@ if command -v cargo &>/dev/null && [[ -d helloworld ]]; then
     # We just verify it doesn't error out
     set +e
     # shellcheck disable=SC2034
-    completions=$(_bar_complete_comp_extcomp cargo build --workspace -- 2>/dev/null)
+    completions=$(__bar_comp_extcomp cargo build --workspace -- 2>/dev/null)
     result=$?
     set -e
     cd ..

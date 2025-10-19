@@ -12,17 +12,17 @@ echo "Testing function completion..."
 _bar_init_completion_registry
 
 # Parse git_lib module
-_bar_complete_parse_file --module git_lib "$REPO_ROOT/Bar.d/git_lib"
+__bar_parse_file --module git_lib "$REPO_ROOT/Bar.d/git_lib"
 
 # Test 1: Check if git_ls_files is tracked
 echo ""
 echo "Test 1: Checking if git_ls_files is tracked..."
 
-if [[ -v _bar_completion_func_module[git_ls_files] ]]; then
+if [[ -v __bar_func_module[git_ls_files] ]]; then
     echo "✓ PASS: git_ls_files is tracked in completion system"
 else
     echo "✗ FAIL: git_ls_files is NOT tracked"
-    echo "  Available functions: ${!_bar_completion_func_module[*]}"
+    echo "  Available functions: ${!__bar_func_module[*]}"
     exit 1
 fi
 
@@ -40,7 +40,7 @@ echo "Test 3: Skipping full completion test (requires bar initialization)"
 echo ""
 echo "Test 4: Checking if git_parse_worktrees is tracked..."
 
-if [[ -v _bar_completion_func_module[git_parse_worktrees] ]]; then
+if [[ -v __bar_func_module[git_parse_worktrees] ]]; then
     echo "✓ PASS: git_parse_worktrees is tracked"
 else
     echo "✗ FAIL: git_parse_worktrees is NOT tracked"
@@ -51,13 +51,13 @@ fi
 echo ""
 echo "Test 5: Checking git-ls-files-opts prototype..."
 
-if [[ -v _bar_complete_protoregistry["git_lib@git-ls-files-opts"] ]]; then
+if [[ -v __bar_protoregistry["git_lib@git-ls-files-opts"] ]]; then
     echo "✓ PASS: git-ls-files-opts prototype registered"
-    echo "  Spec: ${_bar_complete_protoregistry[git_lib@git-ls-files-opts]}"
+    echo "  Spec: ${__bar_protoregistry[git_lib@git-ls-files-opts]}"
     
     # Verify the spec is correct
     expected="extcomp git ls-files --cached --exclude-standard"
-    actual="${_bar_complete_protoregistry[git_lib@git-ls-files-opts]}"
+    actual="${__bar_protoregistry[git_lib@git-ls-files-opts]}"
     if [[ "$actual" == "$expected" ]]; then
         echo "✓ PASS: git-ls-files-opts has correct spec"
     else
@@ -74,7 +74,7 @@ fi
 echo ""
 echo "Test 6: Checking gitargs prototype was removed..."
 
-if [[ -v _bar_complete_protoregistry["git_lib@gitargs"] ]]; then
+if [[ -v __bar_protoregistry["git_lib@gitargs"] ]]; then
     echo "✗ FAIL: gitargs prototype still exists (should be removed)"
     exit 1
 else
