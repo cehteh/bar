@@ -1713,7 +1713,39 @@ _bar_complete()
             if [[ "$word" == "$clean_variant" ]]; then
                 matched=true
                 __bar_dbg "  Matched literal variant: $clean_variant"
-                proto_idx=$((proto_idx + 1))
+                
+                # PROTO REFINEMENT: Check if we should increment or refine
+                # For complex nested protos like [[-s|--short] topic|...], 
+                # matching from nested part means we should refine, not increment
+                local should_refine=false
+                if [[ "$proto" =~ ^\[\[.+\][[:space:]].+\]$ ]]; then
+                    # Pattern: [[nested] more] - if matched from nested, refine
+                    # Extract the nested part
+                    local nested_part="${proto#[[}"
+                    nested_part="${nested_part%%]*}"
+                    
+                    # Check if matched word is in nested part (simple check)
+                    if [[ "$nested_part" == *"$clean_variant"* ]]; then
+                        should_refine=true
+                    fi
+                fi
+                
+                if [[ $should_refine == true ]]; then
+                    # Refine: remove the matched nested part from proto
+                    # Simple approach: extract what's after the nested group
+                    if [[ "$proto" =~ ^\[\[[^]]+\][[:space:]](.+)\]$ ]]; then
+                        local remaining="${BASH_REMATCH[1]}"
+                        protos[$proto_idx]="[$remaining]"
+                        __bar_dbg "  Refined proto[$proto_idx] to: ${protos[$proto_idx]}"
+                        # Don't increment proto_idx - stay at same proto
+                    else
+                        # Couldn't refine, just increment
+                        proto_idx=$((proto_idx + 1))
+                    fi
+                else
+                    # Normal case: increment
+                    proto_idx=$((proto_idx + 1))
+                fi
                 break
             fi
 
