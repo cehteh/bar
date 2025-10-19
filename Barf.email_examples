@@ -1,0 +1,74 @@
+#!/bin/bash
+# Demo: How to use the email module in a Barf file
+
+# This is a Barf file example showing how to integrate email notifications
+
+require email
+
+# Example 1: Send notification on build completion
+rule notify_build: build -- '
+    if is_mail_installed; then
+        echo "Build completed successfully at $(date)" | \
+            email_send \
+                --to admin@example.com \
+                --subject "Build Notification" \
+                -
+    else
+        echo "Mail utility not available, skipping notification"
+    fi
+'
+
+# Example 2: Send test results
+rule email_test_results: tests -- '
+    if is_mail_installed; then
+        ./bar tests 2>&1 | \
+            email_send \
+                --to team@example.com \
+                --subject "Test Results - $(date +%Y-%m-%d)" \
+                --from ci@example.com \
+                -
+    fi
+'
+
+# Example 3: Send error notification (only if tests fail)
+rule notify_on_error: tests? -- '
+    # This runs only if tests fail (due to the ? modifier)
+    if is_mail_installed; then
+        email_send \
+            --to oncall@example.com \
+            --cc manager@example.com \
+            --subject "URGENT: Test Failure Alert" \
+            --text "Tests have failed. Please investigate immediately."
+    fi
+'
+
+# Example 4: Send release announcement with changelog
+rule announce_release: release -- '
+    if is_mail_installed; then
+        email_send \
+            --to users@example.com \
+            --cc team@example.com \
+            --subject "New Release Available" \
+            --file CHANGELOG.md \
+            --attach dist/release.tar.gz
+    fi
+'
+
+# Example 5: Daily digest (use with cron or scheduled tasks)
+rule send_daily_digest: -- '
+    if is_mail_installed; then
+        {
+            echo "Daily Project Digest - $(date)"
+            echo "================================"
+            echo ""
+            echo "Git Status:"
+            git status --short
+            echo ""
+            echo "Recent Commits:"
+            git log --oneline -5
+        } | email_send \
+            --to team@example.com \
+            --subject "Daily Digest - $(date +%Y-%m-%d)" \
+            -
+    fi
+'
