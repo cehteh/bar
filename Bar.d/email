@@ -1,0 +1,270 @@
+#!/bash
+# shellcheck disable=2016
+
+### Email sending support using the 'mail' utility
+
+# prototype: "recipient" = "literal recipient@example.com"
+# prototype: "subject" = "literal Email Subject"
+# prototype: "file" = "file existing"
+# prototype: "--to" = "literal --to"
+# prototype: "--cc" = "literal --cc"
+# prototype: "--bcc" = "literal --bcc"
+# prototype: "--subject" = "literal --subject"
+# prototype: "--text" = "literal --text"
+# prototype: "--attach" = "literal --attach"
+# prototype: "--from" = "literal --from"
+# prototype: "--reply-to" = "literal --reply-to"
+
+function is_mail_installed ## Check if the 'mail' utility is installed
+{
+    ## Checks for 'mail', 'mailx', or 'sendmail' utilities.
+    if command -v mail >/dev/null 2>&1; then
+        debug "mail utility found"
+        return 0
+    elif command -v mailx >/dev/null 2>&1; then
+        debug "mailx utility found"
+        return 0
+    elif command -v sendmail >/dev/null 2>&1; then
+        debug "sendmail utility found"
+        return 0
+    else
+        note "no mail utility found (mail, mailx, or sendmail)"
+        return 1
+    fi
+}
+
+memofn is_mail_installed
+
+function get_mail_command ## Get the available mail command
+{
+    ## Returns the available mail command (mail, mailx, or sendmail).
+    if command -v mail >/dev/null 2>&1; then
+        echo "mail"
+    elif command -v mailx >/dev/null 2>&1; then
+        echo "mailx"
+    elif command -v sendmail >/dev/null 2>&1; then
+        echo "sendmail"
+    else
+        return 1
+    fi
+}
+
+function email_send ## [--to recipient].. [--cc recipient].. [--bcc recipient].. --subject subject [--from sender] [--reply-to address] [--text message | --file file | -] [--attach file].. - Send an email
+{
+    ## Sends an email using the 'mail' utility.
+    ## 
+    ## --to recipient     - Email recipient (can be specified multiple times)
+    ## --cc recipient     - Carbon copy recipient (can be specified multiple times)
+    ## --bcc recipient    - Blind carbon copy recipient (can be specified multiple times)
+    ## --subject subject  - Email subject (required)
+    ## --from sender      - Sender email address (optional, uses system default if not specified)
+    ## --reply-to address - Reply-To email address (optional)
+    ## --text message     - Email message text (alternative to file or stdin)
+    ## --file file        - Read message from file (alternative to --text or stdin)
+    ## -                  - Read message from stdin (default if no --text or --file)
+    ## --attach file      - Attach a file (can be specified multiple times)
+    ##
+    ## If neither --text, --file, nor - is specified, stdin is used.
+    
+    local -a to_addresses=()
+    local -a cc_addresses=()
+    local -a bcc_addresses=()
+    local -a attachments=()
+    local subject=""
+    local from=""
+    local reply_to=""
+    local message=""
+    local message_file=""
+    local use_stdin=0
+    local use_text=0
+    
+    # Parse arguments
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --to)
+                shift
+                if [[ $# -eq 0 ]]; then
+                    error "--to requires a recipient address"
+                    return 1
+                fi
+                to_addresses+=("$1")
+                shift
+                ;;
+            --cc)
+                shift
+                if [[ $# -eq 0 ]]; then
+                    error "--cc requires a recipient address"
+                    return 1
+                fi
+                cc_addresses+=("$1")
+                shift
+                ;;
+            --bcc)
+                shift
+                if [[ $# -eq 0 ]]; then
+                    error "--bcc requires a recipient address"
+                    return 1
+                fi
+                bcc_addresses+=("$1")
+                shift
+                ;;
+            --subject)
+                shift
+                if [[ $# -eq 0 ]]; then
+                    error "--subject requires a subject text"
+                    return 1
+                fi
+                subject="$1"
+                shift
+                ;;
+            --from)
+                shift
+                if [[ $# -eq 0 ]]; then
+                    error "--from requires a sender address"
+                    return 1
+                fi
+                from="$1"
+                shift
+                ;;
+            --reply-to)
+                shift
+                if [[ $# -eq 0 ]]; then
+                    error "--reply-to requires an email address"
+                    return 1
+                fi
+                reply_to="$1"
+                shift
+                ;;
+            --text)
+                shift
+                if [[ $# -eq 0 ]]; then
+                    error "--text requires message text"
+                    return 1
+                fi
+                message="$1"
+                use_text=1
+                shift
+                ;;
+            --file)
+                shift
+                if [[ $# -eq 0 ]]; then
+                    error "--file requires a file path"
+                    return 1
+                fi
+                if [[ ! -f "$1" ]]; then
+                    error "file not found: $1"
+                    return 1
+                fi
+                message_file="$1"
+                shift
+                ;;
+            --attach)
+                shift
+                if [[ $# -eq 0 ]]; then
+                    error "--attach requires a file path"
+                    return 1
+                fi
+                if [[ ! -f "$1" ]]; then
+                    error "attachment file not found: $1"
+                    return 1
+                fi
+                attachments+=("$1")
+                shift
+                ;;
+            -)
+                use_stdin=1
+                shift
+                ;;
+            *)
+                error "unknown option: $1"
+                return 1
+                ;;
+        esac
+    done
+    
+    # Validate required arguments
+    if [[ ${#to_addresses[@]} -eq 0 ]]; then
+        error "--to recipient is required"
+        return 1
+    fi
+    
+    if [[ -z "$subject" ]]; then
+        error "--subject is required"
+        return 1
+    fi
+    
+    # Check if mail utility is available
+    if ! is_mail_installed; then
+        error "no mail utility found (install mail, mailx, or configure sendmail)"
+        return 1
+    fi
+    
+    local mail_cmd
+    mail_cmd=$(get_mail_command)
+    
+    # Prepare the mail command
+    local -a cmd=("$mail_cmd")
+    
+    # Add subject
+    cmd+=(-s "$subject")
+    
+    # Add optional headers
+    if [[ -n "$from" ]]; then
+        cmd+=(-r "$from")
+    fi
+    
+    if [[ -n "$reply_to" ]]; then
+        cmd+=(-S "replyto=$reply_to")
+    fi
+    
+    # Add CC recipients
+    if [[ ${#cc_addresses[@]} -gt 0 ]]; then
+        for cc in "${cc_addresses[@]}"; do
+            cmd+=(-c "$cc")
+        done
+    fi
+    
+    # Add BCC recipients
+    if [[ ${#bcc_addresses[@]} -gt 0 ]]; then
+        for bcc in "${bcc_addresses[@]}"; do
+            cmd+=(-b "$bcc")
+        done
+    fi
+    
+    # Add attachments
+    if [[ ${#attachments[@]} -gt 0 ]]; then
+        for attach in "${attachments[@]}"; do
+            cmd+=(-A "$attach")
+        done
+    fi
+    
+    # Add TO recipients (must be last before stdin)
+    cmd+=("${to_addresses[@]}")
+    
+    # Send the email
+    if [[ $use_text -eq 1 ]]; then
+        debug "sending email with text message"
+        echo "$message" | "${cmd[@]}"
+    elif [[ -n "$message_file" ]]; then
+        debug "sending email from file: $message_file"
+        "${cmd[@]}" < "$message_file"
+    elif [[ $use_stdin -eq 1 ]]; then
+        debug "sending email from stdin (explicit)"
+        "${cmd[@]}"
+    else
+        debug "sending email from stdin (default)"
+        "${cmd[@]}"
+    fi
+    
+    local result=$?
+    if [[ $result -eq 0 ]]; then
+        info "email sent successfully to ${to_addresses[*]}"
+    else
+        error "failed to send email (exit code: $result)"
+    fi
+    
+    return $result
+}
+
+## Checks if a mail utility is installed
+rule is_mail_installed: -
