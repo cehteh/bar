@@ -54,6 +54,10 @@ QUICKSTART
    please wake <hostname>     # sends a wake-on-lan packet to a host
    please suspend <hostname>  # remotely sends a host to suspend-to-ram
 
+  Buildin help system:
+
+   bar help [topic]
+   ./bar help [topic]
 
 INVOCATION AND SEMANTICS
 
@@ -145,7 +149,6 @@ MODULE API/RULES
 
     Rules:
 
-
       cargo_lint
         Runs all linters
 
@@ -206,7 +209,6 @@ MODULE API/RULES
 
     Rules:
 
-
       is_cargo_installed
         Successful when 'cargo' is available.
 
@@ -230,7 +232,6 @@ MODULE API/RULES
 
     Rules:
 
-
       cliff_changelog [cliff_args..]
         use git cliff to generate a changelog.
 
@@ -245,14 +246,12 @@ MODULE API/RULES
 
     Rules:
 
-
       release_changelog
         Create a cliff changelog for releases when there is a 'cliff.toml' at the project root.
 
   entr - Support for the entr file watcher
 
     Rules:
-
 
       is_entr_installed
         Succeeds when 'entr' is available.
@@ -267,7 +266,6 @@ MODULE API/RULES
   git - Git support rules
 
     Rules:
-
 
       is_git_repository
         Succeeds when we are in inside (at or below) a git repository.
@@ -429,7 +427,6 @@ MODULE API/RULES
 
     Rules:
 
-
       pre-commit
         Entry rule when called as githook.
 
@@ -509,7 +506,6 @@ MODULE API/RULES
 
     Rules:
 
-
       githook_enable
         Takes a list of githooks to enable as parameters. Must be called from the git_toplevel.
         Fails when a hook is not available.
@@ -538,7 +534,6 @@ MODULE API/RULES
 
     Rules:
 
-
       help [[-s|--short] topic|rule|function|variable|text]
         Show help topics
         - [-s|--short]:                 Show only the queried sections
@@ -557,7 +552,6 @@ MODULE API/RULES
         [prefix] directory or in '~/.local' by default.
 
     Rules:
-
 
       init
         Initialize bar in a workdir. This copies the main 'bar' script, a default 'Barf' and all
@@ -782,7 +776,6 @@ MODULE API/RULES
 
     Rules:
 
-
       release
         Makes a software release. Takes an optional version number starting with a digit or a
         name for the generating the version by 'release_generate_version_hook' as argument.
@@ -800,7 +793,6 @@ MODULE API/RULES
   release_rules - The rules called by the release rule
 
     Rules:
-
 
       release_prepare
         Update manifest, bump versions, generate changelog an other versioned artifacts etc..
@@ -887,7 +879,6 @@ MODULE API/RULES
   search - Rules to search text in a project
 
     Rules:
-
 
       search_for [rg_args..]
         General searching for text, pretty paging the results.
@@ -978,7 +969,6 @@ MODULE API/RULES
 
     Rules:
 
-
       shellcheck_has_shscripts
         Checks if the project has any shell scripts. Must be called from a git toplevel.
         Checks whenever any shell scripts are versioned in gitq
@@ -986,7 +976,6 @@ MODULE API/RULES
   shellcheck_rules - Hooks shellcheck_lint into the std lint rule
 
     Rules:
-
 
       is_shellcheck_available
         Checks if shellcheck is installed and the project has any shell scripts.
@@ -1051,7 +1040,6 @@ MODULE API/RULES
     actions are hooked in by other modules.
 
     Rules:
-
 
       all
         Rule that builds the software, documentation and necessary artifacts but will not do any testing.
@@ -1225,7 +1213,6 @@ MODULE API/RULES
 
     Rules:
 
-
       testdir_enter [treeish]
         Sets up a test directory change dir into it.
         Must be called from the git toplevel. Takes an optional treeish to construct the testdir
@@ -1288,7 +1275,6 @@ MODULE API/RULES
   watch_rules - Continious supervision by a file watcher
 
     Rules:
-
 
       watch [rule [arguments..]]
         Evaluates a rule or MAIN whenever a versioned files changed in the current directory.

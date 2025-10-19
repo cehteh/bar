@@ -13,6 +13,34 @@
 #   - bar <TAB>       - completes rulefiles, rules, and functions
 #   - please <TAB>    - completes rulefiles, rules, and functions
 #   - ./bar <TAB>     - completes rulefiles, rules, and functions
+#
+# API Surface:
+#   This file defines several public functions and variables that are used by
+#   the completion system and may be referenced by tests:
+#
+#   PUBLIC (single underscore or for bash completion registration):
+#     _bar_complete              - main completion entry point (registered with bash)
+#     _bar_parse_protos          - parse parameter spec into prototypes
+#     _bar_expand_group_alternatives - expand proto alternatives
+#     _bar_extract_literal_punct - extract literal punctuation from proto
+#
+#   SEMI-PUBLIC (double underscore, but used by tests/external modules):
+#     __bar_rules                - array of discovered rule names
+#     __bar_functions            - array of discovered function names
+#     __bar_func_params          - map of function -> parameter spec
+#     __bar_rule_params          - map of rule -> parameter spec
+#     __bar_func_module          - map of function -> module name
+#     __bar_protoregistry        - map of prototype -> completer spec
+#     __bar_parse_file           - parse a file for rules/functions
+#     __bar_scan_files           - scan for and parse rulefiles
+#     __bar_init_completion_registry - initialize builtin completers
+#     __bar_get_completer        - get completer for a prototype
+#     __bar_comp_*               - various completion functions
+#
+#   INTERNAL (double underscore, implementation details):
+#     All other __bar_* functions and variables are internal implementation
+#     details and should not be relied upon by external code. They may change
+#     without notice.
 
 # Debug logging function - set BAR_COMPLETE_DEBUG=1 to enable
 __bar_dbg()
