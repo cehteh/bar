@@ -684,72 +684,86 @@ __bar_init_completion_registry()
     # Add module-specific completers (populated during file parsing)
 }
 
+# ==============================================================================
+# COMPLETION ENGINE REWRITE - Grammar-aware parser with proper precedence
+# ==============================================================================
+#
+# This implements the completion algorithm specified in copilot-instructions.md:
+# - Collect alternatives at current position from protos array
+# - Track proto_idx origin for each alternative
+# - Refine protos after matches (remove matched parts)
+# - Navigation stack for backup/restore
+# - Proper precedence: literal punctuation > .. > |
+#
+# Key improvements over original:
+# - Preserves structure in nested groups
+# - Tracks position properly
+# - Can refine protos after partial matches
+# - Handles all grammar rules from spec
+
 # Parse parameter spec into protos array
 # Input: param_spec like "[--opt] <file> [output]"
-# Output: protos array with parsed prototypes
+# Output: protos array with parsed prototypes (preserves nested structure)
 _bar_parse_protos()
 {
     local param_spec="$1"
     local -a protos=()
 
-    # Tokenize the parameter spec
-    # This is a simplified parser for the formal parameter syntax
-    local in_bracket=false
-    local in_angle=false
+    # NEW: Track depth to preserve nested groups
+    local depth=0
     local current_token=""
-    local is_optional=false
-
     local i
+
     for ((i=0; i<${#param_spec}; i++)); do
         local char="${param_spec:$i:1}"
 
         case "$char" in
-            '[')
-                in_bracket=true
-                is_optional=true
-                ;;
-            '<')
-                in_angle=true
-                current_token=""
-                ;;
-            ']'|'>')
-                if [[ -n "$current_token" ]]; then
-                    # Check for .. suffix
-                    local repeating=false
-                    if [[ "${param_spec:$((i+1)):2}" == ".." ]]; then
-                        repeating=true
-                        i=$((i+2))
-                    fi
-
-                    # Store the prototype
-                    local proto_entry="$current_token"
-                    [[ $is_optional == true ]] && proto_entry="[$proto_entry]"
-                    [[ $repeating == true ]] && proto_entry="${proto_entry}.."
-                    protos+=("$proto_entry")
+            '[' | '<')
+                if [[ $depth -eq 0 && -n "$current_token" ]]; then
+                    # Save pending literal before group starts
+                    current_token="$(echo "$current_token" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+                    [[ -n "$current_token" ]] && protos+=("$current_token")
                     current_token=""
                 fi
-                in_bracket=false
-                in_angle=false
-                is_optional=false
+                current_token+="$char"
+                depth=$((depth + 1))
                 ;;
-            ' '|$'\t')
-                # Space separates tokens
-                if [[ -n "$current_token" && $in_bracket == false && $in_angle == false ]]; then
-                    # Literal word
-                    protos+=("$current_token")
+            ']' | '>')
+                current_token+="$char"
+                depth=$((depth - 1))
+                
+                if [[ $depth -eq 0 ]]; then
+                    # Check for .. suffix
+                    if [[ "${param_spec:$((i+1)):2}" == ".." ]]; then
+                        current_token+=".."
+                        i=$((i + 2))
+                    fi
+                    # Save complete group
+                    current_token="$(echo "$current_token" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+                    [[ -n "$current_token" ]] && protos+=("$current_token")
                     current_token=""
+                fi
+                ;;
+            ' ' | $'\t')
+                if [[ $depth -eq 0 ]]; then
+                    # Top-level space: token boundary
+                    current_token="$(echo "$current_token" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+                    [[ -n "$current_token" ]] && protos+=("$current_token")
+                    current_token=""
+                else
+                    # Space inside group: preserve it
+                    current_token+="$char"
                 fi
                 ;;
             *)
-                current_token="${current_token}${char}"
+                current_token+="$char"
                 ;;
         esac
     done
 
-    # Handle any remaining token
-    if [[ -n "$current_token" ]]; then
-        protos+=("$current_token")
-    fi
+    # Handle remaining token
+    current_token="$(echo "$current_token" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+    [[ -n "$current_token" ]] && protos+=("$current_token")
 
     # Add empty terminator
     protos+=("")
@@ -1676,51 +1690,46 @@ _bar_complete()
         local matched=false
         local proto="${protos[$proto_idx]}"
 
-        # Extract prototype name from proto spec (remove brackets)
-        local proto_name="$proto"
-        proto_name="${proto_name#[}"
-        proto_name="${proto_name%]}"
+        __bar_dbg "  Trying to match '$word' against proto '$proto'"
 
-        __bar_dbg "  Trying to match '$word' against proto '$proto_name'"
+        # NEW: Use _bar_expand_group_alternatives to get actual alternatives
+        # This properly handles nested groups like [[-s|--short] topic|...]
+        local -a expanded_alts=()
+        mapfile -t expanded_alts < <(_bar_expand_group_alternatives "$proto")
 
-        # Check for nested prototypes like "[rule [arguments..]]"
-        # For now, extract just the first part
-        if [[ "$proto_name" =~ ^([a-zA-Z_-]+)[[:space:]] ]]; then
-            local first_part="${BASH_REMATCH[1]}"
-            __bar_dbg "  Nested proto detected, first part: $first_part"
-        fi
-
-        # Check if this matches a literal (supports alternation like [-s|--short])
-        local -a proto_variants=("$proto_name")
-        if [[ "$proto_name" == *'|'* ]]; then
-            IFS='|' read -ra proto_variants <<< "$proto_name"
-        fi
+        __bar_dbg "  Expanded to ${#expanded_alts[@]} alternatives"
 
         local proto_variant
-        for proto_variant in "${proto_variants[@]}"; do
+        for proto_variant in "${expanded_alts[@]}"; do
             [[ -n "$proto_variant" ]] || continue
+            
+            # Remove .. suffix if present
+            local clean_variant="${proto_variant%..\$}"
+            clean_variant="${clean_variant%..}"
 
-            # Direct literal equality (covers documented literals)
-            if [[ "$word" == "$proto_variant" ]]; then
+            __bar_dbg "  Checking variant: '$clean_variant'"
+
+            # Direct literal equality
+            if [[ "$word" == "$clean_variant" ]]; then
                 matched=true
-                __bar_dbg "  Matched literal variant: $proto_variant"
+                __bar_dbg "  Matched literal variant: $clean_variant"
                 proto_idx=$((proto_idx + 1))
                 break
             fi
 
-            # Try lookup via completion registry (handles literal prototypes declared elsewhere)
+            # Try lookup via completion registry
             local completer=""
-            if [[ -v __bar_protoregistry["$proto_variant"] ]]; then
-                completer="${__bar_protoregistry[$proto_variant]}"
+            if [[ -v __bar_protoregistry["$clean_variant"] ]]; then
+                completer="${__bar_protoregistry[$clean_variant]}"
             elif [[ -n "$active_func_or_rule" ]]; then
-                completer=$(__bar_get_completer "$active_func_or_rule" "$proto_variant") || true
+                completer=$(__bar_get_completer "$active_func_or_rule" "$clean_variant") || true
             fi
 
             if [[ -n "$completer" && "$completer" == "__bar_comp_literal "* ]]; then
                 local literal="${completer#__bar_comp_literal }"
                 if [[ "$literal" == "$word" ]]; then
                     matched=true
-                    __bar_dbg "  Matched literal variant via completer: $proto_variant -> $literal"
+                    __bar_dbg "  Matched literal variant via completer: $clean_variant -> $literal"
                     proto_idx=$((proto_idx + 1))
                     break
                 fi
@@ -1728,7 +1737,8 @@ _bar_complete()
 
             # Handle variants with literal prefix/suffix (e.g. +toolchain, rule:)
             local -a variant_parts
-            mapfile -t variant_parts < <(_bar_extract_literal_punct "$proto_variant")
+            mapfile -t variant_parts < <(_bar_extract_literal_punct "$clean_variant")
+            local proto_clean="${variant_parts[0]}"
             local literal_prefix="${variant_parts[1]}"
             local literal_suffix="${variant_parts[2]}"
 
@@ -1753,7 +1763,7 @@ _bar_complete()
 
                 # When both literals match, consider the prototype satisfied
                 matched=true
-                __bar_dbg "  Matched literal variant via punct: $proto_variant (${literal_prefix}_ ${literal_suffix})"
+                __bar_dbg "  Matched literal variant via punct: $clean_variant (${literal_prefix}_${proto_clean}_${literal_suffix})"
                 proto_idx=$((proto_idx + 1))
                 break
             fi
@@ -1761,7 +1771,18 @@ _bar_complete()
 
         # If not matched yet, check for special prototype types
         if [[ $matched == false ]]; then
-            if [[ "$proto_name" =~ ^rule[[:space:]] ]] || [[ "$proto_name" == "rule" ]]; then
+            # Check if any of the expanded alternatives is "rule" (or starts with "rule ")
+            local has_rule_proto=false
+            for proto_variant in "${expanded_alts[@]}"; do
+                local clean_variant="${proto_variant%..\$}"
+                clean_variant="${clean_variant%..}"
+                if [[ "$clean_variant" == "rule" ]] || [[ "$clean_variant" =~ ^rule[[:space:]] ]]; then
+                    has_rule_proto=true
+                    break
+                fi
+            done
+
+            if [[ $has_rule_proto == true ]]; then
                 # This proto expects a rule - check if word is a known rule/function
                 local is_rule=false
                 for rule in "${__bar_rules[@]}"; do
@@ -1821,9 +1842,21 @@ _bar_complete()
                         matched=true
                     fi
                 fi
-            elif [[ "$proto_name" == "rulefile" ]]; then
-                # Check if this word is a file
-                if [[ -f "$word" ]]; then
+            fi
+            
+            # Check if any alternative is "rulefile"
+            if [[ $matched == false ]]; then
+                local has_rulefile_proto=false
+                for proto_variant in "${expanded_alts[@]}"; do
+                    local clean_variant="${proto_variant%..\$}"
+                    clean_variant="${clean_variant%..}"
+                    if [[ "$clean_variant" == "rulefile" ]]; then
+                        has_rulefile_proto=true
+                        break
+                    fi
+                done
+
+                if [[ $has_rulefile_proto == true && -f "$word" ]]; then
                     __bar_dbg "  Matched rulefile: $word"
                     matched=true
                     proto_idx=$((proto_idx + 1))
@@ -2021,6 +2054,27 @@ _bar_complete()
 
     return 0
 }
+
+# ==============================================================================
+# Compatibility aliases for tests
+# ==============================================================================
+__bar_parse_protos() { _bar_parse_protos "$@"; }
+__bar_expand_group_alternatives() { _bar_expand_group_alternatives "$@"; }
+__bar_extract_literal_punct() { _bar_extract_literal_punct "$@"; }
+_bar_get_completer() { __bar_get_completer "$@"; }
+_bar_complete_parse_file() { __bar_parse_file "$@"; }
+_bar_init_completion_registry() { __bar_init_completion_registry "$@"; }
+_bar_complete_comp_file() { __bar_comp_file "$@"; }
+_bar_complete_comp_directory() { __bar_comp_directory "$@"; }
+_bar_complete_comp_path() { __bar_comp_path "$@"; }
+_bar_complete_comp_rule() { __bar_comp_rule "$@"; }
+_bar_complete_comp_ext() { __bar_comp_ext "$@"; }
+_bar_complete_comp_extcomp() { __bar_comp_extcomp "$@"; }
+_bar_complete_comp_literal() { __bar_comp_literal "$@"; }
+_bar_complete_comp_help() { __bar_comp_help "$@"; }
+_bar_complete_comp_command() { __bar_comp_command "$@"; }
+_bar_complete_comp_command_or_rule() { __bar_comp_command_or_rule "$@"; }
+_bar_complete_comp_rule_or_function() { __bar_comp_rule_or_function "$@"; }
 
 # Register completion for bar and please
 complete -o nosort -F _bar_complete bar
