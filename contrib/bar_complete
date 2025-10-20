@@ -350,35 +350,22 @@ __bar_comp_help()
     local cur="${1:-}"
 
     if ! declare -p __bar_help_index &>/dev/null; then
+        # Lazily populate the help topic cache so we only hit help_indexer once per shell.
         declare -ga __bar_help_index=()
         declare -gA __bar_help_rindex=()
 
         local source_cmd="${__bar_invocation:-$0}"
 
-        if [[ -n "$source_cmd" ]]; then
-            if [[ "$source_cmd" == ./* || "$source_cmd" == ../* || "$source_cmd" == */* ]]; then
-                [[ -x "$source_cmd" ]] || source_cmd=""
-            elif ! command -v "$source_cmd" >/dev/null 2>&1; then
-                source_cmd=""
-            fi
-        fi
-
-        if [[ -n "$source_cmd" ]]; then
-            if ! mapfile -t __bar_help_index < <("$source_cmd" --bare help_indexer 2>/dev/null | awk '{ print; if ($0 ~ /[A-Z]/) print tolower($0) }'); then
-                mapfile -t __bar_help_index < <("$source_cmd" help_indexer 2>/dev/null | awk '{ print; if ($0 ~ /[A-Z]/) print tolower($0) }') || __bar_help_index=()
-            fi
-        fi
+        mapfile -t __bar_help_index < <("$source_cmd" help_indexer 2>/dev/null | awk '{ print; if ($0 ~ /[A-Z]/) print tolower($0) }') || __bar_help_index=()
 
         local idx
         for idx in "${!__bar_help_index[@]}"; do
             local entry="${__bar_help_index[$idx]}"
-            [[ -z "$entry" ]] && continue
             local value="${entry#*:*:}"
-            [[ -z "$value" ]] && continue
-            local key="${value,,}"
-            [[ -n "$key" ]] || continue
-            if [[ ! -v __bar_help_rindex["$key"] ]]; then
-                __bar_help_rindex["$key"]="$idx"
+
+            # Build a reverse index keyed by lowercase topic so completion lookups remain O(1).
+            if [[ ! -v __bar_help_rindex["$value"] ]]; then
+                __bar_help_rindex["$value"]="$idx"
             fi
         done
     fi
@@ -387,6 +374,7 @@ __bar_comp_help()
     local -a matches=()
     local key
     for key in "${!__bar_help_rindex[@]}"; do
+        # Reuse the lowercased key for prefix comparison, then resolve to the original entry when matched.
         if [[ -z "$lc_cur" || "$key" == "$lc_cur"* ]]; then
             local idx="${__bar_help_rindex[$key]}"
             local entry="${__bar_help_index[$idx]}"
@@ -397,6 +385,7 @@ __bar_comp_help()
     done
 
     if (( ${#matches[@]} > 0 )); then
+        # Quote every suggestion so bash can safely surface multi-word topics.
         local item
         for item in "${matches[@]}"; do
             printf '%q\n' "$item"
