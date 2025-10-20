@@ -1,4 +1,7 @@
-#!/bash
+#!/usr/bin/env bar
+# -*- bash -*-
+# vim: set ft=bash:
+# shellcheck shell=bash
 # shellcheck disable=2016
 
 # This file shows and tests some features
