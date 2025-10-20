@@ -136,7 +136,7 @@ test_help_completer() {
 
     local result
     result=$(__bar_comp_help "abo")
-    if grep -Fxq "ABOUT" <<<"$result"; then
+    if grep -Fxiq "ABOUT" <<<"$result"; then
         echo "✓ Help completer finds ABOUT"
     else
         echo "✗ Help completer should include ABOUT"
@@ -144,7 +144,7 @@ test_help_completer() {
     fi
 
     result=$(__bar_comp_help "invocation")
-    if grep -Fxq 'INVOCATION\ AND\ SEMANTICS' <<<"$result"; then
+    if grep -Fxiq 'INVOCATION\ AND\ SEMANTICS' <<<"$result"; then
         echo "✓ Help completer escapes multi-word topics"
     else
         echo "✗ Help completer should escape multi-word topics"
