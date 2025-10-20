@@ -1,4 +1,7 @@
-#!/bash
+#!/usr/bin/env bar
+# -*- bash -*-
+# vim: set ft=bash:
+# shellcheck shell=bash
 
 require net
 require ssh

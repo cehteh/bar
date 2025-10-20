@@ -1,4 +1,6 @@
-#!/bash
+# -*- bash -*-
+# vim: set ft=bash:
+# shellcheck shell=bash
 ### managing a radicle installation itself
 
 function radicle_update ## [HEAD|TAG] - Updates the users radicle installation to [HEAD|TAG] or the latest stable

@@ -1,4 +1,6 @@
-#!/bash
+# -*- bash -*-
+# vim: set ft=bash:
+# shellcheck shell=bash
 
 ### Module for running tests in resource limited environments
 

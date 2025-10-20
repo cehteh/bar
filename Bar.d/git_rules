@@ -1,4 +1,6 @@
-#!/bash
+# -*- bash -*-
+# vim: set ft=bash:
+# shellcheck shell=bash
 #shellcheck disable=SC2016
 
 ### Standard rules for git support

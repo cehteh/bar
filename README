@@ -59,6 +59,7 @@ QUICKSTART
    bar help [topic]
    ./bar help [topic]
 
+
 INVOCATION AND SEMANTICS
 
    bar [rulefile] [--bare] [rule [arguments..]]

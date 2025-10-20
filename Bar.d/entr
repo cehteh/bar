@@ -1,4 +1,6 @@
-#!/bash
+# -*- bash -*-
+# vim: set ft=bash:
+# shellcheck shell=bash
 ### Support for the entr file watcher
 
 require git_lib

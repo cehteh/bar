@@ -1,5 +1,8 @@
-#!/bash
-#shellcheck disable=SC2016
+#!/usr/bin/env bar
+# -*- bash -*-
+# vim: set ft=bash:
+# shellcheck shell=bash
+# shellcheck disable=SC2016
 
 # This is the barfile for maintaining 'bar' itself. A more generalized and customizeable barfile
 # that become installed with 'bar init_local' is the Barf.default file in this directory.

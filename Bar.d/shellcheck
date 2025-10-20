@@ -1,4 +1,6 @@
-#!/bash
+# -*- bash -*-
+# vim: set ft=bash:
+# shellcheck shell=bash
 
 ### Support for the shellcheck shell linter
 ###
@@ -13,7 +15,7 @@ declare -gx SHELLCHECK_LS_FILES="${SHELLCHECK_LS_FILES:-}" ## List of file match
 
 function shellcheck_is_shscript ## <file> - Check if <file> is a shell script
 {
-    [[ -f "$1" ]] && { head -1 "$1" | grep -q "^#!.*sh" ; }
+    [[ -f "$1" ]] && head -5 "$1" | grep -Eq '^#!.*sh|^# shellcheck'
 }
 
 function shellcheck_has_shscripts

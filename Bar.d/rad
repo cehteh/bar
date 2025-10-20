@@ -1,4 +1,6 @@
-#!/bash
+# -*- bash -*-
+# vim: set ft=bash:
+# shellcheck shell=bash
 ### Support for the radicle p2p git frontend
 
 function rad_import ## import a git repository into radicle

@@ -1,4 +1,6 @@
-#!/bash
+# -*- bash -*-
+# vim: set ft=bash:
+# shellcheck shell=bash
 # shellcheck disable=2016
 
 ### hooks entr into the watch/watch_git_index rules
