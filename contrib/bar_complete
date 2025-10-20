@@ -345,10 +345,8 @@ __bar_comp_literal()
 }
 
 # Complete help topics, rules, functions, and variables via help_indexer
-# Implements smart case matching similar to the help command:
-# - When user types lowercase, returns lowercase completions (for case-sensitive bash matching)
-# - When user types with uppercase, preserves original case from help index
-# This enables completion to work without requiring users to set completion-ignore-case
+# Adds lowercase variants to the index for entries containing uppercase letters,
+# enabling case-sensitive matching to work: "qu" matches "quickstart", "QU" matches "QUICKSTART"
 __bar_comp_help()
 {
     local cur="${1:-}"
@@ -409,7 +407,18 @@ __bar_comp_help()
         fi
 
         if (( ${#index_lines[@]} > 0 )); then
-            __bar_help_index=("${index_lines[@]}")
+            # Add lowercase variants for entries containing uppercase
+            local -a expanded_lines=()
+            local line
+            for line in "${index_lines[@]}"; do
+                expanded_lines+=("$line")
+                # If line contains uppercase, add lowercase variant
+                if [[ "$line" == *[A-Z]* ]]; then
+                    expanded_lines+=("${line,,}")
+                fi
+            done
+            
+            __bar_help_index=("${expanded_lines[@]}")
             local idx
             for idx in "${!__bar_help_index[@]}"; do
                 local entry="${__bar_help_index[$idx]}"
@@ -417,7 +426,8 @@ __bar_comp_help()
                 local value="${entry#*:*:}"
                 [[ -z "$value" ]] && continue
                 local key="${value,,}"
-                if [[ -n "$key" && ! -v __bar_help_rindex["$key"] ]]; then
+                # Always update to prefer exact case match (lowercase variant will overwrite uppercase)
+                if [[ -n "$key" ]]; then
                     __bar_help_rindex["$key"]="$idx"
                 fi
             done
@@ -428,31 +438,20 @@ __bar_comp_help()
         return 0
     fi
 
-    local lc_cur="${cur,,}"
     local -a matches=()
-    local key
     
-    # Smart case: if cur contains uppercase, preserve case; otherwise adjust to lowercase
-    local has_upper=false
-    if [[ "$cur" =~ [A-Z] ]]; then
-        has_upper=true
-    fi
-    
-    for key in "${!__bar_help_rindex[@]}"; do
-        if [[ -z "$lc_cur" || "$key" == "$lc_cur"* ]]; then
-            local idx="${__bar_help_rindex[$key]}"
-            local entry="${__bar_help_index[$idx]}"
-            local value="${entry#*:*:}"
-            [[ -z "$value" ]] && continue
-            
-            # Adjust case of completion to match user input
-            if [[ $has_upper == false && -n "$cur" ]]; then
-                # User typed lowercase - return lowercase version
-                matches+=("${value,,}")
-            else
-                # User typed with uppercase or empty - preserve original case
-                matches+=("$value")
-            fi
+    # Match case-sensitively based on user input
+    # This works because we have both uppercase and lowercase variants in the index
+    local idx
+    for idx in "${!__bar_help_index[@]}"; do
+        local entry="${__bar_help_index[$idx]}"
+        [[ -z "$entry" ]] && continue
+        local value="${entry#*:*:}"
+        [[ -z "$value" ]] && continue
+        
+        # Match case-sensitively against what user typed
+        if [[ -z "$cur" || "$value" == "$cur"* ]]; then
+            matches+=("$value")
         fi
     done
 

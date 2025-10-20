@@ -43,20 +43,14 @@ else
     echo "  Result: $result"
 fi
 
-# Test 3: Check if "Qu" (mixed case) completes appropriately (preserves case)
+# Test 3: Check if "Qu" (mixed case) - no match expected with case-sensitive matching
 echo ""
-echo "Test 3: Mixed case 'Qu' should complete to QUICKSTART (preserving case)"
+echo "Test 3: Mixed case 'Qu' should not match (case-sensitive matching)"
 result=$(__bar_comp_help "Qu")
-# Filter results like bash would (case-sensitive prefix match)
-filtered=$(echo "$result" | grep "^Qu")
-if [[ -n "$filtered" ]]; then
-    echo "✗ FAIL: 'Qu' should preserve original case QUICKSTART, not match 'Qu'"
-    echo "  Result: $filtered"
-elif echo "$result" | grep -q "^QUICKSTART"; then
-    echo "✓ PASS: 'Qu' completes to QUICKSTART (preserving original case)"
-    echo "  Result: $result"
+if [[ -z "$result" ]]; then
+    echo "✓ PASS: 'Qu' returns no matches (expected with case-sensitive matching)"
 else
-    echo "✗ FAIL: 'Qu' did not complete properly"
+    echo "✗ FAIL: 'Qu' returned unexpected matches"
     echo "  Result: $result"
 fi
 
