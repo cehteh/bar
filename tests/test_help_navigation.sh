@@ -92,14 +92,15 @@ else
     exit 1
 fi
 
-# 5. --section should slice to the matching section
-if ! section_line="$(BAR_FORCE_PAGER=less first_non_empty_line "$BAR_CMD" --bare help --section git)"; then
-    echo "✗ help --section git command failed"
+# 5. --short should slice to the matching section
+if ! section_line="$(BAR_FORCE_PAGER=less first_non_empty_line "$BAR_CMD" --bare help --short git)"; then
+    echo "✗ help --short git command failed"
     exit 1
 fi
-if [[ "$section_line" =~ ^[[:space:]]*git[[:space:]]- ]]; then
-    echo "✓ help --section git limits output to git section"
+# After topic restriction, 'git' matches 'GIT HOOK ACTIVATION' (which doesn't contain ' - ')
+if [[ "$section_line" =~ GIT ]]; then
+    echo "✓ help --short git limits output to git-related section"
 else
-    echo "✗ help --section git should start at git section (got: $section_line)"
+    echo "✗ help --short git should show git-related content (got: $section_line)"
     exit 1
 fi

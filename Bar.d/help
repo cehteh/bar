@@ -1095,6 +1095,9 @@ function help_indexer
         if (candidate ~ /^[[:punct:]]/ || candidate ~ /[[:punct:]]$/) {
           continue
         }
+        if (candidate ~ / - /) {
+          continue
+        }
         prev_blank = (i == 1) ? 1 : blank[i - 1]
         next_blank = (i == NR) ? 0 : blank[i + 1]
         if (prev_blank && next_blank) {

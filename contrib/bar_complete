@@ -362,10 +362,11 @@ __bar_comp_help()
         for idx in "${!__bar_help_index[@]}"; do
             local entry="${__bar_help_index[$idx]}"
             local value="${entry#*:*:}"
+            local lc_value="${value,,}"
 
             # Build a reverse index keyed by lowercase topic so completion lookups remain O(1).
-            if [[ ! -v __bar_help_rindex["$value"] ]]; then
-                __bar_help_rindex["$value"]="$idx"
+            if [[ ! -v __bar_help_rindex["$lc_value"] ]]; then
+                __bar_help_rindex["$lc_value"]="$idx"
             fi
         done
     fi
