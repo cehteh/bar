@@ -351,77 +351,36 @@ __bar_comp_help()
 
     if ! declare -p __bar_help_index &>/dev/null; then
         declare -ga __bar_help_index=()
-    fi
-    if ! declare -p __bar_help_rindex &>/dev/null; then
         declare -gA __bar_help_rindex=()
-    fi
 
-    if (( ${#__bar_help_index[@]} == 0 )); then
-        local -a index_lines=()
-        local zero_base="${0##*/}"
+        local source_cmd="${__bar_invocation:-$0}"
 
-        if [[ "$zero_base" == "bar" || "$zero_base" == "please" ]]; then
-            if ! mapfile -t index_lines < <("$0" help_indexer 2>/dev/null); then
-                index_lines=()
+        if [[ -n "$source_cmd" ]]; then
+            if [[ "$source_cmd" == ./* || "$source_cmd" == ../* || "$source_cmd" == */* ]]; then
+                [[ -x "$source_cmd" ]] || source_cmd=""
+            elif ! command -v "$source_cmd" >/dev/null 2>&1; then
+                source_cmd=""
             fi
         fi
 
-        if (( ${#index_lines[@]} == 0 )); then
-            if [[ "$zero_base" == "bar" || "$zero_base" == "please" ]]; then
-                if mapfile -t index_lines < <("$0" --bare help_indexer 2>/dev/null); then
-                    :
-                fi
+        if [[ -n "$source_cmd" ]]; then
+            if ! mapfile -t __bar_help_index < <("$source_cmd" --bare help_indexer 2>/dev/null | awk '{ print; if ($0 ~ /[A-Z]/) print tolower($0) }'); then
+                mapfile -t __bar_help_index < <("$source_cmd" help_indexer 2>/dev/null | awk '{ print; if ($0 ~ /[A-Z]/) print tolower($0) }') || __bar_help_index=()
             fi
         fi
 
-        if (( ${#index_lines[@]} == 0 )); then
-            local fallback="${__bar_invocation:-}"
-
-            if [[ -n "$fallback" ]]; then
-                if [[ "$fallback" == ./* || "$fallback" == ../* ]]; then
-                    [[ -x "$fallback" ]] || fallback=""
-                elif [[ "$fallback" == */bar ]]; then
-                    [[ -x "$fallback" ]] || fallback=""
-                elif ! command -v "$fallback" >/dev/null 2>&1; then
-                    fallback=""
-                fi
+        local idx
+        for idx in "${!__bar_help_index[@]}"; do
+            local entry="${__bar_help_index[$idx]}"
+            [[ -z "$entry" ]] && continue
+            local value="${entry#*:*:}"
+            [[ -z "$value" ]] && continue
+            local key="${value,,}"
+            [[ -n "$key" ]] || continue
+            if [[ ! -v __bar_help_rindex["$key"] ]]; then
+                __bar_help_rindex["$key"]="$idx"
             fi
-
-            if [[ -z "$fallback" ]]; then
-                if command -v bar >/dev/null 2>&1; then
-                    fallback="bar"
-                elif command -v please >/dev/null 2>&1; then
-                    fallback="please"
-                elif [[ -x ./bar ]]; then
-                    fallback="./bar"
-                fi
-            fi
-
-            if [[ -n "$fallback" ]]; then
-                if ! mapfile -t index_lines < <("$fallback" --bare help_indexer 2>/dev/null); then
-                    mapfile -t index_lines < <("$fallback" help_indexer 2>/dev/null)
-                fi
-            fi
-        fi
-
-        if (( ${#index_lines[@]} > 0 )); then
-            __bar_help_index=("${index_lines[@]}")
-            local idx
-            for idx in "${!__bar_help_index[@]}"; do
-                local entry="${__bar_help_index[$idx]}"
-                [[ -z "$entry" ]] && continue
-                local value="${entry#*:*:}"
-                [[ -z "$value" ]] && continue
-                local key="${value,,}"
-                if [[ -n "$key" && ! -v __bar_help_rindex["$key"] ]]; then
-                    __bar_help_rindex["$key"]="$idx"
-                fi
-            done
-        fi
-    fi
-
-    if (( ${#__bar_help_rindex[@]} == 0 )); then
-        return 0
+        done
     fi
 
     local lc_cur="${cur,,}"
@@ -438,7 +397,8 @@ __bar_comp_help()
     done
 
     if (( ${#matches[@]} > 0 )); then
-        printf '%s\n' "${matches[@]}" | sort -u | while IFS= read -r item; do
+        local item
+        for item in "${matches[@]}"; do
             printf '%q\n' "$item"
         done
     fi
@@ -684,22 +644,23 @@ __bar_init_completion_registry()
     # Add module-specific completers (populated during file parsing)
 }
 
-# ==============================================================================
-# COMPLETION ENGINE REWRITE - Grammar-aware parser with proper precedence
-# ==============================================================================
-#
-# This implements the completion algorithm specified in copilot-instructions.md:
-# - Collect alternatives at current position from protos array
-# - Track proto_idx origin for each alternative
-# - Refine protos after matches (remove matched parts)
-# - Navigation stack for backup/restore
-# - Proper precedence: literal punctuation > .. > |
-#
-# Key improvements over original:
-# - Preserves structure in nested groups
-# - Tracks position properly
-# - Can refine protos after partial matches
-# - Handles all grammar rules from spec
+# Normalize proto tokens so callers can rely on consistent shapes.
+_bar_normalize_proto_token()
+{
+    local token="$1"
+
+    token="$(echo "$token" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+    [[ -z "$token" ]] && return 0
+
+    if [[ "$token" == \<* && "$token" == *\> ]]; then
+        local inner="${token:1:${#token}-2}"
+        if [[ "$inner" != *'<'* && "$inner" != *'>'* && "$inner" != *'['* && "$inner" != *']'* ]]; then
+            token="$inner"
+        fi
+    fi
+
+    printf '%s\n' "$token"
+}
 
 # Parse parameter spec into protos array
 # Input: param_spec like "[--opt] <file> [output]"
@@ -721,8 +682,9 @@ _bar_parse_protos()
             '[' | '<')
                 if [[ $depth -eq 0 && -n "$current_token" ]]; then
                     # Save pending literal before group starts
-                    current_token="$(echo "$current_token" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
-                    [[ -n "$current_token" ]] && protos+=("$current_token")
+                    local normalized
+                    normalized=$(_bar_normalize_proto_token "$current_token")
+                    [[ -n "$normalized" ]] && protos+=("$normalized")
                     current_token=""
                 fi
                 current_token+="$char"
@@ -739,16 +701,18 @@ _bar_parse_protos()
                         i=$((i + 2))
                     fi
                     # Save complete group
-                    current_token="$(echo "$current_token" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
-                    [[ -n "$current_token" ]] && protos+=("$current_token")
+                    local normalized
+                    normalized=$(_bar_normalize_proto_token "$current_token")
+                    [[ -n "$normalized" ]] && protos+=("$normalized")
                     current_token=""
                 fi
                 ;;
             ' ' | $'\t')
                 if [[ $depth -eq 0 ]]; then
                     # Top-level space: token boundary
-                    current_token="$(echo "$current_token" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
-                    [[ -n "$current_token" ]] && protos+=("$current_token")
+                    local normalized
+                    normalized=$(_bar_normalize_proto_token "$current_token")
+                    [[ -n "$normalized" ]] && protos+=("$normalized")
                     current_token=""
                 else
                     # Space inside group: preserve it
@@ -762,13 +726,19 @@ _bar_parse_protos()
     done
 
     # Handle remaining token
-    current_token="$(echo "$current_token" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
-    [[ -n "$current_token" ]] && protos+=("$current_token")
+    local normalized
+    normalized=$(_bar_normalize_proto_token "$current_token")
+    [[ -n "$normalized" ]] && protos+=("$normalized")
 
     # Add empty terminator
     protos+=("")
 
     printf '%s\n' "${protos[@]}"
+}
+
+__bar_parse_protos()
+{
+    _bar_parse_protos "$@"
 }
 
 # Expand a proto spec to find alternatives at the beginning
@@ -1578,6 +1548,7 @@ __bar_scan_files()
         # 3. Repository location (relative to this completion script)
         # This allows completion to work when sourced from repo but bar not installed
         if [[ -n "${BASH_SOURCE[0]:-}" ]]; then
+            # shellcheck disable=2155
             local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
             local repo_bar_d="$script_dir/../Bar.d"
             if [[ -d "$repo_bar_d" ]]; then
@@ -1753,7 +1724,7 @@ _bar_complete()
                     # Simple approach: extract what's after the nested group
                     if [[ "$proto" =~ ^\[\[[^]]+\][[:space:]](.+)\]$ ]]; then
                         local remaining="${BASH_REMATCH[1]}"
-                        protos[$proto_idx]="[$remaining]"
+                        protos[proto_idx]="[$remaining]"
                         __bar_dbg "  Refined proto[$proto_idx] to: ${protos[$proto_idx]}"
                         # Don't increment proto_idx - stay at same proto
                     else
