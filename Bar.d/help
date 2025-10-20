@@ -371,6 +371,7 @@ QUICKSTART
    bar help [topic]
    ./bar help [topic]
 
+
 INVOCATION AND SEMANTICS
 
    bar [rulefile] [--bare] [rule [arguments..]]
@@ -1093,6 +1094,9 @@ function help_indexer
           continue
         }
         if (candidate ~ /^[[:punct:]]/ || candidate ~ /[[:punct:]]$/) {
+          continue
+        }
+        if (candidate ~ / - /) {
           continue
         }
         prev_blank = (i == 1) ? 1 : blank[i - 1]
