@@ -1,0 +1,23 @@
+# -*- mode: sh; sh-shell: bash -*-
+# vim: set ft=bash:
+# shellcheck shell=bash
+# shellcheck disable=2016
+
+### Podman support rules for Bar
+###
+### Integrates podman container support with Bar's standard build system.
+### Provides hooks for container-based builds and tests.
+
+## Check if podman is available on this system
+rule is_podman_installed: 'is_command_installed podman'
+
+## Verify podman is properly configured and ready to use
+rule podman_check_deps: is_podman_installed -- '
+    require podman
+    local native_arch=$(uname -m)
+    if ! is_podman_arch_available "$native_arch"; then
+        warn "Native architecture not properly detected"
+        return 1
+    fi
+    info "Podman $(podman_version) is ready"
+'

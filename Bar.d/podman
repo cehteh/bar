@@ -1,0 +1,282 @@
+# -*- mode: sh; sh-shell: bash -*-
+# vim: set ft=bash:
+# shellcheck shell=bash
+# shellcheck disable=2016,2086
+
+### Podman container support for Bar
+###
+### Provides container-based build and test environments with multi-architecture support,
+### layered image construction, network isolation, and artifact collection.
+
+# prototype: "arch" = "literal arm64 amd64 arm/v7"
+# prototype: "platform" = "ext podman_platform_complete"
+# prototype: "network" = "literal public private local isolated"
+
+require run
+
+###############################################################################
+# Phase 1: Basic Infrastructure
+###############################################################################
+
+## Checks if podman is installed and available
+function is_podman_installed
+{
+    if command -v podman >/dev/null 2>&1; then
+        debug "podman is installed"
+        return 0
+    else
+        note "podman is not installed"
+        return 1
+    fi
+}
+
+memofn is_podman_installed
+
+## Checks podman version and returns it
+function podman_version
+{
+    if ! is_podman_installed; then
+        return 1
+    fi
+    podman --version | awk '{print $3}'
+}
+
+memofn podman_version
+
+## <image:tag> [--timeout <seconds>] [--platform <arch>] [--network <preset>] [--volume <src:dst>] [command] [args..] - Run command in container
+function podman_run
+{
+    ## Executes a command inside a podman container with various options.
+    ## Options:
+    ##   --timeout <seconds>   - Maximum runtime (container killed after timeout)
+    ##   --platform <arch>     - Target architecture (e.g., linux/amd64, linux/arm64)
+    ##   --network <preset>    - Network configuration (public, private, local, isolated)
+    ##   --volume <src:dst>    - Mount volumes (can be specified multiple times)
+    ##   --env <VAR=value>     - Set environment variables (can be specified multiple times)
+    ## 
+    ## The first non-option argument is the image name, followed by the command and its arguments.
+    
+    local image=""
+    local timeout=""
+    local platform=""
+    local network=""
+    local -a volumes=()
+    local -a env_vars=()
+    local -a podman_args=()
+    
+    # Parse options
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --timeout)
+                timeout="$2"
+                shift 2
+                ;;
+            --platform)
+                platform="$2"
+                shift 2
+                ;;
+            --network)
+                network="$2"
+                shift 2
+                ;;
+            --volume)
+                volumes+=("$2")
+                shift 2
+                ;;
+            --env)
+                env_vars+=("$2")
+                shift 2
+                ;;
+            *)
+                # First non-option is the image
+                if [[ -z "$image" ]]; then
+                    image="$1"
+                    shift
+                    # Rest are the command and args
+                    break
+                else
+                    error "Unexpected argument: $1"
+                    return 1
+                fi
+                ;;
+        esac
+    done
+    
+    if [[ -z "$image" ]]; then
+        error "podman_run: image name is required"
+        return 1
+    fi
+    
+    # Build podman command
+    podman_args=(run --rm)
+    
+    # Add timeout if specified
+    if [[ -n "$timeout" ]]; then
+        podman_args+=(--timeout="$timeout")
+    fi
+    
+    # Add platform if specified
+    if [[ -n "$platform" ]]; then
+        podman_args+=(--platform="$platform")
+    fi
+    
+    # Add network configuration
+    if [[ -n "$network" ]]; then
+        case "$network" in
+            isolated)
+                podman_args+=(--network=none)
+                ;;
+            public|private|local)
+                # For now, use default network
+                # Full implementation will create custom networks
+                debug "Network preset '$network' not fully implemented, using default"
+                ;;
+            *)
+                warn "Unknown network preset: $network, using default"
+                ;;
+        esac
+    fi
+    
+    # Add volumes
+    for vol in "${volumes[@]}"; do
+        podman_args+=(--volume="$vol")
+    done
+    
+    # Add environment variables
+    for env in "${env_vars[@]}"; do
+        podman_args+=(--env="$env")
+    done
+    
+    # Add image
+    podman_args+=("$image")
+    
+    # Add command and args if provided
+    if [[ $# -gt 0 ]]; then
+        podman_args+=("$@")
+    fi
+    
+    # Execute podman
+    debug "Running: podman ${podman_args[*]}"
+    run_test podman "${podman_args[@]}"
+}
+
+## <platform> - List available platforms for completion
+function podman_platform_complete
+{
+    echo "linux/amd64"
+    echo "linux/arm64"
+    echo "linux/arm/v7"
+    echo "linux/386"
+    echo "linux/ppc64le"
+    echo "linux/s390x"
+}
+
+###############################################################################
+# Architecture Support
+###############################################################################
+
+## <arch> - Check if an architecture is available (with QEMU if needed)
+function is_podman_arch_available
+{
+    ## Checks if the specified architecture is available for use with podman.
+    ## This includes native architectures and those available via QEMU emulation.
+    local arch="$1"
+    
+    if [[ -z "$arch" ]]; then
+        error "is_podman_arch_available: architecture argument is required"
+        return 2
+    fi
+    
+    if ! is_podman_installed; then
+        return 1
+    fi
+    
+    # Normalize architecture name
+    case "$arch" in
+        amd64|x86_64|x86-64)
+            arch="amd64"
+            ;;
+        arm64|aarch64)
+            arch="arm64"
+            ;;
+        armv7|arm/v7|armhf)
+            arch="arm/v7"
+            ;;
+    esac
+    
+    # Get native architecture
+    local native_arch
+    native_arch=$(uname -m)
+    case "$native_arch" in
+        x86_64)
+            native_arch="amd64"
+            ;;
+        aarch64)
+            native_arch="arm64"
+            ;;
+        armv7l)
+            native_arch="arm/v7"
+            ;;
+    esac
+    
+    # Check if it's native
+    if [[ "$arch" == "$native_arch" ]]; then
+        debug "Architecture $arch is native"
+        return 0
+    fi
+    
+    # Check if QEMU is available for this arch
+    local qemu_bin=""
+    case "$arch" in
+        amd64)
+            qemu_bin="qemu-x86_64-static"
+            ;;
+        arm64)
+            qemu_bin="qemu-aarch64-static"
+            ;;
+        arm/v7)
+            qemu_bin="qemu-arm-static"
+            ;;
+    esac
+    
+    if [[ -n "$qemu_bin" ]] && command -v "$qemu_bin" >/dev/null 2>&1; then
+        debug "Architecture $arch is available via QEMU ($qemu_bin)"
+        return 0
+    fi
+    
+    note "Architecture $arch is not available (no QEMU support found)"
+    return 1
+}
+
+memofn is_podman_arch_available
+
+###############################################################################
+# Image Building Support (Basic)
+###############################################################################
+
+## <tag> <containerfile> - Build an image from a Containerfile
+function podman_image_build
+{
+    ## Builds a container image from a Containerfile.
+    ## Usage: podman_image_build <tag> <containerfile>
+    local tag="$1"
+    local containerfile="$2"
+    
+    if [[ -z "$tag" ]]; then
+        error "podman_image_build: tag is required"
+        return 1
+    fi
+    
+    if [[ -z "$containerfile" ]]; then
+        error "podman_image_build: containerfile is required"
+        return 1
+    fi
+    
+    if [[ ! -f "$containerfile" ]]; then
+        error "podman_image_build: containerfile not found: $containerfile"
+        return 1
+    fi
+    
+    info "Building image $tag from $containerfile"
+    run_test podman build -t "$tag" -f "$containerfile" .
+}
