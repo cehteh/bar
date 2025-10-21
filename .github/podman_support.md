@@ -27,10 +27,14 @@ The original requirements are generally sound but require some clarifications:
 ### Dependencies
 
 **Required:**
-- `podman` (>= 4.0) - Container runtime
+- `podman` (>= 4.0) - Container runtime (includes netavark and aardvark-dns for network management)
 - `bash` (>= 4.4) - Shell execution
 - `qemu-user-static` - Multi-architecture support (when building cross-platform)
 - `bar` - Rule engine (self-dependency)
+
+**Podman Components** (bundled with podman >= 4.0):
+- `netavark` - Network stack for container networking
+- `aardvark-dns` - DNS server for container name resolution
 
 **Optional:**
 - `buildah` - Advanced image building (podman includes buildah functionality)
@@ -168,15 +172,30 @@ EOF
 
 ### 3. Network and Firewall Configuration
 
+**Podman Network Stack:**
+
+Podman (v4.0+) uses **netavark** and **aardvark-dns** for network management:
+
+- **netavark**: Network stack providing network creation, configuration, and isolation. Replaces CNI (Container Network Interface) with native Rust implementation for better performance and rootless support.
+- **aardvark-dns**: Container-aware DNS server providing name resolution, custom DNS entries, and DNS-based access control within container networks.
+
+These components enable:
+- Automatic container-to-container DNS resolution
+- Network isolation between different podman networks
+- Custom DNS configuration per network
+- Rootless networking support
+- Port forwarding and NAT
+
 **Network Creation:**
 
-Podman networks support custom configuration via JSON or CLI:
+Podman networks support custom configuration via JSON or CLI, leveraging netavark:
 
 ```bash
 function podman_network_create ## <name> [options..] - Create isolated network
 {
     local name="$1"
     shift
+    # Netavark handles network creation with automatic DNS via aardvark-dns
     podman network create "$name" "$@"
 }
 ```
@@ -188,14 +207,16 @@ function podman_port_map ## <container-port>[/<proto>]:<host-port> - Map port
 
 **Network Restrictions:**
 
-Podman doesn't provide built-in IP filtering, but we can:
-1. Use custom DNS filtering (aardvark-dns)
-2. Configure at container level with `--network` modes:
-   - `none` - No networking
-   - `private` - Isolated network
-   - `host` - Host networking
-3. Use `--add-host` for DNS overrides
-4. Leverage iptables/nftables rules externally (optional enhancement)
+Network security is implemented through netavark/aardvark-dns configuration:
+
+1. **DNS-based filtering**: aardvark-dns can restrict name resolution to specific domains
+2. **Network isolation**: netavark creates isolated network namespaces per network
+3. **Container-level modes**:
+   - `none` - No networking (no netavark/DNS)
+   - `private` - Isolated network with DNS (default)
+   - `host` - Host networking (bypasses netavark)
+4. **DNS overrides**: Use `--add-host` to inject custom DNS entries into aardvark-dns
+5. **External firewall**: Leverage iptables/nftables for packet filtering (optional enhancement)
 
 **Simplified Firewall Interface:**
 ```bash
@@ -359,7 +380,7 @@ podman_layer_bar <name:tag> <base>              # Add bar runtime
 podman_layer_toolchain <name:tag> <parent> <tool>  # Add toolchain
 podman_layer_dev <name:tag> <parent>            # Add dev tools
 
-# Network Configuration
+# Network Configuration (via netavark/aardvark-dns)
 podman_network_create <name> [options]  # Create network
 podman_network_preset <name> <preset>   # Use network preset
 podman_firewall_allow_port <net> <port> # Allow port
