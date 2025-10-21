@@ -14,10 +14,24 @@ rule is_podman_installed: 'is_command_installed podman'
 ## Verify podman is properly configured and ready to use
 rule podman_check_deps: is_podman_installed -- '
     require podman
-    local native_arch=$(uname -m)
+    local native_arch
+    native_arch=$(podman_get_native_arch)
     if ! is_podman_arch_available "$native_arch"; then
         warn "Native architecture not properly detected"
         return 1
     fi
-    info "Podman $(podman_version) is ready"
+    info "Podman $(podman_version) is ready (native: $native_arch)"
+'
+
+## Setup QEMU for multi-architecture support
+rule podman_setup_qemu: is_podman_installed -- '
+    require podman
+    podman_arch_setup
+'
+
+## List all available architectures
+rule podman_list_archs: is_podman_installed -- '
+    require podman
+    echo "Available architectures:"
+    podman_list_available_archs
 '

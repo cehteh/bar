@@ -10,6 +10,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # Source bar for testing
 cd "$REPO_ROOT" || exit 1
+# shellcheck disable=SC1091
 source ./bar
 
 # Load podman module
@@ -103,5 +104,59 @@ if command -v podman >/dev/null 2>&1; then
     fi
 fi
 
+# Test 10: Test Phase 2 functions exist
 echo ""
-echo "All basic podman module tests passed!"
+echo "Testing Phase 2 functions..."
+
+if ! declare -F podman_arch_setup >/dev/null; then
+    echo "FAIL: podman_arch_setup function not found"
+    exit 1
+fi
+echo "✓ PASS: podman_arch_setup function exists"
+
+if ! declare -F is_qemu_available >/dev/null; then
+    echo "FAIL: is_qemu_available function not found"
+    exit 1
+fi
+echo "✓ PASS: is_qemu_available function exists"
+
+if ! declare -F podman_image_build_multiarch >/dev/null; then
+    echo "FAIL: podman_image_build_multiarch function not found"
+    exit 1
+fi
+echo "✓ PASS: podman_image_build_multiarch function exists"
+
+if ! declare -F podman_image_build_matrix >/dev/null; then
+    echo "FAIL: podman_image_build_matrix function not found"
+    exit 1
+fi
+echo "✓ PASS: podman_image_build_matrix function exists"
+
+if ! declare -F podman_run_arch >/dev/null; then
+    echo "FAIL: podman_run_arch function not found"
+    exit 1
+fi
+echo "✓ PASS: podman_run_arch function exists"
+
+if ! declare -F podman_get_native_arch >/dev/null; then
+    echo "FAIL: podman_get_native_arch function not found"
+    exit 1
+fi
+echo "✓ PASS: podman_get_native_arch function exists"
+
+if ! declare -F podman_list_available_archs >/dev/null; then
+    echo "FAIL: podman_list_available_archs function not found"
+    exit 1
+fi
+echo "✓ PASS: podman_list_available_archs function exists"
+
+# Test 11: Test podman_get_native_arch returns something
+native=$(podman_get_native_arch)
+if [[ -z "$native" ]]; then
+    echo "FAIL: podman_get_native_arch returned empty"
+    exit 1
+fi
+echo "✓ PASS: podman_get_native_arch returns: $native"
+
+echo ""
+echo "All basic podman module tests passed (Phase 1 + Phase 2)!"

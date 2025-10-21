@@ -250,6 +250,197 @@ function is_podman_arch_available
 
 memofn is_podman_arch_available
 
+## Setup QEMU for cross-architecture support
+function podman_arch_setup
+{
+    ## Ensures QEMU binfmt support is properly configured for multi-architecture builds.
+    ## This enables running containers for different architectures via emulation.
+    
+    if ! is_podman_installed; then
+        return 1
+    fi
+    
+    # Check if binfmt_misc is mounted
+    if [[ ! -d /proc/sys/fs/binfmt_misc ]]; then
+        warn "binfmt_misc not available - QEMU emulation may not work"
+        return 1
+    fi
+    
+    # Check for common QEMU registration methods
+    local qemu_registered=false
+    
+    # Method 1: Check if qemu interpreters are registered
+    if [[ -f /proc/sys/fs/binfmt_misc/qemu-aarch64 ]] || \
+       [[ -f /proc/sys/fs/binfmt_misc/qemu-arm ]]; then
+        debug "QEMU binfmt handlers already registered"
+        qemu_registered=true
+    fi
+    
+    # Method 2: Try using podman's built-in support via qemu-user-static container
+    if [[ "$qemu_registered" == "false" ]]; then
+        if command -v docker >/dev/null 2>&1 || command -v podman >/dev/null 2>&1; then
+            info "Attempting to register QEMU handlers via container..."
+            # Use the standard multiarch/qemu-user-static image
+            if podman run --rm --privileged multiarch/qemu-user-static --reset -p yes 2>/dev/null; then
+                info "QEMU handlers registered successfully"
+                qemu_registered=true
+            else
+                debug "Could not register QEMU handlers via container"
+            fi
+        fi
+    fi
+    
+    if [[ "$qemu_registered" == "true" ]]; then
+        info "Multi-architecture support is configured"
+        return 0
+    else
+        warn "Could not configure multi-architecture support"
+        return 1
+    fi
+}
+
+## <arch> - Check if QEMU is available for the specified architecture
+function is_qemu_available
+{
+    ## Checks if QEMU emulation is available for the given architecture.
+    local arch="$1"
+    
+    if [[ -z "$arch" ]]; then
+        error "is_qemu_available: architecture argument is required"
+        return 2
+    fi
+    
+    # Normalize architecture
+    case "$arch" in
+        amd64|x86_64|x86-64)
+            arch="x86_64"
+            ;;
+        arm64|aarch64)
+            arch="aarch64"
+            ;;
+        armv7|arm/v7|armhf)
+            arch="arm"
+            ;;
+    esac
+    
+    local qemu_bin="qemu-${arch}-static"
+    
+    if command -v "$qemu_bin" >/dev/null 2>&1; then
+        debug "QEMU binary found: $qemu_bin"
+        return 0
+    fi
+    
+    # Check if binfmt is registered
+    local binfmt_file="/proc/sys/fs/binfmt_misc/qemu-${arch}"
+    if [[ -f "$binfmt_file" ]] && grep -q "enabled" "$binfmt_file" 2>/dev/null; then
+        debug "QEMU binfmt registered for $arch"
+        return 0
+    fi
+    
+    debug "QEMU not available for $arch"
+    return 1
+}
+
+memofn is_qemu_available
+
+###############################################################################
+# Phase 2: Multi-Architecture Image Building
+###############################################################################
+
+## <tag> <platform> <containerfile> - Build an image for a specific platform
+function podman_image_build_multiarch
+{
+    ## Builds a container image for a specific platform/architecture.
+    ## Usage: podman_image_build_multiarch <tag> <platform> <containerfile>
+    ## Example: podman_image_build_multiarch myimg:latest linux/arm64 Containerfile
+    local tag="$1"
+    local platform="$2"
+    local containerfile="$3"
+    
+    if [[ -z "$tag" ]]; then
+        error "podman_image_build_multiarch: tag is required"
+        return 1
+    fi
+    
+    if [[ -z "$platform" ]]; then
+        error "podman_image_build_multiarch: platform is required"
+        return 1
+    fi
+    
+    if [[ -z "$containerfile" ]]; then
+        error "podman_image_build_multiarch: containerfile is required"
+        return 1
+    fi
+    
+    if [[ ! -f "$containerfile" ]]; then
+        error "podman_image_build_multiarch: containerfile not found: $containerfile"
+        return 1
+    fi
+    
+    # Extract architecture from platform
+    local arch="${platform##*/}"
+    
+    # Check if architecture is available
+    if ! is_podman_arch_available "$arch"; then
+        error "Architecture $arch is not available"
+        return 1
+    fi
+    
+    info "Building image $tag for platform $platform from $containerfile"
+    run_test podman build --platform="$platform" -t "$tag" -f "$containerfile" .
+}
+
+## <base-tag> <platforms..> - Build multi-platform images
+function podman_image_build_matrix
+{
+    ## Builds the same image for multiple platforms.
+    ## Usage: podman_image_build_matrix <base-tag> <containerfile> <platforms..>
+    ## Example: podman_image_build_matrix myimg:v1 Containerfile linux/amd64 linux/arm64
+    local base_tag="$1"
+    local containerfile="$2"
+    shift 2
+    
+    if [[ -z "$base_tag" ]]; then
+        error "podman_image_build_matrix: base tag is required"
+        return 1
+    fi
+    
+    if [[ -z "$containerfile" ]]; then
+        error "podman_image_build_matrix: containerfile is required"
+        return 1
+    fi
+    
+    if [[ $# -eq 0 ]]; then
+        error "podman_image_build_matrix: at least one platform is required"
+        return 1
+    fi
+    
+    local -a platforms=("$@")
+    local platform
+    local failed=0
+    
+    for platform in "${platforms[@]}"; do
+        local arch="${platform##*/}"
+        local tag="${base_tag}-${arch//\//-}"
+        
+        info "Building $tag for $platform..."
+        if podman_image_build_multiarch "$tag" "$platform" "$containerfile"; then
+            info "✓ Built $tag successfully"
+        else
+            error "✗ Failed to build $tag"
+            failed=$((failed + 1))
+        fi
+    done
+    
+    if [[ $failed -gt 0 ]]; then
+        error "Failed to build $failed platform(s)"
+        return 1
+    fi
+    
+    info "Successfully built images for all platforms"
+    return 0
+}
+
 ###############################################################################
 # Image Building Support (Basic)
 ###############################################################################
@@ -279,4 +470,92 @@ function podman_image_build
     
     info "Building image $tag from $containerfile"
     run_test podman build -t "$tag" -f "$containerfile" .
+}
+
+###############################################################################
+# Phase 2: Architecture-Specific Rule Execution
+###############################################################################
+
+## <arch> <image> [--timeout <sec>] [command..] - Run command for specific architecture
+function podman_run_arch
+{
+    ## Executes a command in a container for a specific architecture.
+    ## Automatically sets the correct platform based on the architecture.
+    ## Usage: podman_run_arch <arch> <image> [--timeout <sec>] [command..]
+    local arch="$1"
+    local image="$2"
+    shift 2
+    
+    if [[ -z "$arch" ]]; then
+        error "podman_run_arch: architecture is required"
+        return 1
+    fi
+    
+    if [[ -z "$image" ]]; then
+        error "podman_run_arch: image is required"
+        return 1
+    fi
+    
+    # Check if architecture is available
+    if ! is_podman_arch_available "$arch"; then
+        error "Architecture $arch is not available"
+        return 1
+    fi
+    
+    # Normalize to platform format
+    local platform
+    case "$arch" in
+        amd64|x86_64|x86-64)
+            platform="linux/amd64"
+            ;;
+        arm64|aarch64)
+            platform="linux/arm64"
+            ;;
+        armv7|arm/v7|armhf)
+            platform="linux/arm/v7"
+            ;;
+        *)
+            platform="linux/$arch"
+            ;;
+    esac
+    
+    info "Running on $platform..."
+    podman_run --platform="$platform" "$image" "$@"
+}
+
+## Get the native architecture
+function podman_get_native_arch
+{
+    ## Returns the native architecture in normalized format (amd64, arm64, arm/v7).
+    local native_arch
+    native_arch=$(uname -m)
+    
+    case "$native_arch" in
+        x86_64)
+            echo "amd64"
+            ;;
+        aarch64)
+            echo "arm64"
+            ;;
+        armv7l)
+            echo "arm/v7"
+            ;;
+        *)
+            echo "$native_arch"
+            ;;
+    esac
+}
+
+## List all available architectures
+function podman_list_available_archs
+{
+    ## Lists all architectures available for use (native + QEMU).
+    local -a archs=("amd64" "arm64" "arm/v7" "386" "ppc64le" "s390x")
+    local arch
+    
+    for arch in "${archs[@]}"; do
+        if is_podman_arch_available "$arch" 2>/dev/null; then
+            echo "$arch"
+        fi
+    done
 }
