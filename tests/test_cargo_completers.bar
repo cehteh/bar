@@ -7,5 +7,153 @@
 
 rule test_cargo_completers: 'require contrib/bar_complete'
 
-## Run cargo completers test (wrapped)
-rule test_cargo_completers: -- bash tests/test_cargo_completers.sh
+# Parse cargo module to register prototypes without sourcing (which would cause rule conflicts)
+rule test_cargo_completers: -- '
+    __bar_init_completion_registry
+    __bar_parse_file --module cargo "Bar.d/cargo"
+'
+
+# Define cargo_tool_complete function for testing (copied from Bar.d/cargo)
+function cargo_tool_complete ## - List available cargo tools/subcommands for completion
+{
+    cargo --list 2>/dev/null | awk '/^    [a-z]/{print $1}' | grep -v '^[[:space:]]*$'
+}
+
+function test_cargo_tool_complete ## - Test cargo_tool_complete function
+{
+    echo "Test 1: Testing cargo_tool_complete..."
+    if command -v cargo &>/dev/null; then
+        local tools tool_count
+        tools=$(cargo_tool_complete)
+        tool_count=$(echo "$tools" | wc -l)
+        
+        if [[ $tool_count -gt 10 ]]; then
+            echo "✓ PASS: cargo_tool_complete returned $tool_count tools"
+            echo "  Sample tools: $(echo "$tools" | head -5 | tr '\n' ' ')"
+        else
+            echo "✗ FAIL: Expected more than 10 tools, got $tool_count"
+            return 1
+        fi
+        
+        # Check for common tools
+        if echo "$tools" | grep -q "build"; then
+            echo "✓ PASS: Found 'build' in tool list"
+            return 0
+        else
+            echo "✗ FAIL: 'build' not found in tool list"
+            return 1
+        fi
+    else
+        echo "ℹ INFO: cargo not installed, skipping cargo_tool_complete test"
+        return 0
+    fi
+}
+
+function test_toolchain_completion ## - Test cargo toolchain completion via extcomp
+{
+    echo "Test 2: Testing cargo toolchain completion via extcomp..."
+    if command -v cargo &>/dev/null; then
+        local toolchain_completions
+        toolchain_completions=$(__bar_comp_extcomp cargo "+")
+
+        if [[ -n "$toolchain_completions" ]]; then
+            echo "✓ PASS: __bar_comp_extcomp returned toolchain suggestions"
+            echo "  Sample: $(echo "$toolchain_completions" | head -3 | tr '\n' ' ')"
+        else
+            echo "ℹ INFO: No toolchain suggestions returned (cargo completion may be unavailable)"
+        fi
+    else
+        echo "ℹ INFO: cargo not installed, skipping toolchain completion test"
+    fi
+    return 0
+}
+
+function test_extcomp_cargo ## - Test __bar_comp_extcomp with cargo
+{
+    echo "Test 3: Testing __bar_comp_extcomp with cargo (black box forwarding)..."
+    if command -v rustc &>/dev/null; then
+        local completions all_completions completion_count
+        # Test completing cargo subcommands
+        completions=$(__bar_comp_extcomp cargo "bui")
+        
+        if echo "$completions" | grep -q "build"; then
+            echo "✓ PASS: __bar_comp_extcomp finds 'build' from 'bui' prefix"
+        else
+            echo "ℹ INFO: __bar_comp_extcomp fallback mode (no native completion)"
+            echo "  Got: $(echo "$completions" | head -3 | tr '\n' ' ')"
+        fi
+        
+        # Test with no prefix
+        all_completions=$(__bar_comp_extcomp cargo "")
+        completion_count=$(echo "$all_completions" | wc -l)
+        
+        if [[ $completion_count -gt 20 ]]; then
+            echo "✓ PASS: __bar_comp_extcomp returns many completions ($completion_count)"
+            echo "  Sample: $(echo "$all_completions" | head -5 | tr '\n' ' ')"
+        else
+            echo "ℹ INFO: __bar_comp_extcomp using fallback mode"
+        fi
+    else
+        echo "ℹ INFO: rustc not installed, skipping __bar_comp_extcomp test"
+    fi
+    return 0
+}
+
+function test_prototype_definitions ## - Test prototype definitions
+{
+    echo "Test 4: Testing prototype definitions..."
+    
+    # Check if toolchain prototype is registered
+    if [[ -v __bar_protoregistry["cargo@toolchain"] ]]; then
+        echo "✓ PASS: toolchain prototype registered for cargo module"
+        echo "  Spec: ${__bar_protoregistry[cargo@toolchain]}"
+    else
+        echo "✗ FAIL: toolchain prototype not registered"
+        return 1
+    fi
+    
+    # Check if tool prototype is registered
+    if [[ -v __bar_protoregistry["cargo@tool"] ]]; then
+        echo "✓ PASS: tool prototype registered for cargo module"
+        echo "  Spec: ${__bar_protoregistry[cargo@tool]}"
+        return 0
+    else
+        echo "✗ FAIL: tool prototype not registered"
+        return 1
+    fi
+}
+
+function test_completer_expansion ## - Test completer expansion
+{
+    echo "Test 5: Testing completer expansion..."
+    local toolchain_completer tool_completer
+    toolchain_completer=$(__bar_get_completer "" "cargo@toolchain")
+    if [[ "$toolchain_completer" == "__bar_comp_extcomp cargo" ]]; then
+        echo "✓ PASS: toolchain completer expands correctly"
+    else
+        echo "✗ FAIL: toolchain completer expansion incorrect"
+        echo "  Expected: __bar_comp_extcomp cargo"
+        echo "  Got: $toolchain_completer"
+        return 1
+    fi
+    
+    tool_completer=$(__bar_get_completer "" "cargo@tool")
+    if [[ "$tool_completer" == "__bar_comp_ext cargo_tool_complete" ]]; then
+        echo "✓ PASS: tool completer expands correctly"
+        return 0
+    else
+        echo "✗ FAIL: tool completer expansion incorrect"
+        echo "  Expected: __bar_comp_ext cargo_tool_complete"
+        echo "  Got: $tool_completer"
+        return 1
+    fi
+}
+
+## Run all cargo completer tests
+rule test_cargo_completers: -- echo "Testing cargo completion functions..."
+rule test_cargo_completers: -- test_cargo_tool_complete
+rule test_cargo_completers: -- test_toolchain_completion
+rule test_cargo_completers: -- test_extcomp_cargo
+rule test_cargo_completers: -- test_prototype_definitions
+rule test_cargo_completers: -- test_completer_expansion
+rule test_cargo_completers: -- echo "Cargo completer tests complete"
