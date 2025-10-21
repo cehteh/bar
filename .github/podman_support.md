@@ -232,12 +232,34 @@ function podman_firewall_deny_all ## <config> - Default deny policy
 ```
 
 **Network Presets:**
+
+Predefined network policies for common security scenarios:
+
 ```bash
-# Predefined network policies
-podman_network_public    # Full internet access
-podman_network_private   # Only RFC1918 ranges
-podman_network_local     # Only localhost
-podman_network_isolated  # No network access
+# public: Internet access only, blocks private/local networks
+# - Allows: Public internet addresses (for package fetching, external APIs, etc.)
+# - Blocks: RFC1918 private ranges (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16)
+# - Blocks: Localhost (127.0.0.0/8, ::1)
+# - Blocks: Link-local (169.254.0.0/16, fe80::/10)
+# - Use case: Untrusted containers that need internet but shouldn't access local network
+podman_network_public
+
+# private: Private network access only, blocks public internet
+# - Allows: RFC1918 private ranges (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16)
+# - Blocks: Public internet addresses
+# - Use case: Internal services that communicate within organization
+podman_network_private
+
+# local: Localhost access only
+# - Allows: Only 127.0.0.0/8 and ::1
+# - Blocks: All other addresses
+# - Use case: Testing, local development
+podman_network_local
+
+# isolated: No network access
+# - Blocks: All network access
+# - Use case: Maximum security, offline builds
+podman_network_isolated
 ```
 
 ### 4. Container Execution
