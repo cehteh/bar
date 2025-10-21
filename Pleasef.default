@@ -1,5 +1,5 @@
 #!/usr/bin/env bar
-# -*- bash -*-
+# -*- mode: sh; sh-shell: bash -*-
 # vim: set ft=bash:
 # shellcheck shell=bash
 

@@ -1,4 +1,4 @@
-# -*- bash -*-
+# -*- mode: sh; sh-shell: bash -*-
 # vim: set ft=bash:
 # shellcheck shell=bash
 # shellcheck disable=2016
