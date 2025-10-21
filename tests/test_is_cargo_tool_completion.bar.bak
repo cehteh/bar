@@ -11,7 +11,9 @@ rule test_is_cargo_tool_completion: -- '__bar_parse_file Bar.d/cargo'
 
 function test_function_tracked ## - Verify function is tracked
 {
+    echo "=== Test 2: Verify function is tracked ==="
     if [[ " ${__bar_functions[*]} " == *" is_cargo_tool_installed "* ]]; then
+        echo "✓ is_cargo_tool_installed is tracked"
         return 0
     else
         echo "✗ is_cargo_tool_installed is NOT tracked"
@@ -21,10 +23,12 @@ function test_function_tracked ## - Verify function is tracked
 
 function test_params_stored ## - Verify params are stored correctly
 {
+    echo "=== Test 3: Verify params are stored correctly ==="
     local params expected
     params="${__bar_func_params[is_cargo_tool_installed]}"
     expected="[+toolchain] <tool> [args..]"
     if [[ "$params" == "$expected" ]]; then
+        echo "✓ Params stored correctly: '$params'"
         return 0
     else
         echo "✗ Params incorrect. Expected: '$expected', Got: '$params'"
@@ -34,14 +38,17 @@ function test_params_stored ## - Verify params are stored correctly
 
 function test_prototypes_registered ## - Verify prototypes are registered for cargo module
 {
+    echo "=== Test 4: Verify prototypes are registered for cargo module ==="
     local status=0
     if [[ -v __bar_protoregistry[cargo@toolchain] ]]; then
+        echo "✓ cargo@toolchain prototype registered: ${__bar_protoregistry[cargo@toolchain]}"
     else
         echo "✗ cargo@toolchain prototype NOT registered"
         status=1
     fi
     
     if [[ -v __bar_protoregistry[cargo@tool] ]]; then
+        echo "✓ cargo@tool prototype registered: ${__bar_protoregistry[cargo@tool]}"
     else
         echo "✗ cargo@tool prototype NOT registered"
         status=1
@@ -51,7 +58,9 @@ function test_prototypes_registered ## - Verify prototypes are registered for ca
 
 function test_module_tracking ## - Verify module tracking
 {
+    echo "=== Test 5: Verify module tracking ==="
     if [[ "${__bar_func_module[is_cargo_tool_installed]}" == "cargo" ]]; then
+        echo "✓ Module tracked correctly: cargo"
         return 0
     else
         echo "✗ Module not tracked. Got: '${__bar_func_module[is_cargo_tool_installed]}'"
@@ -61,6 +70,7 @@ function test_module_tracking ## - Verify module tracking
 
 function test_literal_punctuation ## - Verify literal punctuation extraction
 {
+    echo "=== Test 6: Verify literal punctuation extraction ==="
     local punct_parts proto_clean literal_prefix literal_suffix
     mapfile -t punct_parts < <(_bar_extract_literal_punct "+toolchain")
     proto_clean="${punct_parts[0]}"
@@ -68,6 +78,7 @@ function test_literal_punctuation ## - Verify literal punctuation extraction
     literal_suffix="${punct_parts[2]}"
     
     if [[ "$proto_clean" == "toolchain" && "$literal_prefix" == "+" && "$literal_suffix" == "" ]]; then
+        echo "✓ Literal punctuation extracted correctly"
         echo "  Clean proto: '$proto_clean'"
         echo "  Literal prefix: '$literal_prefix'"
         return 0
@@ -80,6 +91,8 @@ function test_literal_punctuation ## - Verify literal punctuation extraction
 }
 
 ## Run all is_cargo_tool_completion tests
+rule test_is_cargo_tool_completion: -- echo "=== Test 1: Source completion and parse cargo module ==="
+rule test_is_cargo_tool_completion: -- echo "✓ Completion script sourced and cargo module parsed"
 rule test_is_cargo_tool_completion: -- test_function_tracked
 rule test_is_cargo_tool_completion: -- test_params_stored
 rule test_is_cargo_tool_completion: -- test_prototypes_registered

@@ -112,7 +112,9 @@ function issue_fixes_test_case_4 ## - Test manual completers work correctly
 }
 
 ## Run all issue fix tests
+rule test_issue_fixes: -- echo "=== Testing Fixes for Reported Issues ==="
 rule test_issue_fixes: -- issue_fixes_test_case_1
 rule test_issue_fixes: -- issue_fixes_test_case_2
 rule test_issue_fixes: -- issue_fixes_test_case_3
 rule test_issue_fixes: -- issue_fixes_test_case_4
+rule test_issue_fixes: -- echo "=== All Issues Fixed ==="

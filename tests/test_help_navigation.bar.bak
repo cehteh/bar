@@ -40,6 +40,7 @@ function test_help_about_jumps ## - Indexed match should jump directly to ABOUT
         return 1
     fi
     if [[ "$about_line" =~ ^[[:space:]]*ABOUT[[:space:]]*$ ]]; then
+        echo "✓ help about jumps to ABOUT"
         return 0
     else
         echo "✗ help about should start at ABOUT (got: $about_line)"
@@ -55,6 +56,7 @@ function test_help_fallback ## - Unknown query should fall back to full help wit
         return 1
     fi
     if [[ "$fallback_line" =~ ^[[:space:]]*bar[[:space:]]-- ]]; then
+        echo "✓ help fallback prints full help when query is missing"
         return 0
     else
         echo "✗ help fallback should start with header (got: $fallback_line)"
@@ -73,6 +75,7 @@ function test_help_no_doc_example ## - Example documentation should not be treat
         echo "✗ help foo should not jump to documentation example (got: $foo_line)"
         return 1
     else
+        echo "✓ help foo does not treat documentation example as symbol"
         return 0
     fi
 }
@@ -85,6 +88,7 @@ function test_help_partial_function ## - Partial function name should resolve to
         return 1
     fi
     if [[ "$ls_line" =~ ls_files ]]; then
+        echo "✓ help ls_files jumps to git_ls_files"
         return 0
     else
         echo "✗ help ls_files should show git_ls_files (got: $ls_line)"
@@ -100,6 +104,7 @@ function test_help_no_query ## - No query should still succeed under BAR_FORCE_P
         return 1
     fi
     if [[ "$header_line" =~ ^[[:space:]]*bar[[:space:]]-- ]]; then
+        echo "✓ help without query works under BAR_FORCE_PAGER"
         return 0
     else
         echo "✗ help without query should start with header (got: $header_line)"
@@ -115,6 +120,7 @@ function test_help_section ## - --section should slice to the matching section
         return 1
     fi
     if [[ "$section_line" =~ ^[[:space:]]*git[[:space:]]- ]]; then
+        echo "✓ help --section git limits output to git section"
         return 0
     else
         echo "✗ help --section git should start at git section (got: $section_line)"

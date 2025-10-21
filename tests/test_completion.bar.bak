@@ -15,6 +15,7 @@ function assert_equals
     local test_name="$3"
     
     if [[ "$expected" == "$actual" ]]; then
+        echo "✓ $test_name"
         return 0
     else
         echo "✗ $test_name"
@@ -26,18 +27,21 @@ function assert_equals
 
 function test_parse_params ## - Test parameter parsing
 {
+    echo "Testing parameter parsing..."
     
     local result
     result=$(__bar_parse_protos "[--opt] <file> [output]")
     # The new parser extracts protos differently - it keeps the structure
     # Just check that it returns something and doesn't error
     if [[ -n "$result" ]]; then
+        echo "✓ Parse basic parameters (returns: $(echo "$result" | tr '\n' ' '))"
     else
         echo "✗ Parse basic parameters - got empty result"
     fi
     
     result=$(__bar_parse_protos "<file..>")
     if [[ -n "$result" ]]; then
+        echo "✓ Parse repeated parameter (returns: $(echo "$result" | tr '\n' ' '))"
     else
         echo "✗ Parse repeated parameter - got empty result"
     fi
@@ -45,25 +49,33 @@ function test_parse_params ## - Test parameter parsing
 
 function test_registry_init ## - Test completion registry initialization
 {
+    echo "Testing registry initialization..."
     
     __bar_init_completion_registry
     
     # Check that basic completers are registered
+    [[ -v __bar_protoregistry[file] ]] && echo "✓ file completer registered" || echo "✗ file completer not registered"
+    [[ -v __bar_protoregistry[directory] ]] && echo "✓ directory completer registered" || echo "✗ directory completer not registered"
+    [[ -v __bar_protoregistry[rule] ]] && echo "✓ rule completer registered" || echo "✗ rule completer not registered"
 }
 
 function test_generic_completers ## - Test generic completers
 {
+    echo "Testing generic completers..."
     
     # Test file completer (basic functionality)
     local result
     result=$(__bar_comp_file "test" 2>/dev/null | wc -l)
+    echo "✓ File completer executed (found $result matches)"
     
     # Test rule completer
     result=$(__bar_comp_rule "test" 2>/dev/null | wc -l)
+    echo "✓ Rule completer executed (found $result matches)"
 }
 
 function test_completer_lookup ## - Test completer lookup
 {
+    echo "Testing completer lookup..."
     
     __bar_init_completion_registry
     
@@ -83,11 +95,13 @@ function test_completer_lookup ## - Test completer lookup
 
 function test_predicate_filtering ## - Test predicate filtering
 {
+    echo "Testing predicate filtering..."
     
     # Test __bar_comp_file with empty string and rulefile predicate
     local result
     result=$(__bar_comp_file "" rulefile 2>/dev/null | wc -l)
     if [[ "$result" -gt 0 ]]; then
+        echo "✓ __bar_comp_file \"\" rulefile works (found $result files)"
     else
         echo "✗ __bar_comp_file \"\" rulefile should return files"
         return 1
@@ -96,12 +110,15 @@ function test_predicate_filtering ## - Test predicate filtering
     # Test __bar_comp_file with partial name and predicate
     result=$(__bar_comp_file test rulefile 2>/dev/null)
     if [[ -n "$result" ]]; then
+        echo "✓ __bar_comp_file test rulefile works (found matches)"
     else
+        echo "✓ __bar_comp_file test rulefile works (no matches expected if no test* rulefiles)"
     fi
     
     # Test __bar_comp_file with multiple predicates
     result=$(__bar_comp_file "" local rulefile 2>/dev/null | wc -l)
     if [[ "$result" -gt 0 ]]; then
+        echo "✓ __bar_comp_file \"\" local rulefile works (found $result files)"
     else
         echo "✗ __bar_comp_file \"\" local rulefile should return files"
         return 1
@@ -110,6 +127,7 @@ function test_predicate_filtering ## - Test predicate filtering
 
 function test_help_completer ## - Test help completer
 {
+    echo "Testing help completer..."
 
     unset __bar_help_index
     unset __bar_help_rindex
@@ -119,6 +137,7 @@ function test_help_completer ## - Test help completer
     local result
     result=$(__bar_comp_help "abo")
     if grep -Fxiq "ABOUT" <<<"$result"; then
+        echo "✓ Help completer finds ABOUT"
     else
         echo "✗ Help completer should include ABOUT"
         return 1
@@ -126,6 +145,7 @@ function test_help_completer ## - Test help completer
 
     result=$(__bar_comp_help "invocation")
     if grep -Fxiq 'INVOCATION\ AND\ SEMANTICS' <<<"$result"; then
+        echo "✓ Help completer escapes multi-word topics"
     else
         echo "✗ Help completer should escape multi-word topics"
         return 1
@@ -133,6 +153,7 @@ function test_help_completer ## - Test help completer
 
     result=$(__bar_comp_help "foo")
     if [[ -z "$result" ]]; then
+        echo "✓ Help completer ignores documentation examples"
     else
         echo "✗ Help completer should not include documentation examples (got: $result)"
         return 1
@@ -181,6 +202,7 @@ function test_bar_help_invocation_completer ## - Test bar help invocation comple
 
 function test_completion_cache_reuse ## - Test completion caching
 {
+    echo "Testing completion caching..."
     
     local nounset_was_on=
     [[ $- == *u* ]] && nounset_was_on=1 && set +u
@@ -218,6 +240,7 @@ function test_completion_cache_reuse ## - Test completion caching
     second_result=$(printf '%s\n' "${COMPREPLY[@]}")
 
     if [[ "$first_result" == "$second_result" ]]; then
+        echo "✓ cache reuses previous completions for identical context"
     else
         echo "✗ cache should return identical completions"
         echo "  First:"
@@ -251,6 +274,7 @@ function test_completion_cache_reuse ## - Test completion caching
     second_filtered_str=$(printf '%s\n' "${second_prefix_array[@]}")
 
     if [[ "$second_filtered_str" == "$expected_filtered_str" ]]; then
+        echo "✓ cache filters previous completions for extended prefix"
     else
         echo "✗ cache should reuse and filter previous completions"
         echo "  Expected:"
@@ -262,6 +286,7 @@ function test_completion_cache_reuse ## - Test completion caching
     fi
 
     if [[ "$__bar_cache_signature" == "$first_signature" ]]; then
+        echo "✓ cache signature unchanged for extended prefix"
     else
         echo "✗ cache signature should stay the same for extended prefix"
         echo "  First:  $first_signature"
@@ -271,6 +296,7 @@ function test_completion_cache_reuse ## - Test completion caching
     fi
 
     if [[ "$__bar_cache_prefix" == "A" ]]; then
+        echo "✓ cache prefix tracks latest user input"
     else
         echo "✗ cache prefix should update to current input"
         echo "  Got: $__bar_cache_prefix"
@@ -283,6 +309,7 @@ function test_completion_cache_reuse ## - Test completion caching
 
 function test_external_command_passthrough ## - Test external command passthrough
 {
+    echo "Testing external command passthrough..."
     
     local nounset_was_on=
     [[ $- == *u* ]] && nounset_was_on=1 && set +u
@@ -308,6 +335,7 @@ function test_external_command_passthrough ## - Test external command passthroug
     local expected="fake-alpha fake-beta"
 
     if [[ "$actual" == "$expected" ]]; then
+        echo "✓ external command completions forwarded"
     else
         echo "✗ external command completions should be forwarded"
         echo "  Expected: $expected"
@@ -326,12 +354,14 @@ function test_external_command_passthrough ## - Test external command passthroug
 
 function test_flag_completion_order ## - Test flag-first completion ordering
 {
+    echo "Testing flag-first completion ordering..."
 
     local result
     result=$(__bar_finalize_completions "--bare" "build" "--debug" "doc" "build")
     local expected=$'--bare\n--debug\nbuild\ndoc'
 
     if [[ "$result" == "$expected" ]]; then
+        echo "✓ flag completions sort ahead of other items"
     else
         echo "✗ flag completion ordering mismatch"
         echo "  Expected:"
@@ -348,8 +378,10 @@ function test_flag_completion_order ## - Test flag-first completion ordering
 
 function test_completion_uses_nosort ## - Test completion nosort option
 {
+    echo "Testing completion nosort option..."
 
     if ! type compopt >/dev/null 2>&1; then
+        echo "✓ compopt unavailable; skipping nosort assertion"
         return 0
     fi
     
@@ -379,6 +411,7 @@ function test_completion_uses_nosort ## - Test completion nosort option
     [[ -n "$nounset_was_on" ]] && set -u
 
     if [[ $compopt_called -eq 1 ]]; then
+        echo "✓ completion requests nosort from bash"
         return 0
     else
         echo "✗ completion should call compopt -o nosort"
@@ -387,7 +420,9 @@ function test_completion_uses_nosort ## - Test completion nosort option
 }
 
 ## Run all completion tests
+rule test_completion: -- echo "=========================================="
 rule test_completion: -- echo "Bar Completion Tests"
+rule test_completion: -- echo "=========================================="
 rule test_completion: -- test_parse_params
 rule test_completion: -- test_registry_init
 rule test_completion: -- test_generic_completers
@@ -399,4 +434,6 @@ rule test_completion: -- test_flag_completion_order
 rule test_completion: -- test_completion_uses_nosort
 rule test_completion: -- test_external_command_passthrough
 rule test_completion: -- test_completion_cache_reuse
+rule test_completion: -- echo "=========================================="
 rule test_completion: -- echo "Tests complete"
+rule test_completion: -- echo "=========================================="

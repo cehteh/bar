@@ -11,6 +11,7 @@ rule test_prototype_parsing: -- '__bar_init_completion_registry'
 
 function prototype_parsing_test ## - Test prototype definition parsing
 {
+    echo "Testing prototype definition parsing..."
     
     # Create a test module file
     cat > /tmp/test_module_proto <<'EOFTEST'
@@ -34,6 +35,7 @@ EOFTEST
     
     # Check if prototypes were registered
     if [[ -v __bar_protoregistry["test_module@myfile"] ]]; then
+        echo "✓ myfile prototype registered with module"
         echo "  Value: ${__bar_protoregistry[test_module@myfile]}"
     else
         echo "✗ myfile prototype not registered"
@@ -41,6 +43,7 @@ EOFTEST
     fi
 
     if [[ -v __bar_protoregistry["test_module@mycommand"] ]]; then
+        echo "✓ mycommand prototype registered with module"
         echo "  Value: ${__bar_protoregistry[test_module@mycommand]}"
     else
         echo "✗ mycommand prototype not registered"
@@ -48,6 +51,7 @@ EOFTEST
     fi
 
     if [[ -v __bar_protoregistry["test_module@custom"] ]]; then
+        echo "✓ custom prototype registered with module"
         echo "  Value: ${__bar_protoregistry[test_module@custom]}"
     else
         echo "✗ custom prototype not registered"
@@ -56,6 +60,7 @@ EOFTEST
 
     # Test that the function was tracked with the module
     if [[ -v __bar_func_module["test_func"] ]]; then
+        echo "✓ test_func tracked to module: ${__bar_func_module[test_func]}"
     else
         echo "✗ test_func module not tracked"
         status=1
@@ -65,6 +70,7 @@ EOFTEST
     local completer
     completer=$(__bar_get_completer test_func myfile)
     if [[ -n "$completer" ]]; then
+        echo "✓ Completer lookup for test_func@myfile succeeded"
         echo "  Expanded completer: $completer"
     else
         echo "✗ Completer lookup failed"
@@ -74,6 +80,7 @@ EOFTEST
     # Cleanup
     rm -f /tmp/test_module_proto
 
+    echo ""
     echo "Prototype parsing tests complete"
     return $status
 }

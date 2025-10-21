@@ -9,6 +9,7 @@ rule test_user_requirements: 'require contrib/bar_complete'
 
 function user_requirements_test_case_1 ## - Test bar <tab> includes rules from default rulefile
 {
+    echo "Test 1: bar <tab> includes rules from default rulefile"
     local nounset_was_on=
     [[ $- == *u* ]] && nounset_was_on=1 && set +u
     
@@ -43,6 +44,7 @@ function user_requirements_test_case_1 ## - Test bar <tab> includes rules from d
 
 function user_requirements_test_case_2 ## - Test bar semver<tab> completes semver functions
 {
+    echo "Test 2: bar semver<tab> completes semver functions from Bar.d/"
     local nounset_was_on=
     [[ $- == *u* ]] && nounset_was_on=1 && set +u
     
@@ -74,6 +76,7 @@ function user_requirements_test_case_2 ## - Test bar semver<tab> completes semve
 
 function user_requirements_test_case_3 ## - Test bar example <tab> includes rules from example file
 {
+    echo "Test 3: bar example <tab> includes rules from example file"
     local nounset_was_on=
     [[ $- == *u* ]] && nounset_was_on=1 && set +u
     
@@ -106,8 +109,12 @@ function user_requirements_test_case_3 ## - Test bar example <tab> includes rule
 }
 
 ## Run all user requirement tests
+rule test_user_requirements: -- echo "=========================================="
 rule test_user_requirements: -- echo "User Requirement Tests"
+rule test_user_requirements: -- echo "=========================================="
 rule test_user_requirements: -- user_requirements_test_case_1
 rule test_user_requirements: -- user_requirements_test_case_2
 rule test_user_requirements: -- user_requirements_test_case_3
+rule test_user_requirements: -- echo "=========================================="
 rule test_user_requirements: -- echo "All tests complete"
+rule test_user_requirements: -- echo "=========================================="

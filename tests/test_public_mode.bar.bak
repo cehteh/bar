@@ -1,0 +1,111 @@
+#!/usr/bin/env bar
+# -*- mode: sh; sh-shell: bash -*-
+# vim: set ft=bash:
+# shellcheck shell=bash
+
+### Test --public mode for __bar_parse_file
+
+# Source the completion script before tests
+rule test_public_mode: 'require contrib/bar_complete'
+
+function public_mode_test_case_1 ## - Test parsing example without --public (only documented rules)
+{
+    echo "Test 1: Parse example without --public (only documented rules)"
+    __bar_rules=()
+    __bar_functions=()
+    __bar_parse_file "example"
+    if [ ${#__bar_rules[@]} -eq 0 ]; then
+        echo "  ✓ PASS: No undocumented rules found (0 rules)"
+        return 0
+    else
+        echo "  ✗ FAIL: Found ${#__bar_rules[@]} rules (expected 0)"
+        return 1
+    fi
+}
+
+function public_mode_test_case_2 ## - Test parsing example with --public (all rules)
+{
+    echo "Test 2: Parse example with --public (all rules)"
+    __bar_rules=()
+    __bar_functions=()
+    __bar_parse_file --public "example"
+    if [ ${#__bar_rules[@]} -gt 20 ]; then
+        echo "  ✓ PASS: Found ${#__bar_rules[@]} rules (including undocumented)"
+        echo "  Sample rules: ${__bar_rules[*]:0:5}"
+        return 0
+    else
+        echo "  ✗ FAIL: Found only ${#__bar_rules[@]} rules (expected >20)"
+        return 1
+    fi
+}
+
+function public_mode_test_case_3 ## - Test parsing Bar.d/git_rules without --public
+{
+    echo "Test 3: Parse Bar.d/git_rules without --public"
+    __bar_rules=()
+    __bar_functions=()
+    if [ -f "Bar.d/git_rules" ]; then
+        __bar_parse_file "Bar.d/git_rules"
+        if [ ${#__bar_rules[@]} -gt 0 ]; then
+            echo "  ✓ PASS: Found ${#__bar_rules[@]} documented git rules"
+            return 0
+        else
+            echo "  ✗ FAIL: No rules found in Bar.d/git_rules"
+            return 1
+        fi
+    else
+        echo "  ⊘ SKIP: Bar.d/git_rules not found"
+        return 0
+    fi
+}
+
+function public_mode_test_case_4 ## - Test completion after specifying rulefile
+{
+    echo "Test 4: bar example <TAB> should complete with example rules"
+    local nounset_was_on=
+    [[ $- == *u* ]] && nounset_was_on=1 && set +u
+    
+    COMP_WORDS=(bar "example" "")
+    COMP_CWORD=2
+    _bar_complete
+    
+    local has_example_ok=false
+    local has_example_fail=false
+    local comp
+    for comp in "${COMPREPLY[@]}"; do
+        [[ "$comp" == "example_ok" ]] && has_example_ok=true
+        [[ "$comp" == "example_fail" ]] && has_example_fail=true
+    done
+    
+    [[ -n "$nounset_was_on" ]] && set -u
+    
+    if [ "$has_example_ok" = true ] && [ "$has_example_fail" = true ]; then
+        echo "  ✓ PASS: Rules from example file are in completions"
+        return 0
+    else
+        echo "  ✗ FAIL: Rules from example file NOT in completions"
+        return 1
+    fi
+}
+
+function public_mode_test_case_5 ## - Test default rulefile should use --public
+{
+    echo "Test 5: _bar_scan_files should parse default Barf with --public"
+    __bar_scan_files bar
+    if [ ${#__bar_rules[@]} -gt 0 ]; then
+        echo "  ✓ PASS: Default Barf parsed, found ${#__bar_rules[@]} rules"
+        return 0
+    else
+        echo "  ✗ FAIL: No rules found from default Barf"
+        return 1
+    fi
+}
+
+## Run all public mode tests
+rule test_public_mode: -- echo "=== Testing --public Mode ==="
+rule test_public_mode: -- public_mode_test_case_1
+rule test_public_mode: -- public_mode_test_case_2
+rule test_public_mode: -- public_mode_test_case_3
+rule test_public_mode: -- public_mode_test_case_4
+rule test_public_mode: -- public_mode_test_case_5
+rule test_public_mode: -- echo "=== All Tests Complete ==="

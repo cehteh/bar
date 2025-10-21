@@ -143,12 +143,14 @@ function test_actual_cargo_completion ## - Test actual cargo build completion in
             return 0
         fi
     else
+        echo "Test 9: SKIP (cargo not available or helloworld not found)"
         return 0
     fi
 }
 
 ## Run all cargo variable expansion tests
 rule test_cargo_variable_expansion: -- echo "Parsing Bar.d/cargo module..."
+rule test_cargo_variable_expansion: -- echo "Testing cargo completion with variable expansion..."
 rule test_cargo_variable_expansion: -- test_buildargs_registered
 rule test_cargo_variable_expansion: -- test_buildargs_format
 rule test_cargo_variable_expansion: -- test_get_completer_buildargs

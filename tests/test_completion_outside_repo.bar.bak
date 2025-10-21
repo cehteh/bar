@@ -10,7 +10,10 @@ rule test_completion_outside_repo: 'require contrib/bar_complete'
 
 function test_completion_outside_repo_main ## - Test scanning for rules/functions from temp directory
 {
+    echo "======================================"
     echo "Test: Completion Outside Bar Repository"
+    echo "======================================"
+    echo
     
     # Create a temp directory outside the repository
     local TEMP_DIR old_pwd REPO_ROOT
@@ -34,15 +37,19 @@ function test_completion_outside_repo_main ## - Test scanning for rules/function
     
     # Check if any rules were found
     if [[ ${#__bar_rules[@]} -gt 0 ]]; then
+        echo "✓ PASS: Found ${#__bar_rules[@]} rules"
         echo "  Sample rules: ${__bar_rules[0]}, ${__bar_rules[1]}, ${__bar_rules[2]}"
     else
+        echo "✗ FAIL: No rules found when outside bar repository"
         echo "  Expected: Should fall back to installed Bar.d location"
         status=1
     fi
     
     # Check if any functions were found
     if [[ ${#__bar_functions[@]} -gt 0 ]]; then
+        echo "✓ PASS: Found ${#__bar_functions[@]} functions"
     else
+        echo "✗ FAIL: No functions found when outside bar repository"
         status=1
     fi
     
@@ -50,6 +57,7 @@ function test_completion_outside_repo_main ## - Test scanning for rules/function
     cd "$old_pwd" || return 1
     rm -rf "$TEMP_DIR"
     
+    echo
     echo "Test complete"
     return $status
 }
