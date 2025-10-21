@@ -3,9 +3,210 @@
 # vim: set ft=bash:
 # shellcheck shell=bash
 
-### Converted from test_ext_completers.sh
+### Test external completers and literal punctuation handling
 
 rule test_ext_completers: 'require contrib/bar_complete'
 
-## Run test_ext_completers test
-rule test_ext_completers: -- bash tests/test_ext_completers.sh
+rule test_ext_completers: -- '__bar_init_completion_registry'
+
+# Mock external completer function for testing
+function test_ext_complete ## - Mock external completer
+{
+    echo "option1"
+    echo "option2"
+    echo "option3"
+}
+
+# Mock bar function for testing
+function bar ## - Mock bar command
+{
+    if [[ "$1" == "--bare" && "$2" == "test_ext_complete" ]]; then
+        echo "result1"
+        echo "result2"
+        return 0
+    fi
+    return 1
+}
+
+function test_external_completer_setup ## - Test external completer setup
+{
+    echo "Test 1: Testing external completer setup"
+    
+    # Add the external completer to registry
+    __bar_protoregistry["testproto"]="ext test_ext_complete"
+    
+    # Get the expanded completer
+    local completer
+    completer=$(__bar_get_completer "" "testproto")
+    echo "  Expanded completer: $completer"
+    
+    if [[ "$completer" == "__bar_comp_ext test_ext_complete" ]]; then
+        echo "✓ PASS: External completer expanded correctly"
+        return 0
+    else
+        echo "✗ FAIL: Expected '__bar_comp_ext test_ext_complete', got '$completer'"
+        return 1
+    fi
+}
+
+function test_calling_external_completer ## - Test calling external completer
+{
+    echo "Test 2: Calling external completer"
+    
+    local results result_count
+    results=$(__bar_comp_ext "test_ext_complete" "res")
+    result_count=$(echo "$results" | wc -l)
+    
+    if [[ $result_count -ge 2 ]]; then
+        echo "✓ PASS: External completer returned results"
+        return 0
+    else
+        echo "✗ FAIL: External completer did not return expected results"
+        return 1
+    fi
+}
+
+function test_literal_punctuation_parsing ## - Test literal punctuation in prototypes
+{
+    echo "Test 3: Testing literal punctuation in prototypes"
+    
+    local status=0
+    
+    # Test parsing of <+toolchain>
+    echo "  Testing <+toolchain> parsing..."
+    local protos proto_array
+    protos=$(_bar_parse_protos "<+toolchain>")
+    proto_array=()
+    while IFS= read -r line; do
+        [[ -n "$line" ]] && proto_array+=("$line")
+    done <<< "$protos"
+    
+    echo "  Parsed prototypes: ${proto_array[*]}"
+    if [[ "${proto_array[0]}" == "+toolchain" ]]; then
+        echo "✓ PASS: <+toolchain> parsed as '+toolchain'"
+    else
+        echo "✗ FAIL: Expected '+toolchain', got '${proto_array[0]}'"
+        status=1
+    fi
+    
+    # Test parsing of <rule:>
+    echo ""
+    echo "  Testing <rule:> parsing..."
+    protos=$(_bar_parse_protos "<rule:>")
+    proto_array=()
+    while IFS= read -r line; do
+        [[ -n "$line" ]] && proto_array+=("$line")
+    done <<< "$protos"
+    
+    echo "  Parsed prototypes: ${proto_array[*]}"
+    if [[ "${proto_array[0]}" == "rule:" ]]; then
+        echo "✓ PASS: <rule:> parsed as 'rule:'"
+    else
+        echo "✗ FAIL: Expected 'rule:', got '${proto_array[0]}'"
+        status=1
+    fi
+    
+    # Test parsing of [+toolchain]
+    echo ""
+    echo "  Testing [+toolchain] parsing..."
+    protos=$(_bar_parse_protos "[+toolchain]")
+    proto_array=()
+    while IFS= read -r line; do
+        [[ -n "$line" ]] && proto_array+=("$line")
+    done <<< "$protos"
+    
+    echo "  Parsed prototypes: ${proto_array[*]}"
+    if [[ "${proto_array[0]}" == "[+toolchain]" ]]; then
+        echo "✓ PASS: [+toolchain] parsed as '[+toolchain]' (optional)"
+    else
+        echo "✗ FAIL: Expected '[+toolchain]', got '${proto_array[0]}'"
+        status=1
+    fi
+    
+    return $status
+}
+
+function test_literal_punctuation_extraction ## - Test literal punctuation extraction
+{
+    echo "Test 4: Testing literal punctuation extraction"
+    
+    local status=0
+    local nounset_was_on=
+    [[ $- == *u* ]] && nounset_was_on=1 && set +u
+    
+    # Test _bar_extract_literal_punct with '+toolchain'
+    echo "  Testing _bar_extract_literal_punct with '+toolchain'..."
+    local result result_array
+    result=$(_bar_extract_literal_punct "+toolchain")
+    result_array=()
+    while IFS= read -r line; do
+        result_array+=("$line")
+    done <<< "$result"
+    
+    if [[ "${result_array[0]}" == "toolchain" && "${result_array[1]}" == "+" && "${result_array[2]:-}" == "" ]]; then
+        echo "✓ PASS: '+toolchain' → proto='toolchain', prefix='+', suffix=''"
+    else
+        echo "✗ FAIL: Expected proto='toolchain', prefix='+', suffix=''"
+        echo "  Got: proto='${result_array[0]}', prefix='${result_array[1]}', suffix='${result_array[2]:-}'"
+        status=1
+    fi
+    
+    # Test with 'rule:'
+    echo "  Testing _bar_extract_literal_punct with 'rule:'..."
+    result=$(_bar_extract_literal_punct "rule:")
+    result_array=()
+    while IFS= read -r line; do
+        result_array+=("$line")
+    done <<< "$result"
+    
+    if [[ "${result_array[0]}" == "rule" && "${result_array[1]:-}" == "" && "${result_array[2]}" == ":" ]]; then
+        echo "✓ PASS: 'rule:' → proto='rule', prefix='', suffix=':'"
+    else
+        echo "✗ FAIL: Expected proto='rule', prefix='', suffix=':'"
+        echo "  Got: proto='${result_array[0]}', prefix='${result_array[1]:-}', suffix='${result_array[2]}'"
+        status=1
+    fi
+    
+    # Test with '--flag'
+    echo "  Testing _bar_extract_literal_punct with '--flag'..."
+    result=$(_bar_extract_literal_punct "--flag")
+    result_array=()
+    while IFS= read -r line; do
+        result_array+=("$line")
+    done <<< "$result"
+    
+    if [[ "${result_array[0]}" == "--flag" && "${result_array[1]:-}" == "" && "${result_array[2]:-}" == "" ]]; then
+        echo "✓ PASS: '--flag' → proto='--flag' (-- not stripped)"
+    else
+        echo "✗ FAIL: Expected proto='--flag' with no literals"
+        echo "  Got: proto='${result_array[0]}', prefix='${result_array[1]:-}', suffix='${result_array[2]:-}'"
+        status=1
+    fi
+    
+    # Test with 'name..'
+    echo "  Testing _bar_extract_literal_punct with 'name..'..."
+    result=$(_bar_extract_literal_punct "name..")
+    result_array=()
+    while IFS= read -r line; do
+        result_array+=("$line")
+    done <<< "$result"
+    
+    if [[ "${result_array[0]}" == "name.." && "${result_array[1]:-}" == "" && "${result_array[2]:-}" == "" ]]; then
+        echo "✓ PASS: 'name..' → proto='name..' (.. not stripped)"
+    else
+        echo "✗ FAIL: Expected proto='name..' with no literals"
+        echo "  Got: proto='${result_array[0]}', prefix='${result_array[1]:-}', suffix='${result_array[2]:-}'"
+        status=1
+    fi
+    
+    [[ -n "$nounset_was_on" ]] && set -u
+    return $status
+}
+
+## Run all external completer tests
+rule test_ext_completers: -- echo "Testing external completers and literal punctuation..."
+rule test_ext_completers: -- test_external_completer_setup
+rule test_ext_completers: -- test_calling_external_completer
+rule test_ext_completers: -- test_literal_punctuation_parsing
+rule test_ext_completers: -- test_literal_punctuation_extraction
+rule test_ext_completers: -- echo "External completer tests complete"
