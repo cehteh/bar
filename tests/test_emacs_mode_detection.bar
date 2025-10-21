@@ -8,16 +8,13 @@
 
 function emacs_mode_detection_test ## - Test Emacs mode detection for Bar.d files
 {
-    echo "Testing Emacs mode detection (informational)..."
-    
     # Test if emacs is available
     if ! command -v emacs &>/dev/null; then
-        echo "WARNING: emacs not installed, skipping mode detection test"
+        debug "emacs not installed, skipping mode detection test"
         return 0
     fi
     
     # Test each file
-    local warnings=0
     local test_files=(
         "Bar.d/help"
         "Bar.d/cargo"
@@ -33,8 +30,7 @@ function emacs_mode_detection_test ## - Test Emacs mode detection for Bar.d file
         test_file="$file"
         
         if [[ ! -f "$test_file" ]]; then
-            echo "WARNING: $file not found"
-            warnings=$((warnings + 1))
+            debug "$file not found"
             continue
         fi
         
@@ -45,22 +41,11 @@ function emacs_mode_detection_test ## - Test Emacs mode detection for Bar.d file
             --eval '(message "MODE: %s" (symbol-name major-mode))' \
             2>&1 | grep "^MODE:" | head -1 | sed 's/^MODE: //' || true)
         
-        if [[ "$mode" == "sh-mode" ]]; then
-            echo "✓ $file detected as sh-mode"
-        elif [[ -z "$mode" ]]; then
-            echo "WARNING: Could not determine mode for $file"
-            warnings=$((warnings + 1))
-        else
-            echo "WARNING: $file detected as $mode (expected sh-mode)"
-            warnings=$((warnings + 1))
+        if [[ "$mode" != "sh-mode" && -n "$mode" ]]; then
+            debug "$file detected as $mode (expected sh-mode)"
         fi
     done
     
-    if [[ $warnings -gt 0 ]]; then
-        echo "WARNING: $warnings file(s) had issues with Emacs mode detection"
-    fi
-    
-    echo "Emacs mode detection test completed (exit status: success)"
     return 0
 }
 
