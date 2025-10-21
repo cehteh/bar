@@ -1,0 +1,11 @@
+#!/usr/bin/env bar
+# -*- mode: sh; sh-shell: bash -*-
+# vim: set ft=bash:
+# shellcheck shell=bash
+
+### Converted from test_extcomp.sh
+
+rule test_extcomp: 'require contrib/bar_complete'
+
+## Run test_extcomp test
+rule test_extcomp: -- bash tests/test_extcomp.sh

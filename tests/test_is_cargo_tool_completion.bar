@@ -1,0 +1,11 @@
+#!/usr/bin/env bar
+# -*- mode: sh; sh-shell: bash -*-
+# vim: set ft=bash:
+# shellcheck shell=bash
+
+### Converted from test_is_cargo_tool_completion.sh
+
+rule test_is_cargo_tool_completion: 'require contrib/bar_complete'
+
+## Run test_is_cargo_tool_completion test
+rule test_is_cargo_tool_completion: -- bash tests/test_is_cargo_tool_completion.sh

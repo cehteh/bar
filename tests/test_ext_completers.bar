@@ -1,0 +1,11 @@
+#!/usr/bin/env bar
+# -*- mode: sh; sh-shell: bash -*-
+# vim: set ft=bash:
+# shellcheck shell=bash
+
+### Converted from test_ext_completers.sh
+
+rule test_ext_completers: 'require contrib/bar_complete'
+
+## Run test_ext_completers test
+rule test_ext_completers: -- bash tests/test_ext_completers.sh

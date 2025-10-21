@@ -1,0 +1,11 @@
+#!/usr/bin/env bar
+# -*- mode: sh; sh-shell: bash -*-
+# vim: set ft=bash:
+# shellcheck shell=bash
+
+### Test cargo completion functions
+
+rule test_cargo_completers: 'require contrib/bar_complete'
+
+## Run cargo completers test (wrapped)
+rule test_cargo_completers: -- bash tests/test_cargo_completers.sh

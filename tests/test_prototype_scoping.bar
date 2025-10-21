@@ -1,0 +1,11 @@
+#!/usr/bin/env bar
+# -*- mode: sh; sh-shell: bash -*-
+# vim: set ft=bash:
+# shellcheck shell=bash
+
+### Converted from test_prototype_scoping.sh
+
+rule test_prototype_scoping: 'require contrib/bar_complete'
+
+## Run test_prototype_scoping test
+rule test_prototype_scoping: -- bash tests/test_prototype_scoping.sh
