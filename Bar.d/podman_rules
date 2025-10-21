@@ -45,3 +45,33 @@ rule podman_example_layered_build: is_podman_installed -- '
     podman_layer_dev example-dev:latest example-rust:latest
     echo "Layered images created: example-bar, example-rust, example-dev"
 '
+
+## List all podman networks
+rule podman_list_networks: is_podman_installed -- '
+    require podman
+    echo "Podman networks:"
+    podman_network_list
+'
+
+## Example: Create network with security preset
+rule podman_example_network_preset: is_podman_installed -- '
+    require podman
+    echo "Creating networks with security presets..."
+    podman_network_preset example-public public || true
+    podman_network_preset example-private private || true
+    podman_network_preset example-isolated isolated || true
+    echo "Example networks created"
+    podman_network_list
+'
+
+## Example: Configure custom firewall rules
+rule podman_example_firewall: is_podman_installed -- '
+    require podman
+    echo "Configuring custom firewall rules..."
+    podman_firewall_config custom-net
+    podman_firewall_allow_port custom-net 443 tcp
+    podman_firewall_allow_port custom-net 80 tcp
+    podman_firewall_allow_network custom-net 192.168.1.0/24
+    podman_firewall_deny_all custom-net
+    podman_firewall_show custom-net
+'

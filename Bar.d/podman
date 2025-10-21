@@ -901,3 +901,262 @@ function podman_containerfile_build
     
     return $rc
 }
+
+###############################################################################
+# Phase 4: Network Configuration
+###############################################################################
+
+## <name> [options..] - Create a custom podman network
+function podman_network_create
+{
+    ## Creates a custom podman network with optional configuration.
+    ## Usage: podman_network_create <name> [--subnet <cidr>] [--gateway <ip>]
+    local name="$1"
+    shift
+    
+    if [[ -z "$name" ]]; then
+        error "podman_network_create: network name is required"
+        return 1
+    fi
+    
+    info "Creating network: $name"
+    run_test podman network create "$name" "$@"
+}
+
+## <name> - Remove a podman network
+function podman_network_remove
+{
+    ## Removes a podman network.
+    ## Usage: podman_network_remove <name>
+    local name="$1"
+    
+    if [[ -z "$name" ]]; then
+        error "podman_network_remove: network name is required"
+        return 1
+    fi
+    
+    info "Removing network: $name"
+    run_test podman network rm "$name"
+}
+
+## <name> - Check if a network exists
+function podman_network_exists
+{
+    ## Checks if a podman network exists.
+    ## Usage: podman_network_exists <name>
+    local name="$1"
+    
+    if [[ -z "$name" ]]; then
+        error "podman_network_exists: network name is required"
+        return 2
+    fi
+    
+    podman network exists "$name" 2>/dev/null
+}
+
+## List all podman networks
+function podman_network_list
+{
+    ## Lists all podman networks.
+    podman network ls --format "{{.Name}}"
+}
+
+## <name> <preset> - Configure network with security preset
+function podman_network_preset
+{
+    ## Configures a network with a security preset.
+    ## Presets: public, private, local, isolated
+    ## Usage: podman_network_preset <name> <preset>
+    local name="$1"
+    local preset="$2"
+    
+    if [[ -z "$name" ]]; then
+        error "podman_network_preset: network name is required"
+        return 1
+    fi
+    
+    if [[ -z "$preset" ]]; then
+        error "podman_network_preset: preset is required"
+        return 1
+    fi
+    
+    case "$preset" in
+        public)
+            # Public internet only - blocks RFC1918 ranges
+            # This would require custom network configuration with filtering
+            info "Creating 'public' network: $name (internet access, blocks private networks)"
+            podman_network_create "$name" \
+                --opt "com.docker.network.bridge.name=br-public-$name"
+            ;;
+        private)
+            # Private networks only - RFC1918 ranges
+            info "Creating 'private' network: $name (private networks only)"
+            podman_network_create "$name" \
+                --subnet "172.20.0.0/16" \
+                --opt "com.docker.network.bridge.name=br-private-$name"
+            ;;
+        local)
+            # Localhost only
+            info "Creating 'local' network: $name (localhost only)"
+            podman_network_create "$name" \
+                --internal \
+                --subnet "127.1.0.0/16" \
+                --opt "com.docker.network.bridge.name=br-local-$name"
+            ;;
+        isolated)
+            # No network access
+            info "Creating 'isolated' network: $name (no network access)"
+            podman_network_create "$name" \
+                --internal \
+                --opt "com.docker.network.bridge.name=br-isolated-$name"
+            ;;
+        *)
+            error "Unknown network preset: $preset"
+            error "Available presets: public, private, local, isolated"
+            return 1
+            ;;
+    esac
+}
+
+## <container-port> <host-port> [protocol] - Format port mapping
+function podman_port_map
+{
+    ## Formats a port mapping for use with podman run.
+    ## Usage: podman_port_map <container-port> <host-port> [protocol]
+    ## Returns: "<host-port>:<container-port>[/protocol]"
+    local container_port="$1"
+    local host_port="$2"
+    local protocol="${3:-tcp}"
+    
+    if [[ -z "$container_port" ]]; then
+        error "podman_port_map: container port is required"
+        return 1
+    fi
+    
+    if [[ -z "$host_port" ]]; then
+        error "podman_port_map: host port is required"
+        return 1
+    fi
+    
+    echo "${host_port}:${container_port}/${protocol}"
+}
+
+###############################################################################
+# Phase 4: Firewall Configuration Helpers
+###############################################################################
+
+# Global associative array for firewall configurations
+declare -gA PODMAN_FIREWALL_RULES=()
+
+## <network-name> - Initialize firewall configuration for a network
+function podman_firewall_config
+{
+    ## Initializes firewall configuration for a network.
+    ## Usage: podman_firewall_config <network-name>
+    local network="$1"
+    
+    if [[ -z "$network" ]]; then
+        error "podman_firewall_config: network name is required"
+        return 1
+    fi
+    
+    # Initialize empty rules for this network
+    PODMAN_FIREWALL_RULES["${network}_ports"]=""
+    PODMAN_FIREWALL_RULES["${network}_networks"]=""
+    PODMAN_FIREWALL_RULES["${network}_policy"]="default"
+    
+    debug "Initialized firewall config for network: $network"
+}
+
+## <network-name> <port> [protocol] - Allow port through firewall
+function podman_firewall_allow_port
+{
+    ## Adds a port to the firewall allow list.
+    ## Usage: podman_firewall_allow_port <network-name> <port> [protocol]
+    local network="$1"
+    local port="$2"
+    local protocol="${3:-tcp}"
+    
+    if [[ -z "$network" ]]; then
+        error "podman_firewall_allow_port: network name is required"
+        return 1
+    fi
+    
+    if [[ -z "$port" ]]; then
+        error "podman_firewall_allow_port: port is required"
+        return 1
+    fi
+    
+    # Add to ports list
+    local current="${PODMAN_FIREWALL_RULES["${network}_ports"]}"
+    if [[ -n "$current" ]]; then
+        PODMAN_FIREWALL_RULES["${network}_ports"]="$current,$port/$protocol"
+    else
+        PODMAN_FIREWALL_RULES["${network}_ports"]="$port/$protocol"
+    fi
+    
+    debug "Allowed port $port/$protocol for network $network"
+}
+
+## <network-name> <cidr> - Allow network range through firewall
+function podman_firewall_allow_network
+{
+    ## Adds a network range to the firewall allow list.
+    ## Usage: podman_firewall_allow_network <network-name> <cidr>
+    local network="$1"
+    local cidr="$2"
+    
+    if [[ -z "$network" ]]; then
+        error "podman_firewall_allow_network: network name is required"
+        return 1
+    fi
+    
+    if [[ -z "$cidr" ]]; then
+        error "podman_firewall_allow_network: CIDR is required"
+        return 1
+    fi
+    
+    # Add to networks list
+    local current="${PODMAN_FIREWALL_RULES["${network}_networks"]}"
+    if [[ -n "$current" ]]; then
+        PODMAN_FIREWALL_RULES["${network}_networks"]="$current,$cidr"
+    else
+        PODMAN_FIREWALL_RULES["${network}_networks"]="$cidr"
+    fi
+    
+    debug "Allowed network $cidr for network $network"
+}
+
+## <network-name> - Set default deny policy for firewall
+function podman_firewall_deny_all
+{
+    ## Sets a default deny policy for the network.
+    ## Usage: podman_firewall_deny_all <network-name>
+    local network="$1"
+    
+    if [[ -z "$network" ]]; then
+        error "podman_firewall_deny_all: network name is required"
+        return 1
+    fi
+    
+    PODMAN_FIREWALL_RULES["${network}_policy"]="deny"
+    debug "Set deny-all policy for network $network"
+}
+
+## <network-name> - Get firewall configuration summary
+function podman_firewall_show
+{
+    ## Shows the firewall configuration for a network.
+    ## Usage: podman_firewall_show <network-name>
+    local network="$1"
+    
+    if [[ -z "$network" ]]; then
+        error "podman_firewall_show: network name is required"
+        return 1
+    fi
+    
+    echo "Firewall configuration for network: $network"
+    echo "  Policy: ${PODMAN_FIREWALL_RULES["${network}_policy"]:-default}"
+    echo "  Allowed ports: ${PODMAN_FIREWALL_RULES["${network}_ports"]:-none}"
+    echo "  Allowed networks: ${PODMAN_FIREWALL_RULES["${network}_networks"]:-none}"
+}

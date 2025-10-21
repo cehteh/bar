@@ -222,5 +222,83 @@ if ! declare -F podman_containerfile_build >/dev/null; then
 fi
 echo "✓ PASS: podman_containerfile_build function exists"
 
+# Test 13: Test Phase 4 functions exist
 echo ""
-echo "All basic podman module tests passed (Phase 1 + Phase 2 + Phase 3)!"
+echo "Testing Phase 4 functions..."
+
+if ! declare -F podman_network_create >/dev/null; then
+    echo "FAIL: podman_network_create function not found"
+    exit 1
+fi
+echo "✓ PASS: podman_network_create function exists"
+
+if ! declare -F podman_network_remove >/dev/null; then
+    echo "FAIL: podman_network_remove function not found"
+    exit 1
+fi
+echo "✓ PASS: podman_network_remove function exists"
+
+if ! declare -F podman_network_exists >/dev/null; then
+    echo "FAIL: podman_network_exists function not found"
+    exit 1
+fi
+echo "✓ PASS: podman_network_exists function exists"
+
+if ! declare -F podman_network_list >/dev/null; then
+    echo "FAIL: podman_network_list function not found"
+    exit 1
+fi
+echo "✓ PASS: podman_network_list function exists"
+
+if ! declare -F podman_network_preset >/dev/null; then
+    echo "FAIL: podman_network_preset function not found"
+    exit 1
+fi
+echo "✓ PASS: podman_network_preset function exists"
+
+if ! declare -F podman_port_map >/dev/null; then
+    echo "FAIL: podman_port_map function not found"
+    exit 1
+fi
+echo "✓ PASS: podman_port_map function exists"
+
+if ! declare -F podman_firewall_config >/dev/null; then
+    echo "FAIL: podman_firewall_config function not found"
+    exit 1
+fi
+echo "✓ PASS: podman_firewall_config function exists"
+
+if ! declare -F podman_firewall_allow_port >/dev/null; then
+    echo "FAIL: podman_firewall_allow_port function not found"
+    exit 1
+fi
+echo "✓ PASS: podman_firewall_allow_port function exists"
+
+if ! declare -F podman_firewall_allow_network >/dev/null; then
+    echo "FAIL: podman_firewall_allow_network function not found"
+    exit 1
+fi
+echo "✓ PASS: podman_firewall_allow_network function exists"
+
+if ! declare -F podman_firewall_deny_all >/dev/null; then
+    echo "FAIL: podman_firewall_deny_all function not found"
+    exit 1
+fi
+echo "✓ PASS: podman_firewall_deny_all function exists"
+
+if ! declare -F podman_firewall_show >/dev/null; then
+    echo "FAIL: podman_firewall_show function not found"
+    exit 1
+fi
+echo "✓ PASS: podman_firewall_show function exists"
+
+# Test 14: Test podman_port_map functionality
+port_map=$(podman_port_map 8080 80 tcp)
+if [[ "$port_map" != "80:8080/tcp" ]]; then
+    echo "FAIL: podman_port_map returned unexpected format: $port_map"
+    exit 1
+fi
+echo "✓ PASS: podman_port_map returns correct format"
+
+echo ""
+echo "All podman module tests passed (Phases 1-4)!"
