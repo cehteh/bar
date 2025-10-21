@@ -38,6 +38,7 @@ rule pre-commit: MAIN
 # TODO: test Barf.default
 
 ## Run all tests in tests/ directory
+rule tests: 'require tests/*.bar'
 rule tests: test_cache
 rule tests: test_cargo_completers
 rule tests: test_cargo_variable_expansion
@@ -54,7 +55,6 @@ rule tests: test_public_mode
 rule tests: test_user_requirements
 
 # Individual test rules
-rule test_cache: -- tests/test_cache.sh
 rule test_cargo_completers: -- tests/test_cargo_completers.sh
 rule test_cargo_variable_expansion: -- tests/test_cargo_variable_expansion.sh
 rule test_completion: -- tests/test_completion.sh

@@ -1,0 +1,87 @@
+#!/usr/bin/env bar
+# -*- mode: sh; sh-shell: bash -*-
+# vim: set ft=bash:
+# shellcheck shell=bash
+
+### Tests for completion cache behaviour
+
+require std_lib
+
+function cache_prepare_env ## - Reset completion environment for cache tests
+{
+    __bar_init_completion_registry
+    __bar_cache=()
+    __bar_cache_signature=""
+    __bar_cache_prefix=""
+    COMPREPLY=()
+    COMP_WORDS=(bar test)
+    COMP_CWORD=1
+    COMP_LINE="bar test"
+    COMP_POINT=${#COMP_LINE}
+}
+
+function cache_case_no_cache_on_first_run ## - Ensure the first completion invocation does not reuse cache
+{
+    cache_prepare_env
+    local nounset_was_on=
+    [[ $- == *u* ]] && nounset_was_on=1 && set +u
+
+    local BAR_COMPLETE_DEBUG=1
+    local output
+    output=$(_bar_complete 2>&1 || true)
+
+    local rc=0
+    [[ "$output" != *"Using cached completions for signature:"* ]]
+    rc=$?
+
+    [[ -n "$nounset_was_on" ]] && set -u
+    return $rc
+}
+
+function cache_case_second_run_uses_cache ## - Ensure subsequent identical invocation reuses cached completions
+{
+    cache_prepare_env
+    local nounset_was_on=
+    [[ $- == *u* ]] && nounset_was_on=1 && set +u
+
+    local BAR_COMPLETE_DEBUG=1
+    _bar_complete >/dev/null 2>&1 || true
+    local output
+    output=$(_bar_complete 2>&1 || true)
+
+    local rc=0
+    [[ "$output" == *"Using cached completions for signature:"* ]]
+    rc=$?
+
+    [[ -n "$nounset_was_on" ]] && set -u
+    return $rc
+}
+
+function cache_case_changed_prefix_busts_cache ## - Ensure cache is bypassed when the typed prefix changes
+{
+    cache_prepare_env
+    local nounset_was_on=
+    [[ $- == *u* ]] && nounset_was_on=1 && set +u
+
+    local BAR_COMPLETE_DEBUG=1
+    _bar_complete >/dev/null 2>&1 || true
+    COMP_WORDS=(bar different)
+    COMP_CWORD=1
+    COMP_LINE="bar different"
+    COMP_POINT=${#COMP_LINE}
+    local output
+    output=$(_bar_complete 2>&1 || true)
+
+    local rc=0
+    [[ "$output" != *"Using cached completions for signature:"* ]]
+    rc=$?
+
+    [[ -n "$nounset_was_on" ]] && set -u
+    return $rc
+}
+
+## Load completion script and run cache regression tests
+rule test_cache: 'require contrib/bar_complete'
+rule test_cache: -- cache_case_no_cache_on_first_run
+rule test_cache: -- cache_case_second_run_uses_cache
+rule test_cache: -- cache_case_changed_prefix_busts_cache
