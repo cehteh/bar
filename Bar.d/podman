@@ -14,25 +14,15 @@
 
 require run
 
-###############################################################################
-# Phase 1: Basic Infrastructure
-###############################################################################
-
-## Checks if podman is installed and available
+## Check if podman is available on this system
 function is_podman_installed
 {
-    if command -v podman >/dev/null 2>&1; then
-        debug "podman is installed"
-        return 0
-    else
-        note "podman is not installed"
-        return 1
-    fi
+    is_command_installed podman
 }
 
 memofn is_podman_installed
 
-## Checks podman version and returns it
+## Get podman version
 function podman_version
 {
     if ! is_podman_installed; then
@@ -163,17 +153,89 @@ function podman_run
 ## <platform> - List available platforms for completion
 function podman_platform_complete
 {
-    echo "linux/amd64"
-    echo "linux/arm64"
-    echo "linux/arm/v7"
-    echo "linux/386"
-    echo "linux/ppc64le"
-    echo "linux/s390x"
+    # Get platforms that podman actually supports
+    # Try to query podman for supported platforms, fall back to common ones
+    if podman info --format='{{range .Host.Arch}}{{.}}{{"\n"}}{{end}}' 2>/dev/null | grep -q .; then
+        podman info --format='{{range .Host.Arch}}linux/{{.}}{{"\n"}}{{end}}' 2>/dev/null
+    else
+        # Fallback to common platforms if podman doesn't report
+        local native_arch
+        native_arch=$(uname -m)
+        case "$native_arch" in
+            x86_64) echo "linux/amd64" ;;
+            aarch64) echo "linux/arm64" ;;
+            armv7l) echo "linux/arm/v7" ;;
+            *) echo "linux/$native_arch" ;;
+        esac
+        
+        # Add QEMU-supported platforms if binfmt_misc is available
+        if [[ -d /proc/sys/fs/binfmt_misc ]]; then
+            for fmt in /proc/sys/fs/binfmt_misc/qemu-*; do
+                [[ -f "$fmt" ]] || continue
+                local arch
+                arch=$(basename "$fmt" | sed 's/qemu-//')
+                case "$arch" in
+                    x86_64) echo "linux/amd64" ;;
+                    aarch64) echo "linux/arm64" ;;
+                    arm) echo "linux/arm/v7" ;;
+                    *) echo "linux/$arch" ;;
+                esac
+            done | sort -u
+        fi
+    fi
 }
 
-###############################################################################
-# Architecture Support
-###############################################################################
+## Normalize architecture name to standard format
+function podman_normalize_arch
+{
+    ## Converts various architecture names to standardized format
+    ## Usage: podman_normalize_arch <arch>
+    local arch="$1"
+    
+    case "$arch" in
+        amd64|x86_64|x86-64|linux/amd64)
+            echo "amd64"
+            ;;
+        arm64|aarch64|linux/arm64)
+            echo "arm64"
+            ;;
+        armv7|arm/v7|armhf|linux/arm/v7)
+            echo "arm/v7"
+            ;;
+        386|i386|i686|linux/386)
+            echo "386"
+            ;;
+        ppc64le|linux/ppc64le)
+            echo "ppc64le"
+            ;;
+        s390x|linux/s390x)
+            echo "s390x"
+            ;;
+        *)
+            # Remove linux/ prefix if present
+            echo "${arch#linux/}"
+            ;;
+    esac
+}
+
+## Normalize platform name to linux/<arch> format
+function podman_normalize_platform
+{
+    ## Converts architecture names to platform format (linux/<arch>)
+    ## Usage: podman_normalize_platform <arch-or-platform>
+    local input="$1"
+    
+    # If already in platform format, return as-is
+    if [[ "$input" == linux/* ]]; then
+        echo "$input"
+        return
+    fi
+    
+    # Normalize arch first, then prefix with linux/
+    local arch
+    arch=$(podman_normalize_arch "$input")
+    echo "linux/$arch"
+}
 
 ## <arch> - Check if an architecture is available (with QEMU if needed)
 function is_podman_arch_available
@@ -343,9 +405,8 @@ function is_qemu_available
 
 memofn is_qemu_available
 
-###############################################################################
-# Phase 2: Multi-Architecture Image Building
-###############################################################################
+
+
 
 ## <tag> <platform> <containerfile> - Build an image for a specific platform
 function podman_image_build_multiarch
@@ -441,9 +502,9 @@ function podman_image_build_matrix
     return 0
 }
 
-###############################################################################
+
 # Image Building Support (Basic)
-###############################################################################
+
 
 ## <tag> <containerfile> - Build an image from a Containerfile
 function podman_image_build
@@ -472,9 +533,8 @@ function podman_image_build
     run_test podman build -t "$tag" -f "$containerfile" .
 }
 
-###############################################################################
-# Phase 2: Architecture-Specific Rule Execution
-###############################################################################
+
+
 
 ## <arch> <image> [--timeout <sec>] [command..] - Run command for specific architecture
 function podman_run_arch
@@ -504,20 +564,7 @@ function podman_run_arch
     
     # Normalize to platform format
     local platform
-    case "$arch" in
-        amd64|x86_64|x86-64)
-            platform="linux/amd64"
-            ;;
-        arm64|aarch64)
-            platform="linux/arm64"
-            ;;
-        armv7|arm/v7|armhf)
-            platform="linux/arm/v7"
-            ;;
-        *)
-            platform="linux/$arch"
-            ;;
-    esac
+    platform=$(podman_normalize_platform "$arch")
     
     info "Running on $platform..."
     podman_run --platform="$platform" "$image" "$@"
@@ -529,40 +576,38 @@ function podman_get_native_arch
     ## Returns the native architecture in normalized format (amd64, arm64, arm/v7).
     local native_arch
     native_arch=$(uname -m)
-    
-    case "$native_arch" in
-        x86_64)
-            echo "amd64"
-            ;;
-        aarch64)
-            echo "arm64"
-            ;;
-        armv7l)
-            echo "arm/v7"
-            ;;
-        *)
-            echo "$native_arch"
-            ;;
-    esac
+    podman_normalize_arch "$native_arch"
 }
 
 ## List all available architectures
 function podman_list_available_archs
 {
     ## Lists all architectures available for use (native + QEMU).
-    local -a archs=("amd64" "arm64" "arm/v7" "386" "ppc64le" "s390x")
-    local arch
+    # Start with native arch
+    podman_get_native_arch
     
-    for arch in "${archs[@]}"; do
-        if is_podman_arch_available "$arch" 2>/dev/null; then
-            echo "$arch"
-        fi
-    done
+    # Check for QEMU-enabled architectures via binfmt_misc
+    if [[ -d /proc/sys/fs/binfmt_misc ]]; then
+        for fmt in /proc/sys/fs/binfmt_misc/qemu-*; do
+            [[ -f "$fmt" ]] || continue
+            if grep -q "enabled" "$fmt" 2>/dev/null; then
+                local qemu_arch
+                qemu_arch=$(basename "$fmt" | sed 's/qemu-//')
+                # Convert QEMU arch names to our standard arch names
+                case "$qemu_arch" in
+                    x86_64) echo "amd64" ;;
+                    aarch64) echo "arm64" ;;
+                    arm) echo "arm/v7" ;;
+                    i386) echo "386" ;;
+                    *) echo "$qemu_arch" ;;
+                esac
+            fi
+        done | sort -u
+    fi
 }
 
-###############################################################################
-# Phase 3: Image Layering and Snapshots
-###############################################################################
+
+
 
 ## <container-id> <tag> - Snapshot a container to an image
 function podman_image_snapshot
@@ -769,9 +814,9 @@ EOF
     return $rc
 }
 
-###############################################################################
+
 # Programmatic Containerfile Generation
-###############################################################################
+
 
 # Global variable for building Containerfiles programmatically
 declare -g PODMAN_CONTAINERFILE_CONTENT=""
@@ -902,9 +947,8 @@ function podman_containerfile_build
     return $rc
 }
 
-###############################################################################
-# Phase 4: Network Configuration
-###############################################################################
+
+
 
 ## <name> [options..] - Create a custom podman network
 function podman_network_create
@@ -1041,9 +1085,8 @@ function podman_port_map
     echo "${host_port}:${container_port}/${protocol}"
 }
 
-###############################################################################
-# Phase 4: Firewall Configuration Helpers
-###############################################################################
+
+
 
 # Global associative array for firewall configurations
 declare -gA PODMAN_FIREWALL_RULES=()
@@ -1161,9 +1204,8 @@ function podman_firewall_show
     echo "  Allowed networks: ${PODMAN_FIREWALL_RULES["${network}_networks"]:-none}"
 }
 
-###############################################################################
-# Phase 5: Artifact Management
-###############################################################################
+
+
 
 ## [path] - Create and return artifact directory path
 # shellcheck disable=SC2120
@@ -1382,9 +1424,8 @@ function podman_container_export
     fi
 }
 
-###############################################################################
-# Phase 6: Advanced Features
-###############################################################################
+
+
 
 ## <config-name> - Load container configuration template
 function podman_config_load

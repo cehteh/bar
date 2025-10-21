@@ -36,89 +36,9 @@ rule podman_list_archs: is_podman_installed -- '
     podman_list_available_archs
 '
 
-## Example: Build a layered image with Bar and Rust toolchain
-rule podman_example_layered_build: is_podman_installed -- '
-    require podman
-    echo "Building layered image example..."
-    podman_layer_bar example-bar:latest debian:stable-slim
-    podman_layer_toolchain example-rust:latest example-bar:latest rust
-    podman_layer_dev example-dev:latest example-rust:latest
-    echo "Layered images created: example-bar, example-rust, example-dev"
-'
-
 ## List all podman networks
 rule podman_list_networks: is_podman_installed -- '
     require podman
     echo "Podman networks:"
     podman_network_list
-'
-
-## Example: Create network with security preset
-rule podman_example_network_preset: is_podman_installed -- '
-    require podman
-    echo "Creating networks with security presets..."
-    podman_network_preset example-public public || true
-    podman_network_preset example-private private || true
-    podman_network_preset example-isolated isolated || true
-    echo "Example networks created"
-    podman_network_list
-'
-
-## Example: Configure custom firewall rules
-rule podman_example_firewall: is_podman_installed -- '
-    require podman
-    echo "Configuring custom firewall rules..."
-    podman_firewall_config custom-net
-    podman_firewall_allow_port custom-net 443 tcp
-    podman_firewall_allow_port custom-net 80 tcp
-    podman_firewall_allow_network custom-net 192.168.1.0/24
-    podman_firewall_deny_all custom-net
-    podman_firewall_show custom-net
-'
-
-## Example: Artifact management workflow
-rule podman_example_artifacts: is_podman_installed -- '
-    require podman
-    echo "Demonstrating artifact management..."
-    local artifact_dir
-    artifact_dir=$(podman_artifact_dir ./build-artifacts)
-    echo "Artifact directory: $artifact_dir"
-    
-    local mount
-    mount=$(podman_artifact_mount "$artifact_dir")
-    echo "Mount specification: $mount"
-    
-    echo "In a real workflow, artifacts would be collected here"
-'
-
-## Example: Configuration templates
-rule podman_example_config_template: is_podman_installed -- '
-    require podman
-    echo "Demonstrating configuration templates..."
-    
-    # Declare a configuration
-    declare -gA PODMAN_CONFIG_EXAMPLE=(
-        [image]="debian:stable"
-        [timeout]=300
-        [network]="isolated"
-    )
-    
-    podman_config_load example
-    echo "Configuration loaded: PODMAN_CONFIG_EXAMPLE"
-'
-
-## Example: Parallel execution
-rule podman_example_parallel: is_podman_installed -- '
-    require podman
-    echo "Demonstrating parallel container execution..."
-    echo "In a real workflow, multiple containers would run in parallel"
-    echo "Usage: podman_run_parallel <image> <rule> --parallel <count>"
-'
-
-## Example: Resource limits
-rule podman_example_resource_limits: is_podman_installed -- '
-    require podman
-    echo "Demonstrating resource limits..."
-    echo "Usage: podman_run_limited <image> <rule> --cpus 2 --memory 4g"
-    echo "This constrains container CPU and memory usage"
 '

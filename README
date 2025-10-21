@@ -252,6 +252,10 @@ MODULE API/RULES
 
   entr - Support for the entr file watcher
 
+    Functions:
+
+      entr_watch_git_index Defaults to 'MAIN'.
+
     Rules:
 
       is_entr_installed
@@ -385,6 +389,10 @@ MODULE API/RULES
   git_lib - Git support library
 
     Functions:
+
+      git_toplevel Returns the path to the toplevel git repository.
+
+      git_bar Fails when there is no bar initialized.
 
       git_dir Returns the absolute path to the 'GIT_DIR' (.git/).
         Note that this may be distinct from '$(git_toplevel)/.git/' when worktrees or other git
@@ -545,6 +553,8 @@ MODULE API/RULES
 
     Functions:
 
+      init_update_merge_barf when 'Barf' was not or only slightly edited.
+
       init_install [prefix]
         install links in [prefix] or '~/.local'.
         Bar will usually exist somewhere in a users home directory where it got checked
@@ -663,6 +673,279 @@ MODULE API/RULES
         'contrib/update-ethers.sh' for automatically discover and maintain '/etc/ethers'. Waits
         for the host to become reachable. Fails when it is not reachable.
 
+  podman - Podman container support for Bar
+    
+    Provides container-based build and test environments with multi-architecture support,
+    layered image construction, network isolation, and artifact collection.
+
+    Functions:
+
+      is_podman_installed Check if podman is available on this system
+
+      podman_version Get podman version
+
+      podman_run <image:tag> [--timeout <seconds>] [--platform <arch>] [--network <preset>] [--volume <src:dst>] [command] [args..]
+        Run command in container
+        Executes a command inside a podman container with various options.
+        Options:
+          --timeout <seconds>   - Maximum runtime (container killed after timeout)
+          --platform <arch>     - Target architecture (e.g., linux/amd64, linux/arm64)
+          --network <preset>    - Network configuration (public, private, local, isolated)
+          --volume <src:dst>    - Mount volumes (can be specified multiple times)
+          --env <VAR=value>     - Set environment variables (can be specified multiple times)
+        
+        The first non-option argument is the image name, followed by the command and its arguments.
+
+      podman_platform_complete <platform>
+        List available platforms for completion
+
+      podman_normalize_arch Normalize architecture name to standard format
+        Converts various architecture names to standardized format
+        Usage: podman_normalize_arch <arch>
+
+      podman_normalize_platform Normalize platform name to linux/<arch> format
+        Converts architecture names to platform format (linux/<arch>)
+        Usage: podman_normalize_platform <arch-or-platform>
+
+      is_podman_arch_available <arch>
+        Check if an architecture is available (with QEMU if needed)
+        Checks if the specified architecture is available for use with podman.
+        This includes native architectures and those available via QEMU emulation.
+
+      podman_arch_setup Setup QEMU for cross-architecture support
+        Ensures QEMU binfmt support is properly configured for multi-architecture builds.
+        This enables running containers for different architectures via emulation.
+
+      is_qemu_available <arch>
+        Check if QEMU is available for the specified architecture
+        Checks if QEMU emulation is available for the given architecture.
+
+      podman_image_build_multiarch <tag> <platform> <containerfile>
+        Build an image for a specific platform
+        Builds a container image for a specific platform/architecture.
+        Usage: podman_image_build_multiarch <tag> <platform> <containerfile>
+        Example: podman_image_build_multiarch myimg:latest linux/arm64 Containerfile
+
+      podman_image_build_matrix <base-tag> <platforms..>
+        Build multi-platform images
+        Builds the same image for multiple platforms.
+        Usage: podman_image_build_matrix <base-tag> <containerfile> <platforms..>
+        Example: podman_image_build_matrix myimg:v1 Containerfile linux/amd64 linux/arm64
+
+      podman_image_build <tag> <containerfile>
+        Build an image from a Containerfile
+        Builds a container image from a Containerfile.
+        Usage: podman_image_build <tag> <containerfile>
+
+      podman_run_arch <arch> <image> [--timeout <sec>] [command..]
+        Run command for specific architecture
+        Executes a command in a container for a specific architecture.
+        Automatically sets the correct platform based on the architecture.
+        Usage: podman_run_arch <arch> <image> [--timeout <sec>] [command..]
+
+      podman_get_native_arch Get the native architecture
+        Returns the native architecture in normalized format (amd64, arm64, arm/v7).
+
+      podman_list_available_archs List all available architectures
+        Lists all architectures available for use (native + QEMU).
+
+      podman_image_snapshot <container-id> <tag>
+        Snapshot a container to an image
+        Creates an image from a container's current state.
+        Usage: podman_image_snapshot <container-id> <tag>
+
+      podman_layer_bar <name:tag> <base-image>
+        Create base layer with Bar runtime
+        Creates a container image with Bar and bash installed.
+        Usage: podman_layer_bar <name:tag> <base-image>
+
+      podman_layer_toolchain <name:tag> <parent:tag> <toolchain>
+        Add toolchain layer
+        Adds a development toolchain to an existing image.
+        Usage: podman_layer_toolchain <name:tag> <parent:tag> <toolchain>
+        Supported toolchains: rust, python, nodejs, go, gcc
+
+      podman_layer_dev <name:tag> <parent:tag>
+        Add development tools layer
+        Adds common development tools to an existing image.
+        Usage: podman_layer_dev <name:tag> <parent:tag>
+
+      podman_containerfile_from <base-image>
+        Start building a Containerfile from base image
+        Starts a new Containerfile with the specified base image.
+        Usage: podman_containerfile_from <base-image>
+
+      podman_containerfile_run <command>
+        Add RUN instruction to Containerfile
+        Adds a RUN instruction to the current Containerfile.
+        Usage: podman_containerfile_run <command>
+
+      podman_containerfile_copy <src> <dst>
+        Add COPY instruction to Containerfile
+        Adds a COPY instruction to the current Containerfile.
+        Usage: podman_containerfile_copy <src> <dst>
+
+      podman_containerfile_env <key> <value>
+        Add ENV instruction to Containerfile
+        Adds an ENV instruction to the current Containerfile.
+        Usage: podman_containerfile_env <key> <value>
+
+      podman_containerfile_workdir <workdir>
+        Add WORKDIR instruction to Containerfile
+        Adds a WORKDIR instruction to the current Containerfile.
+        Usage: podman_containerfile_workdir <workdir>
+
+      podman_containerfile_build <tag>
+        Build image from programmatically generated Containerfile
+        Builds an image from the programmatically generated Containerfile.
+        Usage: podman_containerfile_build <tag>
+
+      podman_network_create <name> [options..]
+        Create a custom podman network
+        Creates a custom podman network with optional configuration.
+        Usage: podman_network_create <name> [--subnet <cidr>] [--gateway <ip>]
+
+      podman_network_remove <name>
+        Remove a podman network
+        Removes a podman network.
+        Usage: podman_network_remove <name>
+
+      podman_network_exists <name>
+        Check if a network exists
+        Checks if a podman network exists.
+        Usage: podman_network_exists <name>
+
+      podman_network_list List all podman networks
+        Lists all podman networks.
+
+      podman_network_preset <name> <preset>
+        Configure network with security preset
+        Configures a network with a security preset.
+        Presets: public, private, local, isolated
+        Usage: podman_network_preset <name> <preset>
+
+      podman_port_map <container-port> <host-port> [protocol]
+        Format port mapping
+        Formats a port mapping for use with podman run.
+        Usage: podman_port_map <container-port> <host-port> [protocol]
+        Returns: "<host-port>:<container-port>[/protocol]"
+
+      podman_firewall_config <network-name>
+        Initialize firewall configuration for a network
+        Initializes firewall configuration for a network.
+        Usage: podman_firewall_config <network-name>
+
+      podman_firewall_allow_port <network-name> <port> [protocol]
+        Allow port through firewall
+        Adds a port to the firewall allow list.
+        Usage: podman_firewall_allow_port <network-name> <port> [protocol]
+
+      podman_firewall_allow_network <network-name> <cidr>
+        Allow network range through firewall
+        Adds a network range to the firewall allow list.
+        Usage: podman_firewall_allow_network <network-name> <cidr>
+
+      podman_firewall_deny_all <network-name>
+        Set default deny policy for firewall
+        Sets a default deny policy for the network.
+        Usage: podman_firewall_deny_all <network-name>
+
+      podman_firewall_show <network-name>
+        Get firewall configuration summary
+        Shows the firewall configuration for a network.
+        Usage: podman_firewall_show <network-name>
+        Creates an artifact directory and returns its path.
+        Usage: podman_artifact_dir [path]
+        If no path provided, creates a temporary directory.
+
+      podman_artifact_mount <path>
+        Prepare artifact mount specification
+        Prepares a volume mount specification for artifacts.
+        Usage: podman_artifact_mount <path>
+        Returns: "<path>:/artifacts:z"
+
+      podman_artifact_fetch <container> <src> <dst>
+        Copy artifacts from container to host
+        Copies artifacts from a container to the host filesystem.
+        Usage: podman_artifact_fetch <container> <src> <dst>
+        Example: podman_artifact_fetch my-container /app/target/release/binary ./artifacts/
+
+      podman_artifact_extract_all <container> <dst-dir>
+        Extract all artifacts from container's /artifacts directory
+        Extracts all files from container's /artifacts directory to host.
+        Usage: podman_artifact_extract_all <container> <dst-dir>
+
+      podman_artifact_fetch_tarball <container> <src-path> <dst-dir>
+        Fetch and extract tarball from container
+        Fetches a tarball from container and extracts it.
+        Usage: podman_artifact_fetch_tarball <container> <src-path> <dst-dir>
+
+      podman_run_with_artifacts <image> <rule> <artifact-dir> [args..]
+        Run rule and collect artifacts
+        Runs a rule in container and collects artifacts automatically.
+        Usage: podman_run_with_artifacts <image> <rule> <artifact-dir> [args..]
+
+      podman_container_export <container-id>
+        Export container filesystem as tarball
+        Exports a container's entire filesystem as a tarball.
+        Usage: podman_container_export <container-id> [output-file]
+        If no output file specified, outputs to stdout
+
+      podman_config_load <config-name>
+        Load container configuration template
+        Loads a container configuration from an associative array.
+        Usage: Declare a config array, then use: podman_config_load CONFIG_NAME
+        The array should be named PODMAN_CONFIG_<config-name> in uppercase.
+
+      podman_run_with_config <config-name> <rule> [args..]
+        Run with configuration template
+        Runs a rule using a predefined configuration template.
+        Usage: podman_run_with_config <config-name> <rule> [args..]
+
+      podman_run_parallel <image> <rule> [--parallel <count>] [args..]
+        Run rule in parallel containers
+        Runs the same rule in multiple parallel containers.
+        Usage: podman_run_parallel <image> <rule> [--parallel <count>] [args..]
+
+      podman_run_limited <image> <rule> [--cpus <n>] [--memory <size>] [args..]
+        Run with resource limits
+        Runs a rule with CPU and memory limits.
+        Usage: podman_run_limited <image> <rule> [--cpus <n>] [--memory <size>] [args..]
+        Example: podman_run_limited myimage:latest build --cpus 2 --memory 4g
+
+      podman_run_background <image> <rule> [args..]
+        Schedule background container execution via memodb
+        Schedules a container execution in the background using memodb.
+        Usage: podman_run_background <image> <rule> [args..]
+        Requires memodb module to be loaded.
+
+      podman_run_background_wait <image> <rule>
+        Wait for background container execution to complete
+        Waits for a background container execution to complete.
+        Usage: podman_run_background_wait <image> <rule>
+
+  podman_rules - Podman support rules for Bar
+    
+    Integrates podman container support with Bar's standard build system.
+    Provides hooks for container-based builds and tests.
+
+    Rules:
+
+      is_podman_installed
+        Check if podman is available on this system
+
+      podman_check_deps
+        Verify podman is properly configured and ready to use
+
+      podman_setup_qemu
+        Setup QEMU for multi-architecture support
+
+      podman_list_archs
+        List all available architectures
+
+      podman_list_networks
+        List all podman networks
+
   rad - Support for the radicle p2p git frontend
 
     Functions:
@@ -754,6 +1037,8 @@ MODULE API/RULES
 
     Functions:
 
+      release_is_patch checks whenever the current worktrees release is a patch release
+
       release_state_matches [[!]statematch]
         Check if the current state matches (does not match with '!').
 
@@ -762,8 +1047,20 @@ MODULE API/RULES
         We prepare releases in dedicated worktrees. This would leave a lot worktrees behind.
         This provides the facility to coalesce worktrees to keep only major, majorpre1x, or majorminor versions.
 
+      release_into_major Transfer over to major version, for workflows that keep 'release-x' worktrees and branches
+
+      release_into_majorpre1x Transfer over to major version with 0.x major semantic, for workflows that keep 'release-0.x' and 'release-x' worktrees and branches
+
+      release_into_majorminor Transfer over to major.minor version, for workflows that keep 'release-x.y' worktrees and branches
+
       release_rename <version>
         rename worktree and cd into that
+
+      release_rename_major Rename worktree to'release-x' with major version only.
+
+      release_rename_majorpre1x Rename worktree to'release-x[.y]' with 0.x major semantic.
+
+      release_rename_majorminor Rename worktree to 'release-x.y' with major.minor.
 
       release_fastforward_branch <branch>
         fast-forward <branch> to the release branch if possible
@@ -1201,6 +1498,8 @@ MODULE API/RULES
         Path to the previous testdir if exits.
 
     Functions:
+
+      is_testdir_used Succeeds when a testdir is in use and current working directory is inside it.
 
       testdir_gc Cleanup old testdirs.
         Removed old unused testdirs. This is called automatically. It is only necessary to
