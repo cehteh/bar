@@ -448,6 +448,9 @@ rule test_in_container: podman_check_deps -- '
 
 ## Implementation Phases
 
+First make a ./podman-example.bar rulefile that shows and comments its actual use. add multiple rules/containers each focussing on showing different features of the above plan.
+This ./podman-example.bar is for now just an illustration/guide. do not test it yet as we dont have anything implemented.
+
 ### Phase 1: Basic Infrastructure
 - [ ] `is_podman_installed` detection
 - [ ] `podman_run` basic execution
