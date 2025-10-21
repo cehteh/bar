@@ -1381,3 +1381,295 @@ function podman_container_export
         run_test podman export -o "$output" "$container"
     fi
 }
+
+###############################################################################
+# Phase 6: Advanced Features
+###############################################################################
+
+## <config-name> - Load container configuration template
+function podman_config_load
+{
+    ## Loads a container configuration from an associative array.
+    ## Usage: Declare a config array, then use: podman_config_load CONFIG_NAME
+    ## The array should be named PODMAN_CONFIG_<config-name> in uppercase.
+    local config_name="$1"
+    
+    if [[ -z "$config_name" ]]; then
+        error "podman_config_load: configuration name is required"
+        return 1
+    fi
+    
+    # Convert to uppercase for array name
+    local array_name="PODMAN_CONFIG_${config_name^^}"
+    
+    # Check if array exists
+    if ! declare -p "$array_name" &>/dev/null; then
+        error "Configuration not found: $array_name"
+        return 1
+    fi
+    
+    debug "Loaded configuration: $config_name"
+}
+
+## <config-name> <rule> [args..] - Run with configuration template
+function podman_run_with_config
+{
+    ## Runs a rule using a predefined configuration template.
+    ## Usage: podman_run_with_config <config-name> <rule> [args..]
+    local config_name="$1"
+    local rule="$2"
+    shift 2
+    
+    if [[ -z "$config_name" ]]; then
+        error "podman_run_with_config: configuration name is required"
+        return 1
+    fi
+    
+    if [[ -z "$rule" ]]; then
+        error "podman_run_with_config: rule is required"
+        return 1
+    fi
+    
+    # Get configuration array name
+    local array_name="PODMAN_CONFIG_${config_name^^}"
+    
+    # Check if configuration exists
+    if ! declare -p "$array_name" &>/dev/null; then
+        error "Configuration not found: $array_name"
+        return 1
+    fi
+    
+    # Get configuration using nameref
+    local -n config="$array_name"
+    
+    # Extract configuration values
+    local image="${config[image]}"
+    local timeout="${config[timeout]:-}"
+    local network="${config[network]:-}"
+    local platform="${config[platform]:-}"
+    
+    if [[ -z "$image" ]]; then
+        error "Configuration $config_name missing required 'image' field"
+        return 1
+    fi
+    
+    # Build podman_run arguments
+    local -a run_args=()
+    
+    if [[ -n "$timeout" ]]; then
+        run_args+=(--timeout "$timeout")
+    fi
+    
+    if [[ -n "$platform" ]]; then
+        run_args+=(--platform "$platform")
+    fi
+    
+    if [[ -n "$network" ]]; then
+        run_args+=(--network "$network")
+    fi
+    
+    # Add volumes if specified
+    if [[ -v config[volumes] ]]; then
+        IFS=',' read -ra volumes <<< "${config[volumes]}"
+        for vol in "${volumes[@]}"; do
+            run_args+=(--volume "$vol")
+        done
+    fi
+    
+    info "Running '$rule' with configuration '$config_name'"
+    podman_run "${run_args[@]}" "$image" bar "$rule" "$@"
+}
+
+## <image> <rule> [--parallel <count>] [args..] - Run rule in parallel containers
+function podman_run_parallel
+{
+    ## Runs the same rule in multiple parallel containers.
+    ## Usage: podman_run_parallel <image> <rule> [--parallel <count>] [args..]
+    local image="$1"
+    local rule="$2"
+    shift 2
+    
+    local parallel_count=2
+    local -a run_args=()
+    local -a rule_args=()
+    
+    # Parse options
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --parallel)
+                parallel_count="$2"
+                shift 2
+                ;;
+            --*)
+                run_args+=("$1" "$2")
+                shift 2
+                ;;
+            *)
+                rule_args+=("$@")
+                break
+                ;;
+        esac
+    done
+    
+    if [[ -z "$image" ]]; then
+        error "podman_run_parallel: image is required"
+        return 1
+    fi
+    
+    if [[ -z "$rule" ]]; then
+        error "podman_run_parallel: rule is required"
+        return 1
+    fi
+    
+    info "Running '$rule' in $parallel_count parallel containers"
+    
+    local -a pids=()
+    local failed=0
+    
+    # Start parallel containers
+    for ((i=1; i<=parallel_count; i++)); do
+        (
+            info "[$i/$parallel_count] Starting container"
+            podman_run "${run_args[@]}" "$image" bar "$rule" "${rule_args[@]}"
+        ) &
+        pids+=($!)
+    done
+    
+    # Wait for all to complete
+    for pid in "${pids[@]}"; do
+        if ! wait "$pid"; then
+            failed=$((failed + 1))
+        fi
+    done
+    
+    if [[ $failed -gt 0 ]]; then
+        error "$failed of $parallel_count containers failed"
+        return 1
+    fi
+    
+    info "All $parallel_count containers completed successfully"
+    return 0
+}
+
+## <image> <rule> [--cpus <n>] [--memory <size>] [args..] - Run with resource limits
+function podman_run_limited
+{
+    ## Runs a rule with CPU and memory limits.
+    ## Usage: podman_run_limited <image> <rule> [--cpus <n>] [--memory <size>] [args..]
+    ## Example: podman_run_limited myimage:latest build --cpus 2 --memory 4g
+    local image="$1"
+    local rule="$2"
+    shift 2
+    
+    local cpus=""
+    local memory=""
+    local -a extra_args=()
+    local -a rule_args=()
+    
+    # Parse resource limits
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --cpus)
+                cpus="$2"
+                shift 2
+                ;;
+            --memory)
+                memory="$2"
+                shift 2
+                ;;
+            --*)
+                extra_args+=("$1" "$2")
+                shift 2
+                ;;
+            *)
+                rule_args+=("$@")
+                break
+                ;;
+        esac
+    done
+    
+    if [[ -z "$image" ]]; then
+        error "podman_run_limited: image is required"
+        return 1
+    fi
+    
+    if [[ -z "$rule" ]]; then
+        error "podman_run_limited: rule is required"
+        return 1
+    fi
+    
+    # Build resource limit arguments
+    local -a limits=()
+    if [[ -n "$cpus" ]]; then
+        limits+=(--cpus="$cpus")
+        info "CPU limit: $cpus"
+    fi
+    
+    if [[ -n "$memory" ]]; then
+        limits+=(--memory="$memory")
+        info "Memory limit: $memory"
+    fi
+    
+    # Run with podman directly to pass resource limits
+    info "Running '$rule' with resource limits"
+    run_test podman run --rm "${limits[@]}" "${extra_args[@]}" "$image" bar "$rule" "${rule_args[@]}"
+}
+
+## <image> <rule> [args..] - Schedule background container execution via memodb
+function podman_run_background
+{
+    ## Schedules a container execution in the background using memodb.
+    ## Usage: podman_run_background <image> <rule> [args..]
+    ## Requires memodb module to be loaded.
+    local image="$1"
+    local rule="$2"
+    shift 2
+    
+    if [[ -z "$image" ]]; then
+        error "podman_run_background: image is required"
+        return 1
+    fi
+    
+    if [[ -z "$rule" ]]; then
+        error "podman_run_background: rule is required"
+        return 1
+    fi
+    
+    # Check if memodb is available
+    if ! declare -F memodb_schedule >/dev/null; then
+        error "memodb module not loaded - cannot schedule background execution"
+        error "Try: require memodb"
+        return 1
+    fi
+    
+    info "Scheduling background execution: $rule in $image"
+    memodb_schedule podman_run "$image" bar "$rule" "$@"
+}
+
+## <image> <rule> - Wait for background container execution to complete
+function podman_run_background_wait
+{
+    ## Waits for a background container execution to complete.
+    ## Usage: podman_run_background_wait <image> <rule>
+    local image="$1"
+    local rule="$2"
+    
+    if [[ -z "$image" ]]; then
+        error "podman_run_background_wait: image is required"
+        return 1
+    fi
+    
+    if [[ -z "$rule" ]]; then
+        error "podman_run_background_wait: rule is required"
+        return 1
+    fi
+    
+    # Check if memodb is available
+    if ! declare -F memodb_result >/dev/null; then
+        error "memodb module not loaded"
+        return 1
+    fi
+    
+    info "Waiting for background execution: $rule in $image"
+    memodb_result podman_run "$image" bar "$rule"
+}

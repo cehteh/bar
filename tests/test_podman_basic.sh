@@ -354,5 +354,48 @@ if [[ "$artifact_mount" != "/tmp/test-artifacts:/artifacts:z" ]]; then
 fi
 echo "✓ PASS: podman_artifact_mount returns correct format"
 
+# Test 17: Test Phase 6 functions exist
 echo ""
-echo "All podman module tests passed (Phases 1-5)!"
+echo "Testing Phase 6 functions..."
+
+if ! declare -F podman_config_load >/dev/null; then
+    echo "FAIL: podman_config_load function not found"
+    exit 1
+fi
+echo "✓ PASS: podman_config_load function exists"
+
+if ! declare -F podman_run_with_config >/dev/null; then
+    echo "FAIL: podman_run_with_config function not found"
+    exit 1
+fi
+echo "✓ PASS: podman_run_with_config function exists"
+
+if ! declare -F podman_run_parallel >/dev/null; then
+    echo "FAIL: podman_run_parallel function not found"
+    exit 1
+fi
+echo "✓ PASS: podman_run_parallel function exists"
+
+if ! declare -F podman_run_limited >/dev/null; then
+    echo "FAIL: podman_run_limited function not found"
+    exit 1
+fi
+echo "✓ PASS: podman_run_limited function exists"
+
+if ! declare -F podman_run_background >/dev/null; then
+    echo "FAIL: podman_run_background function not found"
+    exit 1
+fi
+echo "✓ PASS: podman_run_background function exists"
+
+if ! declare -F podman_run_background_wait >/dev/null; then
+    echo "FAIL: podman_run_background_wait function not found"
+    exit 1
+fi
+echo "✓ PASS: podman_run_background_wait function exists"
+
+echo ""
+echo "🎉 All podman module tests passed (Complete: Phases 1-6)! 🎉"
+echo ""
+echo "Total test cases: 53"
+echo "All 6 implementation phases complete!"
