@@ -8,50 +8,5 @@
 
 rule test_completion_outside_repo: 'require contrib/bar_complete'
 
-function completion_outside_repo_test ## - Test completion from temp directory
-{
-    echo "======================================"
-    echo "Test: Completion Outside Bar Repository"
-    echo "======================================"
-    
-    # Create a temp directory outside the repository
-    local TEMP_DIR
-    TEMP_DIR=$(mktemp -d)
-    cd "$TEMP_DIR" || return 1
-    
-    echo "Test: Scanning for rules/functions from temp directory: $TEMP_DIR"
-    __bar_scan_files "bar"
-    
-    echo "Rules found: ${#__bar_rules[@]}"
-    echo "Functions found: ${#__bar_functions[@]}"
-    
-    local status=0
-    
-    # Check if any rules were found
-    if [[ ${#__bar_rules[@]} -gt 0 ]]; then
-        echo "✓ PASS: Found ${#__bar_rules[@]} rules"
-        echo "  Sample rules: ${__bar_rules[0]}, ${__bar_rules[1]}, ${__bar_rules[2]}"
-    else
-        echo "✗ FAIL: No rules found when outside bar repository"
-        echo "  Expected: Should fall back to installed Bar.d location"
-        status=1
-    fi
-    
-    # Check if any functions were found
-    if [[ ${#__bar_functions[@]} -gt 0 ]]; then
-        echo "✓ PASS: Found ${#__bar_functions[@]} functions"
-    else
-        echo "✗ FAIL: No functions found when outside bar repository"
-        status=1
-    fi
-    
-    # Cleanup
-    cd - > /dev/null || return 1
-    rm -rf "$TEMP_DIR"
-    
-    echo "Test complete"
-    return $status
-}
-
-## Run completion outside repo test
-rule test_completion_outside_repo: -- completion_outside_repo_test
+## Run completion outside repo test (wrapped)
+rule test_completion_outside_repo: -- bash tests/test_completion_outside_repo.sh
