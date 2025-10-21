@@ -158,5 +158,69 @@ if [[ -z "$native" ]]; then
 fi
 echo "✓ PASS: podman_get_native_arch returns: $native"
 
+# Test 12: Test Phase 3 functions exist
 echo ""
-echo "All basic podman module tests passed (Phase 1 + Phase 2)!"
+echo "Testing Phase 3 functions..."
+
+if ! declare -F podman_image_snapshot >/dev/null; then
+    echo "FAIL: podman_image_snapshot function not found"
+    exit 1
+fi
+echo "✓ PASS: podman_image_snapshot function exists"
+
+if ! declare -F podman_layer_bar >/dev/null; then
+    echo "FAIL: podman_layer_bar function not found"
+    exit 1
+fi
+echo "✓ PASS: podman_layer_bar function exists"
+
+if ! declare -F podman_layer_toolchain >/dev/null; then
+    echo "FAIL: podman_layer_toolchain function not found"
+    exit 1
+fi
+echo "✓ PASS: podman_layer_toolchain function exists"
+
+if ! declare -F podman_layer_dev >/dev/null; then
+    echo "FAIL: podman_layer_dev function not found"
+    exit 1
+fi
+echo "✓ PASS: podman_layer_dev function exists"
+
+if ! declare -F podman_containerfile_from >/dev/null; then
+    echo "FAIL: podman_containerfile_from function not found"
+    exit 1
+fi
+echo "✓ PASS: podman_containerfile_from function exists"
+
+if ! declare -F podman_containerfile_run >/dev/null; then
+    echo "FAIL: podman_containerfile_run function not found"
+    exit 1
+fi
+echo "✓ PASS: podman_containerfile_run function exists"
+
+if ! declare -F podman_containerfile_copy >/dev/null; then
+    echo "FAIL: podman_containerfile_copy function not found"
+    exit 1
+fi
+echo "✓ PASS: podman_containerfile_copy function exists"
+
+if ! declare -F podman_containerfile_env >/dev/null; then
+    echo "FAIL: podman_containerfile_env function not found"
+    exit 1
+fi
+echo "✓ PASS: podman_containerfile_env function exists"
+
+if ! declare -F podman_containerfile_workdir >/dev/null; then
+    echo "FAIL: podman_containerfile_workdir function not found"
+    exit 1
+fi
+echo "✓ PASS: podman_containerfile_workdir function exists"
+
+if ! declare -F podman_containerfile_build >/dev/null; then
+    echo "FAIL: podman_containerfile_build function not found"
+    exit 1
+fi
+echo "✓ PASS: podman_containerfile_build function exists"
+
+echo ""
+echo "All basic podman module tests passed (Phase 1 + Phase 2 + Phase 3)!"

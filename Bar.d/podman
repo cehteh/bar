@@ -559,3 +559,345 @@ function podman_list_available_archs
         fi
     done
 }
+
+###############################################################################
+# Phase 3: Image Layering and Snapshots
+###############################################################################
+
+## <container-id> <tag> - Snapshot a container to an image
+function podman_image_snapshot
+{
+    ## Creates an image from a container's current state.
+    ## Usage: podman_image_snapshot <container-id> <tag>
+    local container="$1"
+    local tag="$2"
+    
+    if [[ -z "$container" ]]; then
+        error "podman_image_snapshot: container ID is required"
+        return 1
+    fi
+    
+    if [[ -z "$tag" ]]; then
+        error "podman_image_snapshot: tag is required"
+        return 1
+    fi
+    
+    info "Snapshotting container $container as $tag"
+    run_test podman commit "$container" "$tag"
+}
+
+## <name:tag> <base-image> - Create base layer with Bar runtime
+function podman_layer_bar
+{
+    ## Creates a container image with Bar and bash installed.
+    ## Usage: podman_layer_bar <name:tag> <base-image>
+    local tag="$1"
+    local base="$2"
+    
+    if [[ -z "$tag" ]]; then
+        error "podman_layer_bar: tag is required"
+        return 1
+    fi
+    
+    if [[ -z "$base" ]]; then
+        error "podman_layer_bar: base image is required"
+        return 1
+    fi
+    
+    info "Creating Bar runtime layer: $tag from $base"
+    
+    # Generate Containerfile
+    local containerfile
+    containerfile=$(mktemp)
+    
+    cat > "$containerfile" <<EOF
+FROM $base
+RUN command -v apt-get >/dev/null && apt-get update && apt-get install -y bash git || \
+    command -v yum >/dev/null && yum install -y bash git || \
+    command -v apk >/dev/null && apk add bash git || true
+COPY bar /usr/local/bin/bar
+COPY Bar.d /usr/local/lib/bar/Bar.d
+RUN chmod +x /usr/local/bin/bar
+ENV PATH="/usr/local/bin:\$PATH"
+WORKDIR /workspace
+EOF
+    
+    # Build the image
+    podman build -t "$tag" -f "$containerfile" .
+    local rc=$?
+    
+    # Cleanup
+    rm -f "$containerfile"
+    
+    return $rc
+}
+
+## <name:tag> <parent:tag> <toolchain> - Add toolchain layer
+function podman_layer_toolchain
+{
+    ## Adds a development toolchain to an existing image.
+    ## Usage: podman_layer_toolchain <name:tag> <parent:tag> <toolchain>
+    ## Supported toolchains: rust, python, nodejs, go, gcc
+    local tag="$1"
+    local parent="$2"
+    local toolchain="$3"
+    
+    if [[ -z "$tag" ]]; then
+        error "podman_layer_toolchain: tag is required"
+        return 1
+    fi
+    
+    if [[ -z "$parent" ]]; then
+        error "podman_layer_toolchain: parent image is required"
+        return 1
+    fi
+    
+    if [[ -z "$toolchain" ]]; then
+        error "podman_layer_toolchain: toolchain name is required"
+        return 1
+    fi
+    
+    info "Creating toolchain layer: $tag from $parent with $toolchain"
+    
+    # Generate Containerfile based on toolchain
+    local containerfile
+    containerfile=$(mktemp)
+    
+    cat > "$containerfile" <<EOF
+FROM $parent
+EOF
+    
+    case "$toolchain" in
+        rust|cargo)
+            cat >> "$containerfile" <<'EOF'
+RUN command -v apt-get >/dev/null && apt-get update && apt-get install -y cargo rustc pkg-config libssl-dev || \
+    command -v yum >/dev/null && yum install -y cargo rust || \
+    command -v apk >/dev/null && apk add cargo rust openssl-dev
+EOF
+            ;;
+        python|python3)
+            cat >> "$containerfile" <<'EOF'
+RUN command -v apt-get >/dev/null && apt-get update && apt-get install -y python3 python3-pip || \
+    command -v yum >/dev/null && yum install -y python3 python3-pip || \
+    command -v apk >/dev/null && apk add python3 py3-pip
+EOF
+            ;;
+        nodejs|node)
+            cat >> "$containerfile" <<'EOF'
+RUN command -v apt-get >/dev/null && apt-get update && apt-get install -y nodejs npm || \
+    command -v yum >/dev/null && yum install -y nodejs npm || \
+    command -v apk >/dev/null && apk add nodejs npm
+EOF
+            ;;
+        go|golang)
+            cat >> "$containerfile" <<'EOF'
+RUN command -v apt-get >/dev/null && apt-get update && apt-get install -y golang || \
+    command -v yum >/dev/null && yum install -y golang || \
+    command -v apk >/dev/null && apk add go
+EOF
+            ;;
+        gcc|build-essential)
+            cat >> "$containerfile" <<'EOF'
+RUN command -v apt-get >/dev/null && apt-get update && apt-get install -y build-essential || \
+    command -v yum >/dev/null && yum groupinstall -y "Development Tools" || \
+    command -v apk >/dev/null && apk add build-base
+EOF
+            ;;
+        *)
+            error "Unknown toolchain: $toolchain"
+            rm -f "$containerfile"
+            return 1
+            ;;
+    esac
+    
+    cat >> "$containerfile" <<'EOF'
+RUN command -v apt-get >/dev/null && apt-get clean && rm -rf /var/lib/apt/lists/* || true
+EOF
+    
+    # Build the image
+    podman build -t "$tag" -f "$containerfile" .
+    local rc=$?
+    
+    # Cleanup
+    rm -f "$containerfile"
+    
+    return $rc
+}
+
+## <name:tag> <parent:tag> - Add development tools layer
+function podman_layer_dev
+{
+    ## Adds common development tools to an existing image.
+    ## Usage: podman_layer_dev <name:tag> <parent:tag>
+    local tag="$1"
+    local parent="$2"
+    
+    if [[ -z "$tag" ]]; then
+        error "podman_layer_dev: tag is required"
+        return 1
+    fi
+    
+    if [[ -z "$parent" ]]; then
+        error "podman_layer_dev: parent image is required"
+        return 1
+    fi
+    
+    info "Creating development tools layer: $tag from $parent"
+    
+    # Generate Containerfile
+    local containerfile
+    containerfile=$(mktemp)
+    
+    cat > "$containerfile" <<EOF
+FROM $parent
+RUN command -v apt-get >/dev/null && apt-get update && apt-get install -y \\
+        gdb valgrind strace curl wget vim || \\
+    command -v yum >/dev/null && yum install -y \\
+        gdb valgrind strace curl wget vim || \\
+    command -v apk >/dev/null && apk add \\
+        gdb strace curl wget vim || true
+RUN command -v apt-get >/dev/null && apt-get clean && rm -rf /var/lib/apt/lists/* || true
+EOF
+    
+    # Build the image
+    podman build -t "$tag" -f "$containerfile" .
+    local rc=$?
+    
+    # Cleanup
+    rm -f "$containerfile"
+    
+    return $rc
+}
+
+###############################################################################
+# Programmatic Containerfile Generation
+###############################################################################
+
+# Global variable for building Containerfiles programmatically
+declare -g PODMAN_CONTAINERFILE_CONTENT=""
+
+## <base-image> - Start building a Containerfile from base image
+function podman_containerfile_from
+{
+    ## Starts a new Containerfile with the specified base image.
+    ## Usage: podman_containerfile_from <base-image>
+    local base="$1"
+    
+    if [[ -z "$base" ]]; then
+        error "podman_containerfile_from: base image is required"
+        return 1
+    fi
+    
+    PODMAN_CONTAINERFILE_CONTENT="FROM $base"$'\n'
+}
+
+## <command> - Add RUN instruction to Containerfile
+function podman_containerfile_run
+{
+    ## Adds a RUN instruction to the current Containerfile.
+    ## Usage: podman_containerfile_run <command>
+    local command="$*"
+    
+    if [[ -z "$command" ]]; then
+        error "podman_containerfile_run: command is required"
+        return 1
+    fi
+    
+    PODMAN_CONTAINERFILE_CONTENT+="RUN $command"$'\n'
+}
+
+## <src> <dst> - Add COPY instruction to Containerfile
+function podman_containerfile_copy
+{
+    ## Adds a COPY instruction to the current Containerfile.
+    ## Usage: podman_containerfile_copy <src> <dst>
+    local src="$1"
+    local dst="$2"
+    
+    if [[ -z "$src" ]]; then
+        error "podman_containerfile_copy: source is required"
+        return 1
+    fi
+    
+    if [[ -z "$dst" ]]; then
+        error "podman_containerfile_copy: destination is required"
+        return 1
+    fi
+    
+    PODMAN_CONTAINERFILE_CONTENT+="COPY $src $dst"$'\n'
+}
+
+## <key> <value> - Add ENV instruction to Containerfile
+function podman_containerfile_env
+{
+    ## Adds an ENV instruction to the current Containerfile.
+    ## Usage: podman_containerfile_env <key> <value>
+    local key="$1"
+    local value="$2"
+    
+    if [[ -z "$key" ]]; then
+        error "podman_containerfile_env: key is required"
+        return 1
+    fi
+    
+    if [[ -z "$value" ]]; then
+        error "podman_containerfile_env: value is required"
+        return 1
+    fi
+    
+    PODMAN_CONTAINERFILE_CONTENT+="ENV $key=\"$value\""$'\n'
+}
+
+## <workdir> - Add WORKDIR instruction to Containerfile
+function podman_containerfile_workdir
+{
+    ## Adds a WORKDIR instruction to the current Containerfile.
+    ## Usage: podman_containerfile_workdir <workdir>
+    local workdir="$1"
+    
+    if [[ -z "$workdir" ]]; then
+        error "podman_containerfile_workdir: workdir is required"
+        return 1
+    fi
+    
+    PODMAN_CONTAINERFILE_CONTENT+="WORKDIR $workdir"$'\n'
+}
+
+## <tag> - Build image from programmatically generated Containerfile
+function podman_containerfile_build
+{
+    ## Builds an image from the programmatically generated Containerfile.
+    ## Usage: podman_containerfile_build <tag>
+    local tag="$1"
+    
+    if [[ -z "$tag" ]]; then
+        error "podman_containerfile_build: tag is required"
+        return 1
+    fi
+    
+    if [[ -z "$PODMAN_CONTAINERFILE_CONTENT" ]]; then
+        error "podman_containerfile_build: no Containerfile content. Use podman_containerfile_from first"
+        return 1
+    fi
+    
+    # Create temporary Containerfile
+    local containerfile
+    containerfile=$(mktemp)
+    echo "$PODMAN_CONTAINERFILE_CONTENT" > "$containerfile"
+    
+    info "Building image $tag from generated Containerfile"
+    debug "Containerfile content:"
+    debug "$PODMAN_CONTAINERFILE_CONTENT"
+    
+    # Build the image
+    podman build -t "$tag" -f "$containerfile" .
+    local rc=$?
+    
+    # Cleanup
+    rm -f "$containerfile"
+    
+    # Clear the content for next build
+    PODMAN_CONTAINERFILE_CONTENT=""
+    
+    return $rc
+}

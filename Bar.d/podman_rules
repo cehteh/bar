@@ -35,3 +35,13 @@ rule podman_list_archs: is_podman_installed -- '
     echo "Available architectures:"
     podman_list_available_archs
 '
+
+## Example: Build a layered image with Bar and Rust toolchain
+rule podman_example_layered_build: is_podman_installed -- '
+    require podman
+    echo "Building layered image example..."
+    podman_layer_bar example-bar:latest debian:stable-slim
+    podman_layer_toolchain example-rust:latest example-bar:latest rust
+    podman_layer_dev example-dev:latest example-rust:latest
+    echo "Layered images created: example-bar, example-rust, example-dev"
+'
