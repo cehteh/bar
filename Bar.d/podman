@@ -1160,3 +1160,224 @@ function podman_firewall_show
     echo "  Allowed ports: ${PODMAN_FIREWALL_RULES["${network}_ports"]:-none}"
     echo "  Allowed networks: ${PODMAN_FIREWALL_RULES["${network}_networks"]:-none}"
 }
+
+###############################################################################
+# Phase 5: Artifact Management
+###############################################################################
+
+## [path] - Create and return artifact directory path
+# shellcheck disable=SC2120
+function podman_artifact_dir
+{
+    ## Creates an artifact directory and returns its path.
+    ## Usage: podman_artifact_dir [path]
+    ## If no path provided, creates a temporary directory.
+    local dir="$1"
+    
+    if [[ -z "$dir" ]]; then
+        dir="$(mktemp -d -t podman-artifacts-XXXXXX)"
+        debug "Created temporary artifact directory: $dir"
+    else
+        mkdir -p "$dir"
+        debug "Using artifact directory: $dir"
+    fi
+    
+    echo "$dir"
+}
+
+## <path> - Prepare artifact mount specification
+function podman_artifact_mount
+{
+    ## Prepares a volume mount specification for artifacts.
+    ## Usage: podman_artifact_mount <path>
+    ## Returns: "<path>:/artifacts:z"
+    local path="$1"
+    
+    if [[ -z "$path" ]]; then
+        error "podman_artifact_mount: path is required"
+        return 1
+    fi
+    
+    if [[ ! -d "$path" ]]; then
+        mkdir -p "$path"
+    fi
+    
+    # Use :z for SELinux compatibility
+    echo "${path}:/artifacts:z"
+}
+
+## <container> <src> <dst> - Copy artifacts from container to host
+function podman_artifact_fetch
+{
+    ## Copies artifacts from a container to the host filesystem.
+    ## Usage: podman_artifact_fetch <container> <src> <dst>
+    ## Example: podman_artifact_fetch my-container /app/target/release/binary ./artifacts/
+    local container="$1"
+    local src="$2"
+    local dst="$3"
+    
+    if [[ -z "$container" ]]; then
+        error "podman_artifact_fetch: container ID/name is required"
+        return 1
+    fi
+    
+    if [[ -z "$src" ]]; then
+        error "podman_artifact_fetch: source path is required"
+        return 1
+    fi
+    
+    if [[ -z "$dst" ]]; then
+        error "podman_artifact_fetch: destination path is required"
+        return 1
+    fi
+    
+    # Ensure destination directory exists
+    local dst_dir
+    if [[ "$dst" == */ ]] || [[ -d "$dst" ]]; then
+        dst_dir="$dst"
+    else
+        dst_dir="$(dirname "$dst")"
+    fi
+    mkdir -p "$dst_dir"
+    
+    info "Fetching artifacts from $container:$src to $dst"
+    run_test podman cp "$container:$src" "$dst"
+}
+
+## <container> <dst-dir> - Extract all artifacts from container's /artifacts directory
+function podman_artifact_extract_all
+{
+    ## Extracts all files from container's /artifacts directory to host.
+    ## Usage: podman_artifact_extract_all <container> <dst-dir>
+    local container="$1"
+    local dst="$2"
+    
+    if [[ -z "$container" ]]; then
+        error "podman_artifact_extract_all: container ID/name is required"
+        return 1
+    fi
+    
+    if [[ -z "$dst" ]]; then
+        error "podman_artifact_extract_all: destination directory is required"
+        return 1
+    fi
+    
+    mkdir -p "$dst"
+    
+    info "Extracting all artifacts from $container:/artifacts to $dst"
+    podman_artifact_fetch "$container" "/artifacts/." "$dst/"
+}
+
+## <container> <src-path> <dst-dir> - Fetch and extract tarball from container
+function podman_artifact_fetch_tarball
+{
+    ## Fetches a tarball from container and extracts it.
+    ## Usage: podman_artifact_fetch_tarball <container> <src-path> <dst-dir>
+    local container="$1"
+    local src="$2"
+    local dst="$3"
+    
+    if [[ -z "$container" ]]; then
+        error "podman_artifact_fetch_tarball: container ID/name is required"
+        return 1
+    fi
+    
+    if [[ -z "$src" ]]; then
+        error "podman_artifact_fetch_tarball: source tarball path is required"
+        return 1
+    fi
+    
+    if [[ -z "$dst" ]]; then
+        error "podman_artifact_fetch_tarball: destination directory is required"
+        return 1
+    fi
+    
+    mkdir -p "$dst"
+    
+    local tarball
+    tarball="$(mktemp)"
+    
+    info "Fetching tarball from $container:$src"
+    if podman_artifact_fetch "$container" "$src" "$tarball"; then
+        info "Extracting tarball to $dst"
+        tar -xf "$tarball" -C "$dst"
+        local rc=$?
+        rm -f "$tarball"
+        return $rc
+    else
+        rm -f "$tarball"
+        return 1
+    fi
+}
+
+## <image> <rule> <artifact-dir> [args..] - Run rule and collect artifacts
+function podman_run_with_artifacts
+{
+    ## Runs a rule in container and collects artifacts automatically.
+    ## Usage: podman_run_with_artifacts <image> <rule> <artifact-dir> [args..]
+    local image="$1"
+    local rule="$2"
+    local artifact_dir="$3"
+    shift 3
+    
+    if [[ -z "$image" ]]; then
+        error "podman_run_with_artifacts: image is required"
+        return 1
+    fi
+    
+    if [[ -z "$rule" ]]; then
+        error "podman_run_with_artifacts: rule is required"
+        return 1
+    fi
+    
+    if [[ -z "$artifact_dir" ]]; then
+        # shellcheck disable=SC2119
+        artifact_dir="$(podman_artifact_dir)"
+    else
+        mkdir -p "$artifact_dir"
+    fi
+    
+    local mount_spec
+    mount_spec="$(podman_artifact_mount "$artifact_dir")"
+    
+    info "Running rule '$rule' with artifacts in $artifact_dir"
+    
+    # Run with artifact mount
+    podman_run --volume "$mount_spec" "$image" bar "$rule" "$@"
+    local rc=$?
+    
+    if [[ $rc -eq 0 ]]; then
+        info "Artifacts collected in: $artifact_dir"
+        if [[ -n "$(ls -A "$artifact_dir" 2>/dev/null)" ]]; then
+            echo "Artifact contents:"
+            ls -lh "$artifact_dir"
+        else
+            note "No artifacts were generated"
+        fi
+    fi
+    
+    return $rc
+}
+
+## <container-id> - Export container filesystem as tarball
+function podman_container_export
+{
+    ## Exports a container's entire filesystem as a tarball.
+    ## Usage: podman_container_export <container-id> [output-file]
+    ## If no output file specified, outputs to stdout
+    local container="$1"
+    local output="${2:--}"
+    
+    if [[ -z "$container" ]]; then
+        error "podman_container_export: container ID/name is required"
+        return 1
+    fi
+    
+    if [[ "$output" == "-" ]]; then
+        debug "Exporting container $container to stdout"
+        podman export "$container"
+    else
+        info "Exporting container $container to $output"
+        run_test podman export -o "$output" "$container"
+    fi
+}

@@ -300,5 +300,59 @@ if [[ "$port_map" != "80:8080/tcp" ]]; then
 fi
 echo "✓ PASS: podman_port_map returns correct format"
 
+# Test 15: Test Phase 5 functions exist
 echo ""
-echo "All podman module tests passed (Phases 1-4)!"
+echo "Testing Phase 5 functions..."
+
+if ! declare -F podman_artifact_dir >/dev/null; then
+    echo "FAIL: podman_artifact_dir function not found"
+    exit 1
+fi
+echo "✓ PASS: podman_artifact_dir function exists"
+
+if ! declare -F podman_artifact_mount >/dev/null; then
+    echo "FAIL: podman_artifact_mount function not found"
+    exit 1
+fi
+echo "✓ PASS: podman_artifact_mount function exists"
+
+if ! declare -F podman_artifact_fetch >/dev/null; then
+    echo "FAIL: podman_artifact_fetch function not found"
+    exit 1
+fi
+echo "✓ PASS: podman_artifact_fetch function exists"
+
+if ! declare -F podman_artifact_extract_all >/dev/null; then
+    echo "FAIL: podman_artifact_extract_all function not found"
+    exit 1
+fi
+echo "✓ PASS: podman_artifact_extract_all function exists"
+
+if ! declare -F podman_artifact_fetch_tarball >/dev/null; then
+    echo "FAIL: podman_artifact_fetch_tarball function not found"
+    exit 1
+fi
+echo "✓ PASS: podman_artifact_fetch_tarball function exists"
+
+if ! declare -F podman_run_with_artifacts >/dev/null; then
+    echo "FAIL: podman_run_with_artifacts function not found"
+    exit 1
+fi
+echo "✓ PASS: podman_run_with_artifacts function exists"
+
+if ! declare -F podman_container_export >/dev/null; then
+    echo "FAIL: podman_container_export function not found"
+    exit 1
+fi
+echo "✓ PASS: podman_container_export function exists"
+
+# Test 16: Test podman_artifact_mount functionality
+artifact_mount=$(podman_artifact_mount /tmp/test-artifacts)
+if [[ "$artifact_mount" != "/tmp/test-artifacts:/artifacts:z" ]]; then
+    echo "FAIL: podman_artifact_mount returned unexpected format: $artifact_mount"
+    exit 1
+fi
+echo "✓ PASS: podman_artifact_mount returns correct format"
+
+echo ""
+echo "All podman module tests passed (Phases 1-5)!"

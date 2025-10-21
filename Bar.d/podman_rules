@@ -75,3 +75,18 @@ rule podman_example_firewall: is_podman_installed -- '
     podman_firewall_deny_all custom-net
     podman_firewall_show custom-net
 '
+
+## Example: Artifact management workflow
+rule podman_example_artifacts: is_podman_installed -- '
+    require podman
+    echo "Demonstrating artifact management..."
+    local artifact_dir
+    artifact_dir=$(podman_artifact_dir ./build-artifacts)
+    echo "Artifact directory: $artifact_dir"
+    
+    local mount
+    mount=$(podman_artifact_mount "$artifact_dir")
+    echo "Mount specification: $mount"
+    
+    echo "In a real workflow, artifacts would be collected here"
+'
