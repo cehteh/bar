@@ -9,23 +9,29 @@ rule test_prototype_scoping: 'require contrib/bar_complete'
 
 function test_module_prototypes_scoped ## - Module prototypes should be scoped
 {
+    echo "Test 1: Module prototypes are scoped to module@prototype"
     __bar_init_completion_registry
     __bar_parse_file "Bar.d/help"
     
     if [[ "${__bar_protoregistry[help@rule]}" == "help" ]]; then
+        echo "  ✓ PASS: help@rule is registered as 'help'"
     else
+        echo "  ✗ FAIL: help@rule should be 'help' but is: ${__bar_protoregistry[help@rule]}"
         return 1
     fi
     
     if [[ "${__bar_protoregistry[rule]}" == "rule_or_function" ]]; then
+        echo "  ✓ PASS: Global 'rule' remains 'rule_or_function'"
         return 0
     else
+        echo "  ✗ FAIL: Global 'rule' should be 'rule_or_function' but is: ${__bar_protoregistry[rule]}"
         return 1
     fi
 }
 
 function test_nonmodule_prototypes_ignored ## - Non-module files should NOT register global prototypes
 {
+    echo "Test 2: Prototype definitions in non-module files are ignored"
     cat > /tmp/test_barf << 'EOF'
 # prototype: "testproto" = "help"
 
@@ -42,9 +48,11 @@ EOF
     __bar_parse_file --public /tmp/test_barf
     
     if [[ -z "${__bar_protoregistry[testproto]:-}" ]]; then
+        echo "  ✓ PASS: testproto was not registered globally (correctly ignored)"
         rm /tmp/test_barf
         return 0
     else
+        echo "  ✗ FAIL: testproto should not be registered globally, but is: ${__bar_protoregistry[testproto]}"
         rm /tmp/test_barf
         return 1
     fi
@@ -52,6 +60,7 @@ EOF
 
 function test_help_rule_scoped ## - Verify help@rule only used in help module context
 {
+    echo "Test 3: help@rule completer is only used in help module context"
     
     # Clear registries
     unset __bar_protoregistry
@@ -68,14 +77,18 @@ function test_help_rule_scoped ## - Verify help@rule only used in help module co
     local completer
     completer=$(__bar_get_completer "" "rule")
     if [[ "$completer" == "__bar_comp_rule_or_function" ]]; then
+        echo "  ✓ PASS: 'rule' without context uses rule_or_function completer"
     else
+        echo "  ✗ FAIL: 'rule' without context should use rule_or_function but got: $completer"
         status=1
     fi
     
     # Get completer for 'rule' in context of help function
     completer=$(__bar_get_completer "help" "rule")
     if [[ "$completer" == "__bar_comp_help" ]]; then
+        echo "  ✓ PASS: 'rule' in help context uses help completer"
     else
+        echo "  ✗ FAIL: 'rule' in help context should use help completer but got: $completer"
         status=1
     fi
     
@@ -83,7 +96,9 @@ function test_help_rule_scoped ## - Verify help@rule only used in help module co
     __bar_functions+=("other_func")
     completer=$(__bar_get_completer "other_func" "rule")
     if [[ "$completer" == "__bar_comp_rule_or_function" ]]; then
+        echo "  ✓ PASS: 'rule' in other_func context uses rule_or_function completer"
     else
+        echo "  ✗ FAIL: 'rule' in other_func context should use rule_or_function but got: $completer"
         status=1
     fi
     
@@ -92,17 +107,22 @@ function test_help_rule_scoped ## - Verify help@rule only used in help module co
 
 function test_cargo_prototypes_scoped ## - Verify cargo module prototypes are also scoped
 {
+    echo "Test 4: Cargo module prototypes are properly scoped"
     
     local status=0
     
     if [[ "${__bar_protoregistry[cargo@toolchain]}" == "extcomp cargo" ]]; then
+        echo "  ✓ PASS: cargo@toolchain is registered"
     else
+        echo "  ✗ FAIL: cargo@toolchain should be registered but is: ${__bar_protoregistry[cargo@toolchain]:-NOT SET}"
         status=1
     fi
     
     # Global 'toolchain' should not exist
     if [[ -z "${__bar_protoregistry[toolchain]:-}" ]]; then
+        echo "  ✓ PASS: Global 'toolchain' is not registered (module-scoped only)"
     else
+        echo "  ✗ FAIL: Global 'toolchain' should not exist but is: ${__bar_protoregistry[toolchain]}"
         status=1
     fi
     
