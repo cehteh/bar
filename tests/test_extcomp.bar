@@ -101,6 +101,7 @@ function test_multiple_arguments ## - Test with multiple arguments
         old_dir=$(pwd)
         # Simulate: git checkout <branch>
         cd /tmp || return 0
+        # shellcheck disable=SC2015
         git init test_repo &>/dev/null && cd test_repo || { cd "$old_dir" || return 0; return 0; }
         git checkout -b main &>/dev/null 2>&1
         git checkout -b feature/test &>/dev/null 2>&1

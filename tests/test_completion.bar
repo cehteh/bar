@@ -12,6 +12,7 @@ function assert_equals
 {
     local expected="$1"
     local actual="$2"
+    # shellcheck disable=SC2034
     local test_name="$3"
     
     if [[ "$expected" == "$actual" ]]; then
@@ -166,6 +167,7 @@ function test_bar_help_invocation_completer ## - Test bar help invocation comple
 
     if [[ ${#COMPREPLY[@]} -eq 0 ]]; then
         [[ -n "$nounset_was_on" ]] && set -u
+        # shellcheck disable=SC2015
         [[ -n "$debug_backup" ]] && BAR_COMPLETE_DEBUG="$debug_backup" || unset BAR_COMPLETE_DEBUG
         return 1
     fi
@@ -175,11 +177,13 @@ function test_bar_help_invocation_completer ## - Test bar help invocation comple
         :  # Success - bar help produces valid completions
     else
         [[ -n "$nounset_was_on" ]] && set -u
+        # shellcheck disable=SC2015
         [[ -n "$debug_backup" ]] && BAR_COMPLETE_DEBUG="$debug_backup" || unset BAR_COMPLETE_DEBUG
         return 1
     fi
 
     [[ -n "$nounset_was_on" ]] && set -u
+    # shellcheck disable=SC2015
     [[ -n "$debug_backup" ]] && BAR_COMPLETE_DEBUG="$debug_backup" || unset BAR_COMPLETE_DEBUG
 }
 
@@ -222,6 +226,7 @@ function test_completion_cache_reuse ## - Test completion caching
     second_result=$(printf '%s\n' "${COMPREPLY[@]}")
 
     if [[ "$first_result" == "$second_result" ]]; then
+        true
     else
         echo "  First:"
         printf '    %s\n' "${first_result}"
@@ -254,6 +259,7 @@ function test_completion_cache_reuse ## - Test completion caching
     second_filtered_str=$(printf '%s\n' "${second_prefix_array[@]}")
 
     if [[ "$second_filtered_str" == "$expected_filtered_str" ]]; then
+        true
     else
         echo "  Expected:"
         printf '    %s\n' "${expected_filtered_str}"
@@ -264,6 +270,7 @@ function test_completion_cache_reuse ## - Test completion caching
     fi
 
     if [[ "$__bar_cache_signature" == "$first_signature" ]]; then
+        true
     else
         echo "  First:  $first_signature"
         echo "  Second: $__bar_cache_signature"
@@ -272,6 +279,7 @@ function test_completion_cache_reuse ## - Test completion caching
     fi
 
     if [[ "$__bar_cache_prefix" == "A" ]]; then
+        true
     else
         echo "  Got: $__bar_cache_prefix"
         [[ -n "$nounset_was_on" ]] && set -u
@@ -290,6 +298,7 @@ function test_external_command_passthrough ## - Test external command passthroug
 
     local test_cmd="bar_fake_extcomp_test"
 
+    # shellcheck disable=SC2317
     bar_fake_extcomp_test_complete()
     {
         COMPREPLY=("fake-alpha" "fake-beta")
@@ -309,6 +318,7 @@ function test_external_command_passthrough ## - Test external command passthroug
     local expected="fake-alpha fake-beta"
 
     if [[ "$actual" == "$expected" ]]; then
+        true
     else
         echo "  Expected: $expected"
         echo "  Actual:   $actual"
@@ -333,6 +343,7 @@ function test_flag_completion_order ## - Test flag-first completion ordering
     local expected=$'--bare\n--debug\nbuild\ndoc'
 
     if [[ "$result" == "$expected" ]]; then
+        true
     else
         echo "  Expected:"
         while IFS= read -r line; do
@@ -358,6 +369,7 @@ function test_completion_uses_nosort ## - Test completion nosort option
     [[ $- == *u* ]] && nounset_was_on=1 && set +u
 
     local compopt_called=0
+    # shellcheck disable=SC2317
     compopt() {
         compopt_called=1
         builtin compopt "$@" 2>/dev/null || true
