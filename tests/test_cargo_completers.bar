@@ -129,4 +129,3 @@ rule test_cargo_completers: -- test_toolchain_completion
 rule test_cargo_completers: -- test_extcomp_cargo
 rule test_cargo_completers: -- test_prototype_definitions
 rule test_cargo_completers: -- test_completer_expansion
-rule test_cargo_completers: -- echo "Cargo completer tests complete"

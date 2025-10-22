@@ -14,7 +14,6 @@ function test_function_tracked ## - Verify function is tracked
     if [[ " ${__bar_functions[*]} " == *" is_cargo_tool_installed "* ]]; then
         return 0
     else
-        echo "✗ is_cargo_tool_installed is NOT tracked"
         return 1
     fi
 }
@@ -27,7 +26,6 @@ function test_params_stored ## - Verify params are stored correctly
     if [[ "$params" == "$expected" ]]; then
         return 0
     else
-        echo "✗ Params incorrect. Expected: '$expected', Got: '$params'"
         return 1
     fi
 }
@@ -37,13 +35,11 @@ function test_prototypes_registered ## - Verify prototypes are registered for ca
     local status=0
     if [[ -v __bar_protoregistry[cargo@toolchain] ]]; then
     else
-        echo "✗ cargo@toolchain prototype NOT registered"
         status=1
     fi
     
     if [[ -v __bar_protoregistry[cargo@tool] ]]; then
     else
-        echo "✗ cargo@tool prototype NOT registered"
         status=1
     fi
     return $status
@@ -54,7 +50,6 @@ function test_module_tracking ## - Verify module tracking
     if [[ "${__bar_func_module[is_cargo_tool_installed]}" == "cargo" ]]; then
         return 0
     else
-        echo "✗ Module not tracked. Got: '${__bar_func_module[is_cargo_tool_installed]}'"
         return 1
     fi
 }
@@ -72,7 +67,6 @@ function test_literal_punctuation ## - Verify literal punctuation extraction
         echo "  Literal prefix: '$literal_prefix'"
         return 0
     else
-        echo "✗ Literal punctuation extraction failed"
         echo "  Clean proto: '$proto_clean' (expected 'toolchain')"
         echo "  Literal prefix: '$literal_prefix' (expected '+')"
         return 1

@@ -30,7 +30,6 @@ function test_discovered_functions ## - Check if test_barf functions are discove
         echo "  Parameters: ${__bar_func_params[test_completion_func]}"
         return 0
     else
-        echo "✗ test_completion_func not discovered"
         return 0  # Don't fail, might not be available
     fi
 }
@@ -41,7 +40,6 @@ function test_discovered_rules ## - Check if rules are discovered
         echo "  Parameters: ${__bar_rule_params[test_build]}"
         return 0
     else
-        echo "✗ test_build rule not discovered"
         return 0  # Don't fail, might not be available
     fi
 }
@@ -89,7 +87,6 @@ function test_module_completers ## - Check cargo module completer detection
     if [[ -v __bar_protoregistry["cargo@toolchain"] ]]; then
         echo "  Completer: ${__bar_protoregistry[cargo@toolchain]}"
     else
-        echo "ℹ cargo@toolchain completer not found (cargo module not loaded)"
     fi
     return 0
 }
@@ -101,4 +98,3 @@ rule test_integration: -- test_discovered_rules
 rule test_integration: -- test_parameter_completion
 rule test_integration: -- test_rule_completion
 rule test_integration: -- test_module_completers
-rule test_integration: -- echo "Integration test complete"

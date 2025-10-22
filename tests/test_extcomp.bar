@@ -128,4 +128,3 @@ rule test_extcomp: -- test_ssh_completion
 rule test_extcomp: -- test_function_availability
 rule test_extcomp: -- test_multiple_arguments
 rule test_extcomp: -- test_prototype_integration
-rule test_extcomp: -- echo "External command completion tests complete"

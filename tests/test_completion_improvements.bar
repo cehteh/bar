@@ -88,7 +88,6 @@ function test_deeply_nested ## - Test deeply nested groups
 function test_engine_integration ## - Test main engine integration
 {
     echo "Integration Test: Main Engine"
-    echo "Verifying _bar_complete uses _bar_expand_group_alternatives..."
     if grep -q "_bar_expand_group_alternatives" "contrib/bar_complete"; then
         return 0
     else
@@ -100,13 +99,6 @@ function test_summary_improvements ## - Print summary
 {
     echo "Summary"
     echo "Improvements Made:"
-    echo "  ✓ Recursive nested group expansion"
-    echo "  ✓ Proper handling of alternatives at all levels"
-    echo "  ✓ Correct stopping at required elements"
-    echo "  ✓ Integration with main completion engine"
-    echo "  ✓ All existing tests still pass"
-    echo "  ✓ Shellcheck clean"
-    echo "  ✓ Caching still functional"
     echo "The completion engine is now more regular and handles"
     echo "complex parameter specifications as per the requirements."
     return 0

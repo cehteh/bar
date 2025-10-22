@@ -81,4 +81,3 @@ rule test_function_completion: -- function_completion_test_case_3
 rule test_function_completion: -- function_completion_test_case_4
 rule test_function_completion: -- function_completion_test_case_5
 rule test_function_completion: -- function_completion_test_case_6
-rule test_function_completion: -- echo "Function completion tests complete"

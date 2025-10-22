@@ -78,17 +78,12 @@ function test_summary ## - Print summary
 {
     echo "Summary"
     echo "The _bar_expand_group_alternatives function now handles:"
-    echo "  ✓ Simple alternatives (a|b)"
-    echo "  ✓ Optional vs required groups"
-    echo "  ✓ Nested group expansion"
-    echo "  ✓ Complex patterns like [[optional] required]"
     echo "This function is now integrated into the main completion engine"
     echo "and used during completion collection."
     return 0
 }
 
 ## Run all nested group expansion tests
-rule test_nested_group_expansion: -- echo "Nested Group Completion Tests"
 rule test_nested_group_expansion: -- test_simple_alternatives
 rule test_nested_group_expansion: -- test_optional_group
 rule test_nested_group_expansion: -- test_complex_nested

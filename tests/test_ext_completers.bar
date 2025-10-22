@@ -184,4 +184,3 @@ rule test_ext_completers: -- test_external_completer_setup
 rule test_ext_completers: -- test_calling_external_completer
 rule test_ext_completers: -- test_literal_punctuation_parsing
 rule test_ext_completers: -- test_literal_punctuation_extraction
-rule test_ext_completers: -- echo "External completer tests complete"

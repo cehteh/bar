@@ -188,4 +188,3 @@ rule test_extcomp_variable_expansion: -- test_set_variable_expansion
 rule test_extcomp_variable_expansion: -- test_multiple_variables_expansion
 rule test_extcomp_variable_expansion: -- test_git_completion
 rule test_extcomp_variable_expansion: -- test_cargo_variable_expansion
-rule test_extcomp_variable_expansion: -- echo "Variable expansion tests complete"

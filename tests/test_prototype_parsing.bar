@@ -36,28 +36,24 @@ EOFTEST
     if [[ -v __bar_protoregistry["test_module@myfile"] ]]; then
         echo "  Value: ${__bar_protoregistry[test_module@myfile]}"
     else
-        echo "✗ myfile prototype not registered"
         status=1
     fi
 
     if [[ -v __bar_protoregistry["test_module@mycommand"] ]]; then
         echo "  Value: ${__bar_protoregistry[test_module@mycommand]}"
     else
-        echo "✗ mycommand prototype not registered"
         status=1
     fi
 
     if [[ -v __bar_protoregistry["test_module@custom"] ]]; then
         echo "  Value: ${__bar_protoregistry[test_module@custom]}"
     else
-        echo "✗ custom prototype not registered"
         status=1
     fi
 
     # Test that the function was tracked with the module
     if [[ -v __bar_func_module["test_func"] ]]; then
     else
-        echo "✗ test_func module not tracked"
         status=1
     fi
 
@@ -67,7 +63,6 @@ EOFTEST
     if [[ -n "$completer" ]]; then
         echo "  Expanded completer: $completer"
     else
-        echo "✗ Completer lookup failed"
         status=1
     fi
 
