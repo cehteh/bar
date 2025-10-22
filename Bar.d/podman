@@ -188,36 +188,213 @@ function podman_platform_complete
 }
 
 ## Normalize architecture name to standard format
+## Architecture normalization mapping tables (cached, readonly)
+declare -gA _PODMAN_ARCH_TO_STANDARD=()
+declare -gA _PODMAN_STANDARD_TO_QEMU=()
+
+## Initialize architecture mapping tables
+function _podman_init_arch_mappings
+{
+    # Only initialize once
+    [[ ${#_PODMAN_ARCH_TO_STANDARD[@]} -gt 0 ]] && return
+    
+    # Map various arch names to standard names (for podman/docker platforms)
+    # Standard format follows Docker's conventions
+    _PODMAN_ARCH_TO_STANDARD=(
+        # amd64/x86_64
+        [amd64]="amd64"
+        [x86_64]="amd64"
+        [x86-64]="amd64"
+        [linux/amd64]="amd64"
+        
+        # arm64/aarch64
+        [arm64]="arm64"
+        [aarch64]="arm64"
+        [aarch64_be]="arm64"
+        [linux/arm64]="arm64"
+        
+        # arm/v7
+        [armv7]="arm/v7"
+        [arm/v7]="arm/v7"
+        [armhf]="arm/v7"
+        [armel]="arm/v7"
+        [linux/arm/v7]="arm/v7"
+        
+        # arm/v6
+        [armv6]="arm/v6"
+        [arm/v6]="arm/v6"
+        [linux/arm/v6]="arm/v6"
+        
+        # arm (generic)
+        [arm]="arm"
+        [armeb]="arm"
+        [linux/arm]="arm"
+        
+        # 386/i386
+        [386]="386"
+        [i386]="386"
+        [i686]="386"
+        [linux/386]="386"
+        
+        # ppc64le
+        [ppc64le]="ppc64le"
+        [ppc64el]="ppc64le"
+        [powerpc64le]="ppc64le"
+        [linux/ppc64le]="ppc64le"
+        
+        # ppc64
+        [ppc64]="ppc64"
+        [powerpc64]="ppc64"
+        [linux/ppc64]="ppc64"
+        
+        # ppc
+        [ppc]="ppc"
+        [powerpc]="ppc"
+        [linux/ppc]="ppc"
+        
+        # s390x
+        [s390x]="s390x"
+        [linux/s390x]="s390x"
+        
+        # riscv64
+        [riscv64]="riscv64"
+        [linux/riscv64]="riscv64"
+        
+        # riscv32
+        [riscv32]="riscv32"
+        [linux/riscv32]="riscv32"
+        
+        # mips variants
+        [mips]="mips"
+        [mips64]="mips64"
+        [mips64el]="mips64le"
+        [mips64le]="mips64le"
+        [mipsel]="mipsle"
+        [mipsle]="mipsle"
+        [mipsn32]="mips"
+        [mipsn32el]="mipsle"
+        [linux/mips]="mips"
+        [linux/mips64]="mips64"
+        [linux/mips64le]="mips64le"
+        
+        # alpha
+        [alpha]="alpha"
+        [linux/alpha]="alpha"
+        
+        # sparc variants
+        [sparc]="sparc"
+        [sparc64]="sparc64"
+        [sparc32plus]="sparc"
+        [linux/sparc]="sparc"
+        [linux/sparc64]="sparc64"
+        
+        # m68k
+        [m68k]="m68k"
+        [linux/m68k]="m68k"
+        
+        # sh4
+        [sh4]="sh4"
+        [sh4eb]="sh4"
+        [linux/sh4]="sh4"
+        
+        # microblaze
+        [microblaze]="microblaze"
+        [microblazeel]="microblaze"
+        [linux/microblaze]="microblaze"
+        
+        # hppa
+        [hppa]="hppa"
+        [linux/hppa]="hppa"
+        
+        # xtensa
+        [xtensa]="xtensa"
+        [xtensaeb]="xtensa"
+        [linux/xtensa]="xtensa"
+        
+        # or1k (OpenRISC)
+        [or1k]="or1k"
+        [linux/or1k]="or1k"
+        
+        # hexagon
+        [hexagon]="hexagon"
+        [linux/hexagon]="hexagon"
+        
+        # loong64/loongarch64
+        [loong64]="loong64"
+        [loongarch64]="loong64"
+        [linux/loong64]="loong64"
+        
+        # avr
+        [avr]="avr"
+        [linux/avr]="avr"
+        
+        # rx
+        [rx]="rx"
+        [linux/rx]="rx"
+        
+        # tricore
+        [tricore]="tricore"
+        [linux/tricore]="tricore"
+    )
+    
+    # Map standard names to QEMU binary/arch names
+    _PODMAN_STANDARD_TO_QEMU=(
+        [amd64]="x86_64"
+        [arm64]="aarch64"
+        [arm/v7]="arm"
+        [arm/v6]="arm"
+        [arm]="arm"
+        [386]="i386"
+        [ppc64le]="ppc64le"
+        [ppc64]="ppc64"
+        [ppc]="ppc"
+        [s390x]="s390x"
+        [riscv64]="riscv64"
+        [riscv32]="riscv32"
+        [mips]="mips"
+        [mips64]="mips64"
+        [mips64le]="mips64el"
+        [mipsle]="mipsel"
+        [alpha]="alpha"
+        [sparc]="sparc"
+        [sparc64]="sparc64"
+        [m68k]="m68k"
+        [sh4]="sh4"
+        [microblaze]="microblaze"
+        [hppa]="hppa"
+        [xtensa]="xtensa"
+        [or1k]="or1k"
+        [hexagon]="hexagon"
+        [loong64]="loongarch64"
+        [avr]="avr"
+        [rx]="rx"
+        [tricore]="tricore"
+    )
+}
+
 function podman_normalize_arch
 {
     ## Converts various architecture names to standardized format
     ## Usage: podman_normalize_arch <arch>
+    _podman_init_arch_mappings
+    
     local arch="$1"
     
-    case "$arch" in
-        amd64|x86_64|x86-64|linux/amd64)
-            echo "amd64"
-            ;;
-        arm64|aarch64|linux/arm64)
-            echo "arm64"
-            ;;
-        armv7|arm/v7|armhf|linux/arm/v7)
-            echo "arm/v7"
-            ;;
-        386|i386|i686|linux/386)
-            echo "386"
-            ;;
-        ppc64le|linux/ppc64le)
-            echo "ppc64le"
-            ;;
-        s390x|linux/s390x)
-            echo "s390x"
-            ;;
-        *)
-            # Remove linux/ prefix if present
-            echo "${arch#linux/}"
-            ;;
-    esac
+    # Try direct lookup in mapping table
+    if [[ -n "${_PODMAN_ARCH_TO_STANDARD[$arch]}" ]]; then
+        echo "${_PODMAN_ARCH_TO_STANDARD[$arch]}"
+        return
+    fi
+    
+    # Remove linux/ prefix and try again
+    local arch_noprefix="${arch#linux/}"
+    if [[ "$arch_noprefix" != "$arch" ]] && [[ -n "${_PODMAN_ARCH_TO_STANDARD[$arch_noprefix]}" ]]; then
+        echo "${_PODMAN_ARCH_TO_STANDARD[$arch_noprefix]}"
+        return
+    fi
+    
+    # Fallback: return as-is without linux/ prefix
+    echo "$arch_noprefix"
 }
 
 ## Normalize platform name to linux/<arch> format
@@ -594,6 +771,8 @@ function podman_get_native_arch
 function podman_list_available_archs
 {
     ## Lists all architectures available for use (native + QEMU).
+    _podman_init_arch_mappings
+    
     # Start with native arch
     podman_get_native_arch
     
@@ -604,14 +783,22 @@ function podman_list_available_archs
             if grep -q "enabled" "$fmt" 2>/dev/null; then
                 local qemu_arch
                 qemu_arch=$(basename "$fmt" | sed 's/qemu-//')
-                # Convert QEMU arch names to our standard arch names
-                case "$qemu_arch" in
-                    x86_64) echo "amd64" ;;
-                    aarch64) echo "arm64" ;;
-                    arm) echo "arm/v7" ;;
-                    i386) echo "386" ;;
-                    *) echo "$qemu_arch" ;;
-                esac
+                
+                # Convert QEMU arch name to standard arch by looking it up
+                # in reverse mapping (search _PODMAN_STANDARD_TO_QEMU)
+                local found=0
+                for std_arch in "${!_PODMAN_STANDARD_TO_QEMU[@]}"; do
+                    if [[ "${_PODMAN_STANDARD_TO_QEMU[$std_arch]}" == "$qemu_arch" ]]; then
+                        echo "$std_arch"
+                        found=1
+                        break
+                    fi
+                done
+                
+                # If not found in mapping, output QEMU arch name as-is
+                if [[ $found -eq 0 ]]; then
+                    echo "$qemu_arch"
+                fi
             fi
         done | sort -u
     fi
