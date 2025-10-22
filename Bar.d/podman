@@ -36,6 +36,7 @@ memofn podman_version
 ## <image:tag> [--timeout <seconds>] [--platform <arch>] [--network <preset>] [--volume <src:dst>] [command] [args..] - Run command in container
 function podman_run
 {
+    trace "$*"
     ## Executes a command inside a podman container with various options.
     ## Options:
     ##   --timeout <seconds>   - Maximum runtime (container killed after timeout)
@@ -146,7 +147,8 @@ function podman_run
     fi
     
     # Execute podman
-    debug "Running: podman ${podman_args[*]}"
+    info "Starting container: $image${platform:+ on $platform}${timeout:+ (timeout: ${timeout}s)}"
+    debug "podman ${podman_args[*]}"
     run_test podman "${podman_args[@]}"
 }
 
@@ -240,6 +242,7 @@ function podman_normalize_platform
 ## <arch> - Check if an architecture is available (with QEMU if needed)
 function is_podman_arch_available
 {
+    trace "$*"
     ## Checks if the specified architecture is available for use with podman.
     ## This includes native architectures and those available via QEMU emulation.
     local arch="$1"
@@ -315,6 +318,7 @@ memofn is_podman_arch_available
 ## Setup QEMU for cross-architecture support
 function podman_arch_setup
 {
+    trace "$*"
     ## Ensures QEMU binfmt support is properly configured for multi-architecture builds.
     ## This enables running containers for different architectures via emulation.
     
@@ -341,7 +345,7 @@ function podman_arch_setup
     # Method 2: Try using podman's built-in support via qemu-user-static container
     if [[ "$qemu_registered" == "false" ]]; then
         if command -v docker >/dev/null 2>&1 || command -v podman >/dev/null 2>&1; then
-            info "Attempting to register QEMU handlers via container..."
+            info "Registering QEMU handlers via multiarch/qemu-user-static container"
             # Use the standard multiarch/qemu-user-static image
             if podman run --rm --privileged multiarch/qemu-user-static --reset -p yes 2>/dev/null; then
                 info "QEMU handlers registered successfully"
@@ -411,6 +415,7 @@ memofn is_qemu_available
 ## <tag> <platform> <containerfile> - Build an image for a specific platform
 function podman_image_build_multiarch
 {
+    trace "$*"
     ## Builds a container image for a specific platform/architecture.
     ## Usage: podman_image_build_multiarch <tag> <platform> <containerfile>
     ## Example: podman_image_build_multiarch myimg:latest linux/arm64 Containerfile
@@ -448,12 +453,14 @@ function podman_image_build_multiarch
     fi
     
     info "Building image $tag for platform $platform from $containerfile"
+    debug "podman build --platform=$platform -t $tag -f $containerfile ."
     run_test podman build --platform="$platform" -t "$tag" -f "$containerfile" .
 }
 
 ## <base-tag> <platforms..> - Build multi-platform images
 function podman_image_build_matrix
 {
+    trace "$*"
     ## Builds the same image for multiple platforms.
     ## Usage: podman_image_build_matrix <base-tag> <containerfile> <platforms..>
     ## Example: podman_image_build_matrix myimg:v1 Containerfile linux/amd64 linux/arm64
@@ -480,13 +487,14 @@ function podman_image_build_matrix
     local platform
     local failed=0
     
+    info "Building ${base_tag} for ${#platforms[@]} platform(s): ${platforms[*]}"
     for platform in "${platforms[@]}"; do
         local arch="${platform##*/}"
         local tag="${base_tag}-${arch//\//-}"
         
-        info "Building $tag for $platform..."
+        debug "Building $tag for $platform..."
         if podman_image_build_multiarch "$tag" "$platform" "$containerfile"; then
-            info "✓ Built $tag successfully"
+            debug "✓ Built $tag successfully"
         else
             error "✗ Failed to build $tag"
             failed=$((failed + 1))
@@ -509,6 +517,7 @@ function podman_image_build_matrix
 ## <tag> <containerfile> - Build an image from a Containerfile
 function podman_image_build
 {
+    trace "$*"
     ## Builds a container image from a Containerfile.
     ## Usage: podman_image_build <tag> <containerfile>
     local tag="$1"
@@ -530,6 +539,7 @@ function podman_image_build
     fi
     
     info "Building image $tag from $containerfile"
+    debug "podman build -t $tag -f $containerfile ."
     run_test podman build -t "$tag" -f "$containerfile" .
 }
 
@@ -539,6 +549,7 @@ function podman_image_build
 ## <arch> <image> [--timeout <sec>] [command..] - Run command for specific architecture
 function podman_run_arch
 {
+    trace "$*"
     ## Executes a command in a container for a specific architecture.
     ## Automatically sets the correct platform based on the architecture.
     ## Usage: podman_run_arch <arch> <image> [--timeout <sec>] [command..]
@@ -566,7 +577,7 @@ function podman_run_arch
     local platform
     platform=$(podman_normalize_platform "$arch")
     
-    info "Running on $platform..."
+    debug "Running on $platform"
     podman_run --platform="$platform" "$image" "$@"
 }
 
@@ -612,6 +623,7 @@ function podman_list_available_archs
 ## <container-id> <tag> - Snapshot a container to an image
 function podman_image_snapshot
 {
+    trace "$*"
     ## Creates an image from a container's current state.
     ## Usage: podman_image_snapshot <container-id> <tag>
     local container="$1"
@@ -627,13 +639,15 @@ function podman_image_snapshot
         return 1
     fi
     
-    info "Snapshotting container $container as $tag"
+    info "Creating snapshot: $tag from container $container"
+    debug "podman commit $container $tag"
     run_test podman commit "$container" "$tag"
 }
 
 ## <name:tag> <base-image> - Create base layer with Bar runtime
 function podman_layer_bar
 {
+    trace "$*"
     ## Creates a container image with Bar and bash installed.
     ## Usage: podman_layer_bar <name:tag> <base-image>
     local tag="$1"
@@ -654,6 +668,7 @@ function podman_layer_bar
     # Generate Containerfile
     local containerfile
     containerfile=$(mktemp)
+    debug "Generated Containerfile: $containerfile"
     
     cat > "$containerfile" <<EOF
 FROM $base
@@ -668,6 +683,7 @@ WORKDIR /workspace
 EOF
     
     # Build the image
+    debug "podman build -t $tag -f $containerfile ."
     podman build -t "$tag" -f "$containerfile" .
     local rc=$?
     
@@ -680,6 +696,7 @@ EOF
 ## <name:tag> <parent:tag> <toolchain> - Add toolchain layer
 function podman_layer_toolchain
 {
+    trace "$*"
     ## Adds a development toolchain to an existing image.
     ## Usage: podman_layer_toolchain <name:tag> <parent:tag> <toolchain>
     ## Supported toolchains: rust, python, nodejs, go, gcc
@@ -702,11 +719,12 @@ function podman_layer_toolchain
         return 1
     fi
     
-    info "Creating toolchain layer: $tag from $parent with $toolchain"
+    info "Creating toolchain layer: $tag ($toolchain) from $parent"
     
     # Generate Containerfile based on toolchain
     local containerfile
     containerfile=$(mktemp)
+    debug "Generated Containerfile: $containerfile"
     
     cat > "$containerfile" <<EOF
 FROM $parent
@@ -714,6 +732,7 @@ EOF
     
     case "$toolchain" in
         rust|cargo)
+            debug "Adding Rust toolchain"
             cat >> "$containerfile" <<'EOF'
 RUN command -v apt-get >/dev/null && apt-get update && apt-get install -y cargo rustc pkg-config libssl-dev || \
     command -v yum >/dev/null && yum install -y cargo rust || \
@@ -721,6 +740,7 @@ RUN command -v apt-get >/dev/null && apt-get update && apt-get install -y cargo 
 EOF
             ;;
         python|python3)
+            debug "Adding Python toolchain"
             cat >> "$containerfile" <<'EOF'
 RUN command -v apt-get >/dev/null && apt-get update && apt-get install -y python3 python3-pip || \
     command -v yum >/dev/null && yum install -y python3 python3-pip || \
@@ -728,6 +748,7 @@ RUN command -v apt-get >/dev/null && apt-get update && apt-get install -y python
 EOF
             ;;
         nodejs|node)
+            debug "Adding Node.js toolchain"
             cat >> "$containerfile" <<'EOF'
 RUN command -v apt-get >/dev/null && apt-get update && apt-get install -y nodejs npm || \
     command -v yum >/dev/null && yum install -y nodejs npm || \
@@ -735,6 +756,7 @@ RUN command -v apt-get >/dev/null && apt-get update && apt-get install -y nodejs
 EOF
             ;;
         go|golang)
+            debug "Adding Go toolchain"
             cat >> "$containerfile" <<'EOF'
 RUN command -v apt-get >/dev/null && apt-get update && apt-get install -y golang || \
     command -v yum >/dev/null && yum install -y golang || \
@@ -742,6 +764,7 @@ RUN command -v apt-get >/dev/null && apt-get update && apt-get install -y golang
 EOF
             ;;
         gcc|build-essential)
+            debug "Adding GCC/build-essential toolchain"
             cat >> "$containerfile" <<'EOF'
 RUN command -v apt-get >/dev/null && apt-get update && apt-get install -y build-essential || \
     command -v yum >/dev/null && yum groupinstall -y "Development Tools" || \
@@ -760,6 +783,7 @@ RUN command -v apt-get >/dev/null && apt-get clean && rm -rf /var/lib/apt/lists/
 EOF
     
     # Build the image
+    debug "podman build -t $tag -f $containerfile ."
     podman build -t "$tag" -f "$containerfile" .
     local rc=$?
     
@@ -953,6 +977,7 @@ function podman_containerfile_build
 ## <name> [options..] - Create a custom podman network
 function podman_network_create
 {
+    trace "$*"
     ## Creates a custom podman network with optional configuration.
     ## Usage: podman_network_create <name> [--subnet <cidr>] [--gateway <ip>]
     local name="$1"
@@ -964,6 +989,7 @@ function podman_network_create
     fi
     
     info "Creating network: $name"
+    debug "podman network create $name $*"
     run_test podman network create "$name" "$@"
 }
 
@@ -1008,6 +1034,7 @@ function podman_network_list
 ## <name> <preset> - Configure network with security preset
 function podman_network_preset
 {
+    trace "$*"
     ## Configures a network with a security preset.
     ## Presets: public, private, local, isolated
     ## Usage: podman_network_preset <name> <preset>
@@ -1251,6 +1278,7 @@ function podman_artifact_mount
 ## <container> <src> <dst> - Copy artifacts from container to host
 function podman_artifact_fetch
 {
+    trace "$*"
     ## Copies artifacts from a container to the host filesystem.
     ## Usage: podman_artifact_fetch <container> <src> <dst>
     ## Example: podman_artifact_fetch my-container /app/target/release/binary ./artifacts/
@@ -1355,6 +1383,7 @@ function podman_artifact_fetch_tarball
 ## <image> <rule> <artifact-dir> [args..] - Run rule and collect artifacts
 function podman_run_with_artifacts
 {
+    trace "$*"
     ## Runs a rule in container and collects artifacts automatically.
     ## Usage: podman_run_with_artifacts <image> <rule> <artifact-dir> [args..]
     local image="$1"
@@ -1382,14 +1411,15 @@ function podman_run_with_artifacts
     local mount_spec
     mount_spec="$(podman_artifact_mount "$artifact_dir")"
     
-    info "Running rule '$rule' with artifacts in $artifact_dir"
+    info "Running rule '$rule' with artifacts collected to $artifact_dir"
+    debug "podman_run --volume $mount_spec $image bar $rule $*"
     
     # Run with artifact mount
     podman_run --volume "$mount_spec" "$image" bar "$rule" "$@"
     local rc=$?
     
     if [[ $rc -eq 0 ]]; then
-        info "Artifacts collected in: $artifact_dir"
+        debug "Artifacts collected in: $artifact_dir"
         if [[ -n "$(ls -A "$artifact_dir" 2>/dev/null)" ]]; then
             echo "Artifact contents:"
             ls -lh "$artifact_dir"
@@ -1524,6 +1554,7 @@ function podman_run_with_config
 ## <image> <rule> [--parallel <count>] [args..] - Run rule in parallel containers
 function podman_run_parallel
 {
+    trace "$*"
     ## Runs the same rule in multiple parallel containers.
     ## Usage: podman_run_parallel <image> <rule> [--parallel <count>] [args..]
     local image="$1"
@@ -1563,6 +1594,7 @@ function podman_run_parallel
     fi
     
     info "Running '$rule' in $parallel_count parallel containers"
+    debug "Container args: ${run_args[*]}, Rule args: ${rule_args[*]}"
     
     local -a pids=()
     local failed=0
@@ -1570,7 +1602,7 @@ function podman_run_parallel
     # Start parallel containers
     for ((i=1; i<=parallel_count; i++)); do
         (
-            info "[$i/$parallel_count] Starting container"
+            debug "[$i/$parallel_count] Starting container"
             podman_run "${run_args[@]}" "$image" bar "$rule" "${rule_args[@]}"
         ) &
         pids+=($!)
@@ -1595,6 +1627,7 @@ function podman_run_parallel
 ## <image> <rule> [--cpus <n>] [--memory <size>] [args..] - Run with resource limits
 function podman_run_limited
 {
+    trace "$*"
     ## Runs a rule with CPU and memory limits.
     ## Usage: podman_run_limited <image> <rule> [--cpus <n>] [--memory <size>] [args..]
     ## Example: podman_run_limited myimage:latest build --cpus 2 --memory 4g
