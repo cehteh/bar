@@ -26,6 +26,7 @@ function test_buildargs_format ## - Check buildargs prototype format
 function test_get_completer_buildargs ## - Test get completer for cargo_build function with buildargs
 {
     unset CARGO_TOOLCHAIN
+    # shellcheck disable=SC2154
     __bar_func_module[cargo_build]="cargo"
     local completer
     completer=$(__bar_get_completer "cargo_build" "buildargs")
@@ -59,6 +60,7 @@ function test_miriargs_prototype ## - Check miriargs prototype
 function test_toolchain_expansion ## - Test ${CARGO_TOOLCHAIN} expansion
 {
     export CARGO_TOOLCHAIN="+stable"
+    # shellcheck disable=SC2016
     __bar_comp_extcomp cargo '${CARGO_TOOLCHAIN}' build --workspace --help &>/dev/null || return 0
     return 0
 }

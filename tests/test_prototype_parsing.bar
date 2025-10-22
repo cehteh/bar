@@ -54,6 +54,7 @@ EOFTEST
 
     # Test that the function was tracked with the module
     if [[ -v __bar_func_module["test_func"] ]]; then
+        true
     else
         status=1
     fi

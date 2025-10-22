@@ -8,7 +8,6 @@
 # that become installed with 'bar init_local' is the Barf.default file in this directory.
 
 #shellcheck disable=2034
-SHELLCHECK_LS_FILES=":!tests"
 
 
 # We lint and build the doc here

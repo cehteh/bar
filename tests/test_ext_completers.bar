@@ -76,6 +76,7 @@ function test_literal_punctuation_parsing ## - Test literal punctuation in proto
     
     echo "  Parsed prototypes: ${proto_array[*]}"
     if [[ "${proto_array[0]}" == "+toolchain" ]]; then
+        true
     else
         status=1
     fi
@@ -91,6 +92,7 @@ function test_literal_punctuation_parsing ## - Test literal punctuation in proto
     
     echo "  Parsed prototypes: ${proto_array[*]}"
     if [[ "${proto_array[0]}" == "rule:" ]]; then
+        true
     else
         status=1
     fi
@@ -106,6 +108,7 @@ function test_literal_punctuation_parsing ## - Test literal punctuation in proto
     
     echo "  Parsed prototypes: ${proto_array[*]}"
     if [[ "${proto_array[0]}" == "[+toolchain]" ]]; then
+        true
     else
         status=1
     fi
@@ -130,6 +133,7 @@ function test_literal_punctuation_extraction ## - Test literal punctuation extra
     done <<< "$result"
     
     if [[ "${result_array[0]}" == "toolchain" && "${result_array[1]}" == "+" && "${result_array[2]:-}" == "" ]]; then
+        true
     else
         echo "  Got: proto='${result_array[0]}', prefix='${result_array[1]}', suffix='${result_array[2]:-}'"
         status=1
@@ -144,6 +148,7 @@ function test_literal_punctuation_extraction ## - Test literal punctuation extra
     done <<< "$result"
     
     if [[ "${result_array[0]}" == "rule" && "${result_array[1]:-}" == "" && "${result_array[2]}" == ":" ]]; then
+        true
     else
         echo "  Got: proto='${result_array[0]}', prefix='${result_array[1]:-}', suffix='${result_array[2]}'"
         status=1
@@ -158,6 +163,7 @@ function test_literal_punctuation_extraction ## - Test literal punctuation extra
     done <<< "$result"
     
     if [[ "${result_array[0]}" == "--flag" && "${result_array[1]:-}" == "" && "${result_array[2]:-}" == "" ]]; then
+        true
     else
         echo "  Got: proto='${result_array[0]}', prefix='${result_array[1]:-}', suffix='${result_array[2]:-}'"
         status=1
@@ -172,6 +178,7 @@ function test_literal_punctuation_extraction ## - Test literal punctuation extra
     done <<< "$result"
     
     if [[ "${result_array[0]}" == "name.." && "${result_array[1]:-}" == "" && "${result_array[2]:-}" == "" ]]; then
+        true
     else
         echo "  Got: proto='${result_array[0]}', prefix='${result_array[1]:-}', suffix='${result_array[2]:-}'"
         status=1

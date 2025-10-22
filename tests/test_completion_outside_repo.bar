@@ -21,7 +21,7 @@ function test_completion_outside_repo_main ## - Test scanning for rules/function
     cd "$TEMP_DIR" || return 1
     
     # Source the completion script from the repo
-    # shellcheck disable=SC1090
+    # shellcheck disable=SC1090,SC2034,SC2154
     source "$REPO_ROOT/contrib/bar_complete"
     
     echo "Test: Scanning for rules/functions from temp directory: $TEMP_DIR"
@@ -34,6 +34,7 @@ function test_completion_outside_repo_main ## - Test scanning for rules/function
     
     # Check if any rules were found
     if [[ ${#__bar_rules[@]} -gt 0 ]]; then
+        true
     else
         echo "  Expected: Should fall back to installed Bar.d location"
         status=1
@@ -41,6 +42,7 @@ function test_completion_outside_repo_main ## - Test scanning for rules/function
     
     # Check if any functions were found
     if [[ ${#__bar_functions[@]} -gt 0 ]]; then
+        true
     else
         status=1
     fi

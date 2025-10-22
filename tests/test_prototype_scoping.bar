@@ -13,6 +13,7 @@ function test_module_prototypes_scoped ## - Module prototypes should be scoped
     __bar_parse_file "Bar.d/help"
     
     if [[ "${__bar_protoregistry[help@rule]}" == "help" ]]; then
+        true
     else
         return 1
     fi
@@ -68,6 +69,7 @@ function test_help_rule_scoped ## - Verify help@rule only used in help module co
     local completer
     completer=$(__bar_get_completer "" "rule")
     if [[ "$completer" == "__bar_comp_rule_or_function" ]]; then
+        true
     else
         status=1
     fi
@@ -75,6 +77,7 @@ function test_help_rule_scoped ## - Verify help@rule only used in help module co
     # Get completer for 'rule' in context of help function
     completer=$(__bar_get_completer "help" "rule")
     if [[ "$completer" == "__bar_comp_help" ]]; then
+        true
     else
         status=1
     fi
@@ -83,6 +86,7 @@ function test_help_rule_scoped ## - Verify help@rule only used in help module co
     __bar_functions+=("other_func")
     completer=$(__bar_get_completer "other_func" "rule")
     if [[ "$completer" == "__bar_comp_rule_or_function" ]]; then
+        true
     else
         status=1
     fi
@@ -96,12 +100,14 @@ function test_cargo_prototypes_scoped ## - Verify cargo module prototypes are al
     local status=0
     
     if [[ "${__bar_protoregistry[cargo@toolchain]}" == "extcomp cargo" ]]; then
+        true
     else
         status=1
     fi
     
     # Global 'toolchain' should not exist
     if [[ -z "${__bar_protoregistry[toolchain]:-}" ]]; then
+        true
     else
         status=1
     fi

@@ -12,6 +12,7 @@ rule test_is_cargo_tool_completion: -- '__bar_parse_file Bar.d/cargo'
 function test_function_tracked ## - Verify function is tracked
 {
     echo "=== Test 2: Verify function is tracked ==="
+    # shellcheck disable=SC2154
     if [[ " ${__bar_functions[*]} " == *" is_cargo_tool_installed "* ]]; then
         return 0
     else
@@ -23,6 +24,7 @@ function test_params_stored ## - Verify params are stored correctly
 {
     echo "=== Test 3: Verify params are stored correctly ==="
     local params expected
+    # shellcheck disable=SC2154
     params="${__bar_func_params[is_cargo_tool_installed]}"
     expected="[+toolchain] <tool> [args..]"
     if [[ "$params" == "$expected" ]]; then
@@ -37,11 +39,13 @@ function test_prototypes_registered ## - Verify prototypes are registered for ca
     echo "=== Test 4: Verify prototypes are registered for cargo module ==="
     local status=0
     if [[ -v __bar_protoregistry[cargo@toolchain] ]]; then
+        true
     else
         status=1
     fi
     
     if [[ -v __bar_protoregistry[cargo@tool] ]]; then
+        true
     else
         status=1
     fi
@@ -51,6 +55,7 @@ function test_prototypes_registered ## - Verify prototypes are registered for ca
 function test_module_tracking ## - Verify module tracking
 {
     echo "=== Test 5: Verify module tracking ==="
+    # shellcheck disable=SC2154
     if [[ "${__bar_func_module[is_cargo_tool_installed]}" == "cargo" ]]; then
         return 0
     else

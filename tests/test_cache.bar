@@ -63,6 +63,7 @@ function cache_case_changed_prefix_busts_cache ## - Ensure cache is bypassed whe
     local nounset_was_on=
     [[ $- == *u* ]] && nounset_was_on=1 && set +u
 
+    # shellcheck disable=SC2034
     local BAR_COMPLETE_DEBUG=1
     _bar_complete >/dev/null 2>&1 || true
     COMP_WORDS=(bar different)

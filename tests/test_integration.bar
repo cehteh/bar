@@ -86,6 +86,7 @@ function test_module_completers ## - Check cargo module completer detection
     if [[ -v __bar_protoregistry["cargo@toolchain"] ]]; then
         echo "  Completer: ${__bar_protoregistry[cargo@toolchain]}"
     else
+        true
     fi
     return 0
 }

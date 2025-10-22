@@ -15,6 +15,7 @@ function test_git_completion ## - Test git completion
         completions=$(__bar_comp_extcomp git che 2>/dev/null)
         
         if echo "$completions" | grep -q "checkout"; then
+            true
         else
             echo "  Got: $(echo "$completions" | head -3 | tr '\n' ' ')"
         fi
@@ -24,9 +25,12 @@ function test_git_completion ## - Test git completion
         completion_count=$(echo "$all_completions" | wc -l)
         
         if [[ $completion_count -gt 20 ]]; then
+            true
         else
+            return 1
         fi
     else
+        true
     fi
     return 0
 }
@@ -38,7 +42,9 @@ function test_fallback_completion ## - Test fallback for command without complet
     completions=$(__bar_comp_extcomp nonexistent_cmd test 2>/dev/null)
     
     if [[ -n "$completions" ]]; then
+        return 1
     else
+        true
     fi
     return 0
 }
@@ -51,6 +57,7 @@ function test_ls_completion ## - Test ls completion
         completions=$(__bar_comp_extcomp ls --col 2>/dev/null)
         
         if echo "$completions" | grep -q "color"; then
+            true
         else
             echo "  Got: $(echo "$completions" | head -3 | tr '\n' ' ')"
         fi
@@ -70,6 +77,7 @@ function test_ssh_completion ## - Test SSH completion
             completion_count=$(echo "$completions" | wc -l)
             echo "  Got $completion_count completions"
         else
+            true
         fi
     fi
     return 0
@@ -100,6 +108,7 @@ function test_multiple_arguments ## - Test with multiple arguments
         completions=$(__bar_comp_extcomp git checkout fea 2>/dev/null)
         
         if echo "$completions" | grep -q "feature"; then
+            true
         else
             echo "  Got: $(echo "$completions" | head -3 | tr '\n' ' ')"
         fi
