@@ -77,12 +77,7 @@ function test_required_group ## - Required group
 function test_summary ## - Print summary
 {
     echo ""
-    echo "Summary"
     echo "The _bar_expand_group_alternatives function now handles:"
-    echo "  ✓ Simple alternatives (a|b)"
-    echo "  ✓ Optional vs required groups"
-    echo "  ✓ Nested group expansion"
-    echo "  ✓ Complex patterns like [[optional] required]"
     echo ""
     echo "This function is now integrated into the main completion engine"
     echo "and used during completion collection."

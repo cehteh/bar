@@ -13,10 +13,8 @@ function test_function_tracked ## - Verify function is tracked
 {
     echo "=== Test 2: Verify function is tracked ==="
     if [[ " ${__bar_functions[*]} " == *" is_cargo_tool_installed "* ]]; then
-        echo "✓ is_cargo_tool_installed is tracked"
         return 0
     else
-        echo "✗ is_cargo_tool_installed is NOT tracked"
         return 1
     fi
 }
@@ -28,10 +26,8 @@ function test_params_stored ## - Verify params are stored correctly
     params="${__bar_func_params[is_cargo_tool_installed]}"
     expected="[+toolchain] <tool> [args..]"
     if [[ "$params" == "$expected" ]]; then
-        echo "✓ Params stored correctly: '$params'"
         return 0
     else
-        echo "✗ Params incorrect. Expected: '$expected', Got: '$params'"
         return 1
     fi
 }
@@ -41,16 +37,12 @@ function test_prototypes_registered ## - Verify prototypes are registered for ca
     echo "=== Test 4: Verify prototypes are registered for cargo module ==="
     local status=0
     if [[ -v __bar_protoregistry[cargo@toolchain] ]]; then
-        echo "✓ cargo@toolchain prototype registered: ${__bar_protoregistry[cargo@toolchain]}"
     else
-        echo "✗ cargo@toolchain prototype NOT registered"
         status=1
     fi
     
     if [[ -v __bar_protoregistry[cargo@tool] ]]; then
-        echo "✓ cargo@tool prototype registered: ${__bar_protoregistry[cargo@tool]}"
     else
-        echo "✗ cargo@tool prototype NOT registered"
         status=1
     fi
     return $status
@@ -60,10 +52,8 @@ function test_module_tracking ## - Verify module tracking
 {
     echo "=== Test 5: Verify module tracking ==="
     if [[ "${__bar_func_module[is_cargo_tool_installed]}" == "cargo" ]]; then
-        echo "✓ Module tracked correctly: cargo"
         return 0
     else
-        echo "✗ Module not tracked. Got: '${__bar_func_module[is_cargo_tool_installed]}'"
         return 1
     fi
 }
@@ -78,12 +68,10 @@ function test_literal_punctuation ## - Verify literal punctuation extraction
     literal_suffix="${punct_parts[2]}"
     
     if [[ "$proto_clean" == "toolchain" && "$literal_prefix" == "+" && "$literal_suffix" == "" ]]; then
-        echo "✓ Literal punctuation extracted correctly"
         echo "  Clean proto: '$proto_clean'"
         echo "  Literal prefix: '$literal_prefix'"
         return 0
     else
-        echo "✗ Literal punctuation extraction failed"
         echo "  Clean proto: '$proto_clean' (expected 'toolchain')"
         echo "  Literal prefix: '$literal_prefix' (expected '+')"
         return 1

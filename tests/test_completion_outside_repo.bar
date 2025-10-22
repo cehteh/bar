@@ -34,7 +34,6 @@ function test_completion_outside_repo_main ## - Test scanning for rules/function
     
     # Check if any rules were found
     if [[ ${#__bar_rules[@]} -gt 0 ]]; then
-        echo "  Sample rules: ${__bar_rules[0]}, ${__bar_rules[1]}, ${__bar_rules[2]}"
     else
         echo "  Expected: Should fall back to installed Bar.d location"
         status=1

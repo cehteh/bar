@@ -24,7 +24,6 @@ function test_git_completion ## - Test git completion
         completion_count=$(echo "$all_completions" | wc -l)
         
         if [[ $completion_count -gt 20 ]]; then
-            echo "  Sample: $(echo "$all_completions" | head -5 | tr '\n' ' ')"
         else
         fi
     else
@@ -39,7 +38,6 @@ function test_fallback_completion ## - Test fallback for command without complet
     completions=$(__bar_comp_extcomp nonexistent_cmd test 2>/dev/null)
     
     if [[ -n "$completions" ]]; then
-        echo "  Sample: $(echo "$completions" | head -3 | tr '\n' ' ')"
     else
     fi
     return 0

@@ -36,14 +36,11 @@ function test_help_about_jumps ## - Indexed match should jump directly to ABOUT
 {
     local about_line
     if ! about_line="$(BAR_FORCE_PAGER=less first_line ./bar --bare help about)"; then
-        echo "✗ help about command failed"
         return 1
     fi
     if [[ "$about_line" =~ ^[[:space:]]*ABOUT[[:space:]]*$ ]]; then
-        echo "✓ help about jumps to ABOUT"
         return 0
     else
-        echo "✗ help about should start at ABOUT (got: $about_line)"
         return 1
     fi
 }
@@ -52,14 +49,11 @@ function test_help_fallback ## - Unknown query should fall back to full help wit
 {
     local fallback_line
     if ! fallback_line="$(BAR_FORCE_PAGER=less first_non_empty_line ./bar --bare help __does_not_exist)"; then
-        echo "✗ help fallback command failed"
         return 1
     fi
     if [[ "$fallback_line" =~ ^[[:space:]]*bar[[:space:]]-- ]]; then
-        echo "✓ help fallback prints full help when query is missing"
         return 0
     else
-        echo "✗ help fallback should start with header (got: $fallback_line)"
         return 1
     fi
 }
@@ -68,14 +62,11 @@ function test_help_no_doc_example ## - Example documentation should not be treat
 {
     local foo_line
     if ! foo_line="$(BAR_FORCE_PAGER=less first_non_empty_line ./bar --bare help foo)"; then
-        echo "✗ help foo command failed"
         return 1
     fi
     if [[ "$foo_line" =~ foo ]]; then
-        echo "✗ help foo should not jump to documentation example (got: $foo_line)"
         return 1
     else
-        echo "✓ help foo does not treat documentation example as symbol"
         return 0
     fi
 }
@@ -84,14 +75,11 @@ function test_help_partial_function ## - Partial function name should resolve to
 {
     local ls_line
     if ! ls_line="$(BAR_FORCE_PAGER=less first_line ./bar --bare help ls_files)"; then
-        echo "✗ help ls_files command failed"
         return 1
     fi
     if [[ "$ls_line" =~ ls_files ]]; then
-        echo "✓ help ls_files jumps to git_ls_files"
         return 0
     else
-        echo "✗ help ls_files should show git_ls_files (got: $ls_line)"
         return 1
     fi
 }
@@ -100,14 +88,11 @@ function test_help_no_query ## - No query should still succeed under BAR_FORCE_P
 {
     local header_line
     if ! header_line="$(BAR_FORCE_PAGER=less first_non_empty_line ./bar --bare help)"; then
-        echo "✗ help without query failed"
         return 1
     fi
     if [[ "$header_line" =~ ^[[:space:]]*bar[[:space:]]-- ]]; then
-        echo "✓ help without query works under BAR_FORCE_PAGER"
         return 0
     else
-        echo "✗ help without query should start with header (got: $header_line)"
         return 1
     fi
 }
