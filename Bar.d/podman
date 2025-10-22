@@ -880,13 +880,13 @@ EOF
     return $rc
 }
 
-## <name:tag> <parent:tag> <toolchain> - Add toolchain layer
+## <name:tag> <parent:tag> <toolchain> - Add toolchain layer (stub)
 function podman_layer_toolchain
 {
     trace "$*"
     ## Adds a development toolchain to an existing image.
+    ## This is a stub - toolchain configuration will be implemented in a separate module.
     ## Usage: podman_layer_toolchain <name:tag> <parent:tag> <toolchain>
-    ## Supported toolchains: rust, python, nodejs, go, gcc
     local tag="$1"
     local parent="$2"
     local toolchain="$3"
@@ -906,84 +906,17 @@ function podman_layer_toolchain
         return 1
     fi
     
-    info "Creating toolchain layer: $tag ($toolchain) from $parent"
-    
-    # Generate Containerfile based on toolchain
-    local containerfile
-    containerfile=$(mktemp)
-    debug "Generated Containerfile: $containerfile"
-    
-    cat > "$containerfile" <<EOF
-FROM $parent
-EOF
-    
-    case "$toolchain" in
-        rust|cargo)
-            debug "Adding Rust toolchain"
-            cat >> "$containerfile" <<'EOF'
-RUN command -v apt-get >/dev/null && apt-get update && apt-get install -y cargo rustc pkg-config libssl-dev || \
-    command -v yum >/dev/null && yum install -y cargo rust || \
-    command -v apk >/dev/null && apk add cargo rust openssl-dev
-EOF
-            ;;
-        python|python3)
-            debug "Adding Python toolchain"
-            cat >> "$containerfile" <<'EOF'
-RUN command -v apt-get >/dev/null && apt-get update && apt-get install -y python3 python3-pip || \
-    command -v yum >/dev/null && yum install -y python3 python3-pip || \
-    command -v apk >/dev/null && apk add python3 py3-pip
-EOF
-            ;;
-        nodejs|node)
-            debug "Adding Node.js toolchain"
-            cat >> "$containerfile" <<'EOF'
-RUN command -v apt-get >/dev/null && apt-get update && apt-get install -y nodejs npm || \
-    command -v yum >/dev/null && yum install -y nodejs npm || \
-    command -v apk >/dev/null && apk add nodejs npm
-EOF
-            ;;
-        go|golang)
-            debug "Adding Go toolchain"
-            cat >> "$containerfile" <<'EOF'
-RUN command -v apt-get >/dev/null && apt-get update && apt-get install -y golang || \
-    command -v yum >/dev/null && yum install -y golang || \
-    command -v apk >/dev/null && apk add go
-EOF
-            ;;
-        gcc|build-essential)
-            debug "Adding GCC/build-essential toolchain"
-            cat >> "$containerfile" <<'EOF'
-RUN command -v apt-get >/dev/null && apt-get update && apt-get install -y build-essential || \
-    command -v yum >/dev/null && yum groupinstall -y "Development Tools" || \
-    command -v apk >/dev/null && apk add build-base
-EOF
-            ;;
-        *)
-            error "Unknown toolchain: $toolchain"
-            rm -f "$containerfile"
-            return 1
-            ;;
-    esac
-    
-    cat >> "$containerfile" <<'EOF'
-RUN command -v apt-get >/dev/null && apt-get clean && rm -rf /var/lib/apt/lists/* || true
-EOF
-    
-    # Build the image
-    debug "podman build -t $tag -f $containerfile ."
-    podman build -t "$tag" -f "$containerfile" .
-    local rc=$?
-    
-    # Cleanup
-    rm -f "$containerfile"
-    
-    return $rc
+    warn "podman_layer_toolchain: stub function - toolchain '$toolchain' not yet configured"
+    info "Toolchain and package management will be configured in a separate PR"
+    info "Use podman_containerfile_* API or custom Containerfile for now"
+    return 1
 }
 
-## <name:tag> <parent:tag> - Add development tools layer
+## <name:tag> <parent:tag> - Add development tools layer (stub)
 function podman_layer_dev
 {
     ## Adds common development tools to an existing image.
+    ## This is a stub - development tools configuration will be implemented in a separate module.
     ## Usage: podman_layer_dev <name:tag> <parent:tag>
     local tag="$1"
     local parent="$2"
@@ -998,31 +931,10 @@ function podman_layer_dev
         return 1
     fi
     
-    info "Creating development tools layer: $tag from $parent"
-    
-    # Generate Containerfile
-    local containerfile
-    containerfile=$(mktemp)
-    
-    cat > "$containerfile" <<EOF
-FROM $parent
-RUN command -v apt-get >/dev/null && apt-get update && apt-get install -y \\
-        gdb valgrind strace curl wget vim || \\
-    command -v yum >/dev/null && yum install -y \\
-        gdb valgrind strace curl wget vim || \\
-    command -v apk >/dev/null && apk add \\
-        gdb strace curl wget vim || true
-RUN command -v apt-get >/dev/null && apt-get clean && rm -rf /var/lib/apt/lists/* || true
-EOF
-    
-    # Build the image
-    podman build -t "$tag" -f "$containerfile" .
-    local rc=$?
-    
-    # Cleanup
-    rm -f "$containerfile"
-    
-    return $rc
+    warn "podman_layer_dev: stub function - development tools not yet configured"
+    info "Development tools and package management will be configured in a separate PR"
+    info "Use podman_containerfile_* API or custom Containerfile for now"
+    return 1
 }
 
 
