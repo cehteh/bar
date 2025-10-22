@@ -128,20 +128,22 @@ function test_actual_cargo_completion ## - Test actual cargo build completion in
 {
     if command -v cargo &>/dev/null && [[ -d tests/helloworld ]]; then
         echo -n "Test 9: Test actual cargo build completion in project... "
-        cd tests/helloworld || return 0
-        set +e
-        local completions
-        completions=$(__bar_comp_extcomp cargo build --workspace -- 2>/dev/null)
-        local result=$?
-        set -e
-        cd ../.. || return 0
-        if [[ $result -eq 0 ]]; then
-            echo "PASS"
-            return 0
-        else
-            echo "PASS (no error, completion may have returned nothing)"
-            return 0
-        fi
+        (
+            cd tests/helloworld || exit 0
+            set +e
+            local completions
+            completions=$(__bar_comp_extcomp cargo build --workspace -- 2>/dev/null)
+            local result=$?
+            set -e
+            if [[ $result -eq 0 ]]; then
+                echo "PASS"
+                exit 0
+            else
+                echo "PASS (no error, completion may have returned nothing)"
+                exit 0
+            fi
+        )
+        return 0
     else
         echo "Test 9: SKIP (cargo not available or helloworld not found)"
         return 0
