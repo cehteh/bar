@@ -14,140 +14,63 @@ rule test_cargo_variable_expansion: -- '
 
 function test_buildargs_registered ## - Check buildargs prototype registered
 {
-    echo -n "Test 1: Check buildargs prototype registered... "
-    if [[ -n "${__bar_protoregistry[cargo@buildargs]:-}" ]]; then
-        echo "PASS (registered as cargo@buildargs)"
-        return 0
-    else
-        echo "FAIL: buildargs prototype not found"
-        echo "Available prototypes:"
-        for key in "${!__bar_protoregistry[@]}"; do
-            if [[ "$key" == *"build"* ]] || [[ "$key" == *"args"* ]]; then
-                echo "  $key = ${__bar_protoregistry[$key]}"
-            fi
-        done
-        return 1
-    fi
+    [[ -n "${__bar_protoregistry[cargo@buildargs]:-}" ]]
 }
 
 function test_buildargs_format ## - Check buildargs prototype format
 {
-    echo -n "Test 2: Check buildargs prototype format... "
     local proto_val="${__bar_protoregistry[cargo@buildargs]}"
-    if [[ "$proto_val" == "extcomp cargo \${CARGO_TOOLCHAIN} build --workspace" ]]; then
-        echo "PASS"
-        return 0
-    else
-        echo "FAIL: Expected 'extcomp cargo \${CARGO_TOOLCHAIN} build --workspace', got '$proto_val'"
-        return 1
-    fi
+    [[ "$proto_val" == "extcomp cargo \${CARGO_TOOLCHAIN} build --workspace" ]]
 }
 
 function test_get_completer_buildargs ## - Test get completer for cargo_build function with buildargs
 {
-    echo -n "Test 3: Test get completer for cargo_build function with buildargs... "
     unset CARGO_TOOLCHAIN
     __bar_func_module[cargo_build]="cargo"
     local completer
     completer=$(__bar_get_completer "cargo_build" "buildargs")
-    if [[ "$completer" =~ __bar_comp_extcomp ]]; then
-        echo "PASS"
-        return 0
-    else
-        echo "FAIL: Completer not properly expanded: '$completer'"
-        return 1
-    fi
+    [[ "$completer" =~ __bar_comp_extcomp ]]
 }
 
 function test_completion_with_toolchain ## - Test completion with CARGO_TOOLCHAIN=+nightly
 {
-    echo -n "Test 4: Test completion with CARGO_TOOLCHAIN=+nightly... "
     export CARGO_TOOLCHAIN="+nightly"
-    if [[ -n "$CARGO_TOOLCHAIN" ]]; then
-        echo "PASS"
-        return 0
-    else
-        echo "FAIL"
-        return 1
-    fi
+    [[ -n "$CARGO_TOOLCHAIN" ]]
 }
 
 function test_testargs_prototype ## - Check testargs prototype
 {
-    echo -n "Test 5: Check testargs prototype... "
     local proto_val="${__bar_protoregistry[cargo@testargs]}"
-    if [[ "$proto_val" == "extcomp cargo \${CARGO_TOOLCHAIN} test --workspace" ]]; then
-        echo "PASS"
-        return 0
-    else
-        echo "FAIL: got '$proto_val'"
-        return 1
-    fi
+    [[ "$proto_val" == "extcomp cargo \${CARGO_TOOLCHAIN} test --workspace" ]]
 }
 
 function test_docargs_prototype ## - Check docargs prototype
 {
-    echo -n "Test 6: Check docargs prototype... "
     local proto_val="${__bar_protoregistry[cargo@docargs]}"
-    if [[ "$proto_val" == "extcomp cargo \${CARGO_TOOLCHAIN} doc --workspace" ]]; then
-        echo "PASS"
-        return 0
-    else
-        echo "FAIL: got '$proto_val'"
-        return 1
-    fi
+    [[ "$proto_val" == "extcomp cargo \${CARGO_TOOLCHAIN} doc --workspace" ]]
 }
 
 function test_miriargs_prototype ## - Check miriargs prototype
 {
-    echo -n "Test 7: Check miriargs prototype... "
     local proto_val="${__bar_protoregistry[cargo@miriargs]}"
-    if [[ "$proto_val" == "extcomp cargo +nightly miri test" ]]; then
-        echo "PASS"
-        return 0
-    else
-        echo "FAIL: got '$proto_val'"
-        return 1
-    fi
+    [[ "$proto_val" == "extcomp cargo +nightly miri test" ]]
 }
 
 function test_toolchain_expansion ## - Test ${CARGO_TOOLCHAIN} expansion
 {
-    echo -n "Test 8: Test \${CARGO_TOOLCHAIN} expansion... "
     export CARGO_TOOLCHAIN="+stable"
-    if __bar_comp_extcomp cargo '${CARGO_TOOLCHAIN}' build --workspace --help &>/dev/null; then
-        echo "PASS (function executed without error)"
-        return 0
-    else
-        echo "PASS (function may not have cargo completion, but processed args)"
-        return 0
-    fi
+    __bar_comp_extcomp cargo '${CARGO_TOOLCHAIN}' build --workspace --help &>/dev/null || return 0
+    return 0
 }
 
 function test_actual_cargo_completion ## - Test actual cargo build completion in project
 {
-    if command -v cargo &>/dev/null && [[ -d tests/helloworld ]]; then
-        echo -n "Test 9: Test actual cargo build completion in project... "
-        (
-            cd tests/helloworld || exit 0
-            set +e
-            local completions
-            completions=$(__bar_comp_extcomp cargo build --workspace -- 2>/dev/null)
-            local result=$?
-            set -e
-            if [[ $result -eq 0 ]]; then
-                echo "PASS"
-                exit 0
-            else
-                echo "PASS (no error, completion may have returned nothing)"
-                exit 0
-            fi
-        )
-        return 0
-    else
-        echo "Test 9: SKIP (cargo not available or helloworld not found)"
-        return 0
-    fi
+    command -v cargo &>/dev/null && [[ -d tests/helloworld ]] || return 0
+    (
+        cd tests/helloworld || exit 0
+        __bar_comp_extcomp cargo build --workspace -- &>/dev/null || exit 0
+    )
+    return 0
 }
 
 ## Run all cargo variable expansion tests
