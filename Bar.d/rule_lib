@@ -555,3 +555,12 @@ function rule_list ## [pattern] - lists all loaded rules or rules matching patte
 rule --bare rule_exists:
 rule --bare rule_list:
 
+# Define --bare --pure rules for logging functions
+# These allow using logging functions as dependencies, making rules implicitly pure
+rule --bare error: --pure -
+rule --bare warn: --pure -
+rule --bare note: --pure -
+rule --bare info: --pure -
+rule --bare debug: --pure -
+rule --bare trace: --pure -
+

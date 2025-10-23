@@ -8,29 +8,29 @@
 ## Update manifest, bump versions, generate changelog an other versioned artifacts etc..
 ## Should leave the tree in a uncommited state. Note that 'build_versioned_artifacts' is
 ## already a dependency here.
-rule release_prepare: -- debug "Preparing release ..."
+rule release_prepare: 'debug "Preparing release ..."'
 rule release_prepare: build_versioned_artifacts
 
 ## All tests and lints to run for a software release.
-rule release_tests: -- debug "Running release tests..."
+rule release_tests: 'debug "Running release tests..."'
 rule release_tests: lints tests
 
 ## Create the changelog and commit it, may include tags etc.
-rule release_changelog: -- debug "Generating changelog ..."
+rule release_changelog: 'debug "Generating changelog ..."'
 
 ## Local actions to be done before the release, rebase main/devel on it etc.
-rule release_preprocess: -- debug "Running release postprocessing..."
+rule release_preprocess: 'debug "Running release postprocessing..."'
 
 ## Deploy the release, upload it to servers, git push or whatever necessary. Since network
 ## operations can be fallible this can be restarted.  Should start with them least critical
 ## (git push) and finally publish it to registries.
-rule release_publish: -- debug "Publish release..."
+rule release_publish: 'debug "Publish release..."'
 
 ## Local actions to be done after the release.
-rule release_postprocess: -- debug "Running release postprocessing..."
+rule release_postprocess: 'debug "Running release postprocessing..."'
 
 ## Final cleanup for the release, clean/delete worktrees etc
-rule release_cleanup: -- debug "Running release cleanup..."
+rule release_cleanup: 'debug "Running release cleanup..."'
 
 ## Canonicalize version names. Queried when the the version to 'release' does not start with a
 ## digit or was not given. Other modules should plug in here. Names are 'auto', 'major',
