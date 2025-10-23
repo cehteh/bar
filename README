@@ -831,6 +831,12 @@ MODULE API/RULES
 
   rule_lib - The library that implements rules, always loaded
 
+    Variables:
+
+      BAR_KEEP_GOING (g)
+        When set to any non-empty value, enables keep-going mode. In keep-going mode, pure clauses continue to execute after failures, though failures are still propagated. Non-pure clauses or conclusive clauses halt keep-going within the current rule.
+        Default: ${BAR_KEEP_GOING:-}
+
     Functions:
         See RULE DEFINITION SYNTAX in help for details
 
@@ -848,6 +854,10 @@ MODULE API/RULES
 
       clause_local [var[=value]..]
         Makes scalar variables local to a clause.
+
+      clause_is_pure <clause_idx>
+        Checks if a clause is pure
+        A clause is implicitly pure if it has no body and only pure dependencies
 
       rule_eval <name> [args..]
         Evaluates a rule
@@ -1432,6 +1442,14 @@ RULE DEFINITION SYNTAX
       Default clauses will be kept at the end of the list of clauses. Using '--default'
       together with 'disjunct' rules allows one to hook up action while maintaining a fallback
       or warning/error when no hooked up rule succeeded.
+
+    --pure
+      Marks a clause as pure, meaning it has no side effects within Bar's internal state
+      (does not change directories, does not modify Bar's state). When BAR_KEEP_GOING is set,
+      failed pure clauses allow execution to continue to the next clause while still
+      propagating the failure. The --conclusive flag takes precedence over keep-going behavior.
+      Non-pure clauses always halt keep-going within the current rule. Clauses with only pure
+      dependencies and no body are implicitly pure.
 
   * [[!]deps[?|~][??] args..]..
 

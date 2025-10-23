@@ -560,6 +560,14 @@ RULE DEFINITION SYNTAX
       together with 'disjunct' rules allows one to hook up action while maintaining a fallback
       or warning/error when no hooked up rule succeeded.
 
+    --pure
+      Marks a clause as pure, meaning it has no side effects within Bar's internal state
+      (does not change directories, does not modify Bar's state). When BAR_KEEP_GOING is set,
+      failed pure clauses allow execution to continue to the next clause while still
+      propagating the failure. The --conclusive flag takes precedence over keep-going behavior.
+      Non-pure clauses always halt keep-going within the current rule. Clauses with only pure
+      dependencies and no body are implicitly pure.
+
   * [[!]deps[?|~][??] args..]..
 
     Dependencies, are a list of other rules that this rule depends on. These will be executed
