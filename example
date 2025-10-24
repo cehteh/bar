@@ -277,3 +277,35 @@ rule test_semver_cmp
 rule --bare test_bare: -- echo "This is bare"
 
 rule test_bare
+
+# test keep-going mode
+# Clauses allow execution to continue after failure when BAR_KEEP_GOING is set
+# Run with: BAR_KEEP_GOING=yes bar example test_keepgoing
+
+rule test_keepgoing: -- 'echo "Check 1: passed"; true'
+rule test_keepgoing: -- 'echo "Check 2: FAILED"; false'
+rule test_keepgoing: -- 'echo "Check 3: passed (keep-going)"; true'
+rule test_keepgoing: -- 'echo "Check 4: FAILED"; false'
+rule test_keepgoing: -- 'echo "Check 5: passed (keep-going)"; true'
+
+rule test_keepgoing_all: test_keepgoing
+
+# Without keep-going (default), stops at first failure
+# With BAR_KEEP_GOING=yes, all clauses execute and failure is propagated
+
+rule test_keepgoing_conclusive: -- 'echo "Check 1: passed"; true'
+rule test_keepgoing_conclusive: -- 'echo "Check 2: FAILED"; false'
+rule test_keepgoing_conclusive: -- 'echo "Check 3: passed (keep-going)"; true'
+rule test_keepgoing_conclusive: --conclusive -- 'echo "Conclusive: stops keep-going"; true'
+rule test_keepgoing_conclusive: -- 'echo "Check 4: not reached after conclusive"; true'
+
+# BAR_KEEP_GOING semantics:
+# BAR_KEEP_GOING=0 or 1 or unset: stop at first failure (default)
+# BAR_KEEP_GOING=2..N: allow that many failures before stopping
+# BAR_KEEP_GOING=yes/true/etc: unlimited, continue until exhaustion
+#
+# Examples:
+# BAR_KEEP_GOING=yes bar example test_keepgoing          # all checks run
+# BAR_KEEP_GOING=2 bar example test_keepgoing            # allows 2 failures then stops
+# BAR_KEEP_GOING=1 bar example test_keepgoing            # stops at first failure (default)
+# BAR_KEEP_GOING=yes bar example test_keepgoing_conclusive

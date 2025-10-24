@@ -275,3 +275,7 @@ function cargo_publish ## Run 'cargo publish'
     cargo --color "${COLOR:-auto}" publish
 }
 
+# Define --bare rules for cargo query/predicate functions
+rule --bare is_cargo_tool_installed: -
+rule --bare is_cargo_toolchain_available: -
+rule --bare cargo_has_unsafe_code: -

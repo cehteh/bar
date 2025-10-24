@@ -833,9 +833,9 @@ MODULE API/RULES
 
     Variables:
 
-      BAR_KEEP_GOING (g)
-        When set to any non-empty value, enables keep-going mode. In keep-going mode, pure clauses continue to execute after failures, though failures are still propagated. Non-pure clauses or conclusive clauses halt keep-going within the current rule.
-        Default: ${BAR_KEEP_GOING:-}
+      BAR_KEEP_GOING (gx)
+        Controls keep-going mode: 0 or 1 stops at first failure (default), numbers >= 2 allow that many failures before stopping, non-numeric values (yes/true/etc) continue until exhaustion. In keep-going mode, pure clauses continue executing after failures though failures are still propagated. Non-pure or conclusive clauses halt keep-going within the current rule.
+        Default: ${BAR_KEEP_GOING:-1}
 
     Functions:
         See RULE DEFINITION SYNTAX in help for details
@@ -854,10 +854,6 @@ MODULE API/RULES
 
       clause_local [var[=value]..]
         Makes scalar variables local to a clause.
-
-      clause_is_pure <clause_idx>
-        Checks if a clause is pure
-        A clause is implicitly pure if it has no body and only pure dependencies
 
       rule_eval <name> [args..]
         Evaluates a rule
@@ -1443,14 +1439,6 @@ RULE DEFINITION SYNTAX
       together with 'disjunct' rules allows one to hook up action while maintaining a fallback
       or warning/error when no hooked up rule succeeded.
 
-    --pure
-      Marks a clause as pure, meaning it has no side effects within Bar's internal state
-      (does not change directories, does not modify Bar's state). When BAR_KEEP_GOING is set,
-      failed pure clauses allow execution to continue to the next clause while still
-      propagating the failure. The --conclusive flag takes precedence over keep-going behavior.
-      Non-pure clauses always halt keep-going within the current rule. Clauses with only pure
-      dependencies and no body are implicitly pure.
-
   * [[!]deps[?|~][??] args..]..
 
     Dependencies, are a list of other rules that this rule depends on. These will be executed
@@ -1562,6 +1550,32 @@ RULE DEFINITION SYNTAX
 
     After a rule that is not flagged with '--always' got evaluated it is not allowed to add
     more clauses to it anymore, as the outcome would be unexpected and impure.
+
+
+  Keep-Going Mode
+
+    Bar supports a keep-going facility via the BAR_KEEP_GOING environment variable. When
+    enabled, clauses that fail do not immediately halt rule evaluation—subsequent clauses
+    continue to execute, though the overall failure is still propagated.
+
+    BAR_KEEP_GOING can be set to a number which is decremented on each failure, when this
+    reachs zero no more failures are accepted and the evaluation will terminate.
+
+    When BAR_KEEP_GOING set to anything else than a number then evaluation will accept
+    infinite failures.
+
+    When not set then it defaults to one then evaluation will terminate on the
+    first failure.
+
+    Clauses marked '--conclusive' immediately halt keep-going.
+
+
+  Purity Requirements
+
+    All rules and functions must be sequentiually pure in their success branch. This means
+    side effects must not alter the behavior of subsequent rules when they fail. For rules
+    where this may be the case, like rules changing directories they must rather die than
+    proceed with a undefined state in case of a failure.
 
 
 RULE ENVIRONMENT

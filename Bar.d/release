@@ -141,7 +141,7 @@ function release_abort # <release> - A release that is not published yet can be 
     # can only abort started to ready states. Any further state is already committed/merged/published.
     if [[ "$state" =~ ^start|tested|ready$ ]]; then
         info "aborting $release"
-        cd "$worktree_main" || return 1
+        cd "$worktree_main" || die "can't change to $worktree_main"
         git worktree remove -f "$worktree_dir"
         git branch -D "release-$release"
         git tag -d "v$release"
@@ -173,10 +173,7 @@ function release_enter_worktree
         error "failed to create worktree"
         return 1
     }
-    cd "release-$version"  || {
-        error "failed to cd into worktree"
-        return 1
-    }
+    cd "release-$version" || die "failed to cd into worktree"
 }
 
 # Eventually we may relax this rule since one may want to make releases from subprojects
@@ -280,7 +277,7 @@ function release_into ## <target_version> - switch over to another existing rele
     }
 
     # switch over
-    cd "$target_worktree_dir" || return 1
+    cd "$target_worktree_dir" || die "can't change to $target_worktree_dir"
 
     git_is_ancestor "release$RELEASE_BRANCH_DELIMITER$release" || {
         error "release$RELEASE_BRANCH_DELIMITER$target_version is not a ancestor of release$RELEASE_BRANCH_DELIMITER$release"
@@ -331,7 +328,7 @@ function release_rename ## <version> - rename worktree and cd into that
 
     git worktree move "$current" "$target"
     git branch -m "release$RELEASE_BRANCH_DELIMITER$1"
-    cd target || return 1
+    cd target || die "can't change to target"
 }
 
 ## Rename worktree to'release-x' with major version only.
@@ -446,3 +443,9 @@ function release_rebase_startbranch ## Rebase the branch that started the releas
 
     release_rebase_branch "$start_branch"
 }
+
+# Define --bare rules for release query/predicate functions
+rule --bare release_version: -
+rule --bare release_is_patch: -
+rule --bare release_state_get: -
+rule --bare release_state_matches: -

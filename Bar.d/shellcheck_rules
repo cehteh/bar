@@ -5,7 +5,7 @@
 ### Hooks shellcheck_lint into the std lint rule
 
 ## Checks if shellcheck is installed and the project has any shell scripts.
-rule is_shellcheck_available: 'is_command_installed shellcheck' shellcheck_has_shscripts
+rule is_shellcheck_available: --pure 'is_command_installed shellcheck' shellcheck_has_shscripts
 
 rule lints: is_shellcheck_available? shellcheck_lint
 

@@ -48,14 +48,14 @@ function testdir_enter
         info "creating: $TESTDIR"
         TESTDIR="$(git_toplevel)/${TESTDIR_PREFIX}-$BAR_TIMESTAMP-$treeish"
         mkdir -p "$TESTDIR"
-        ln -s "$(git_dir)" "$TESTDIR/.git" || { error "cant link .git to $TESTDIR/.git"; return 1; }
-        git --work-tree "$TESTDIR" checkout "$treeish" -- . || { error "cant checkout $treeish into $TESTDIR"; return 1; }
+        ln -s "$(git_dir)" "$TESTDIR/.git" || die "cant link .git to $TESTDIR/.git"
+        git --work-tree "$TESTDIR" checkout "$treeish" -- . || die "cant checkout $treeish into $TESTDIR"
     else
         info "using existing: $TESTDIR"
     fi
     lock_next "$BAR_TOPLEVEL/.bar" "$TESTDIR/.bar"
     rule CLEANUP: -- "cd '$(git_toplevel)'; lock_remove '$TESTDIR/.bar'; testdir_gc"
-    cd "$TESTDIR" || { error "can't change into $TESTDIR"; return 1; }
+    cd "$TESTDIR" || die "can't change into $TESTDIR"
 }
 
 ## Succeeds when a testdir is in use and current working directory is inside it.
@@ -106,3 +106,6 @@ function testdir_list ## Lists all testdirs.
 {
     find "$(git_toplevel)" -maxdepth 1 -name "${TESTDIR_PREFIX}*" -type d
 }
+
+# Define --bare rules for testdir query functions
+rule --bare testdir_list: -

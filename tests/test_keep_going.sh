@@ -64,7 +64,7 @@ rule test2: --pure -- 'echo "Task 3"; true'
 EOF
     
     local output
-    if output=$(BAR_KEEP_GOING=1 "$REPO_ROOT/bar" --bare test2 2>&1); then
+    if output=$(BAR_KEEP_GOING=yes "$REPO_ROOT/bar" --bare test2 2>&1); then
         echo "ERROR: test2 should have failed (keep-going propagates failure)"
         return 1
     fi
@@ -98,7 +98,7 @@ rule test3: -- 'echo "Task 3"; true'
 EOF
     
     local output
-    if output=$(BAR_KEEP_GOING=1 "$REPO_ROOT/bar" --bare test3 2>&1); then
+    if output=$(BAR_KEEP_GOING=yes "$REPO_ROOT/bar" --bare test3 2>&1); then
         echo "ERROR: test3 should have failed"
         return 1
     fi
@@ -132,7 +132,7 @@ rule test4: --pure -- 'echo "Task 3"; true'
 EOF
     
     local output
-    if output=$(BAR_KEEP_GOING=1 "$REPO_ROOT/bar" --bare test4 2>&1); then
+    if output=$(BAR_KEEP_GOING=yes "$REPO_ROOT/bar" --bare test4 2>&1); then
         echo "ERROR: test4 should have failed"
         return 1
     fi
@@ -168,7 +168,7 @@ rule test5: --pure -- 'echo "E"; true'
 EOF
     
     local output
-    if output=$(BAR_KEEP_GOING=1 "$REPO_ROOT/bar" --bare test5 2>&1); then
+    if output=$(BAR_KEEP_GOING=yes "$REPO_ROOT/bar" --bare test5 2>&1); then
         echo "ERROR: test5 should have failed"
         return 1
     fi

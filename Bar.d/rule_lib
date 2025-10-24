@@ -6,7 +6,7 @@
 ### The library that implements rules, always loaded
 
 declare -g   BAR_CHECK_LEVEL=0         # less alerting for check dependencies
-declare -g   BAR_KEEP_GOING="${BAR_KEEP_GOING:-}"  ## When set to any non-empty value, enables keep-going mode. In keep-going mode, pure clauses continue to execute after failures, though failures are still propagated. Non-pure clauses or conclusive clauses halt keep-going within the current rule.
+declare -gx  BAR_KEEP_GOING="${BAR_KEEP_GOING:-1}"  ## Controls keep-going mode: 0 or 1 stops at first failure (default), numbers >= 2 allow that many failures before stopping, non-numeric values (yes/true/etc) continue until exhaustion. In keep-going mode, pure clauses continue executing after failures though failures are still propagated. Non-pure or conclusive clauses halt keep-going within the current rule.
 declare -gAx BAR_RULES                 # discovered rules as name:"clauseidx.."
 declare -gAx BAR_RULES_RESULT          # results "name":"hashes .." and "#hash":rc
 declare -gA  BAR_RULE_FLAGS=(          # [r]everse [a]lways [m]eta [d]isjunct [m]meta [D]isabled [b]are
@@ -15,7 +15,7 @@ declare -gA  BAR_RULE_FLAGS=(          # [r]everse [a]lways [m]eta [d]isjunct [m
 )
 declare -gax BAR_CLAUSES=()            # clause bodies enumerated
 declare -gax BAR_CLAUSE_DEPS=()        # dependencies for each clause
-declare -ga  BAR_CLAUSE_FLAGS=()       # [c]onclusive [p]ure
+declare -ga  BAR_CLAUSE_FLAGS=()       # [c]onclusive [d]efault
 
 function rule () ## [[--rule-flag].. <name>:] [--clause-flag].. [[!]dep[?] [arg]..].. [-- body..] - Defines a rule.
 {
@@ -65,9 +65,6 @@ function rule () ## [[--rule-flag].. <name>:] [--clause-flag].. [[!]dep[?] [arg]
             ;;
         --default)
             clauseflags+="d"
-            ;;
-        --pure)
-            clauseflags+="p"
             ;;
         *)
             break;;
@@ -238,52 +235,6 @@ function clause_local_restore
     unset CLAUSE_LOCAL
 }
 
-function clause_is_pure ## <clause_idx> - Checks if a clause is pure
-{
-    ## A clause is implicitly pure if it has no body and only pure dependencies
-    local clause_idx="$1"
-    
-    # If clause has a body, it's not implicitly pure
-    [[ -n "${BAR_CLAUSES[$clause_idx]}" ]] && return 1
-    
-    # If clause is already marked as pure, it's pure
-    [[ "${BAR_CLAUSE_FLAGS[$clause_idx]}" = *p* ]] && return 0
-    
-    # Check if all dependencies are pure
-    local deps=()
-    [[ "${#BAR_CLAUSE_DEPS[$clause_idx]}" -gt 0 ]] && readarray -d $'\n' -t deps <<<"${BAR_CLAUSE_DEPS[$clause_idx]}"
-    # @copilot cant you just for dep in ${BAR_CLAUSE_DEPS[$clause_idx]}; do
-    local dep
-    for dep in "${deps[@]}"; do
-        local depname="${dep%% *}"
-        
-        # Strip modifiers
-        [[ "$depname" = *"??" ]] && depname="${depname%??}"
-        [[ "$depname" = *"?" ]] && depname="${depname%?}"
-        [[ "$depname" = "!"* ]] && depname="${depname:1}"
-        [[ "$depname" = *"~" ]] && depname="${depname%?}"
-        
-        # Check if dependency rule exists and if any of its clauses are pure
-        if rule_exists "$depname"; then
-            local dep_has_pure_clause=
-            local dep_clause
-            for dep_clause in ${BAR_RULES[$depname]}; do
-                if [[ "${BAR_CLAUSE_FLAGS[$dep_clause]}" = *p* ]] || clause_is_pure "$dep_clause"; then
-                    dep_has_pure_clause=true
-                    break
-                fi
-            done
-            [[ -z "$dep_has_pure_clause" ]] && return 1
-        else
-            # Dependency doesn't exist yet, assume not pure
-            return 1
-        fi
-    done
-    
-    # All dependencies are pure and there's no body
-    return 0
-}
-
 function rule_eval ## <name> [args..] - Evaluates a rule
 {
     ## Normally this is used by bar itself but it can be used from function and rule bodies
@@ -315,11 +266,11 @@ function rule_eval ## <name> [args..] - Evaluates a rule
     local evaluate_always=
     BAR_RULES_RESULT["#$rule_id"]="pending"
     BAR_RULES_RESULT["$RULE_NAME"]+="$rule_id "
-    [[ "${BAR_RULE_FLAGS[$RULE_NAME]}" == *a* ]] && evaluate_always=true
+    [[ "${BAR_RULE_FLAGS[$RULE_NAME]:-}" == *a* ]] && evaluate_always=true
 
-    local clauses="${BAR_RULES[$RULE_NAME]}"
+    local clauses="${BAR_RULES[$RULE_NAME]:-}"
 
-    if [[ "${BAR_RULE_FLAGS[$RULE_NAME]}" = *r* ]]; then
+    if [[ "${BAR_RULE_FLAGS[$RULE_NAME]:-}" = *r* ]]; then
         local rclauses=""
         for n in $clauses; do
             rclauses="$n $rclauses"
@@ -330,6 +281,17 @@ function rule_eval ## <name> [args..] - Evaluates a rule
     # Keep-going state tracking
     local rule_failed=
     local rule_failure_rc=0
+    
+    # Parse BAR_KEEP_GOING: 0 or 1 = stop at first failure, >= 2 = countdown, non-numeric = unlimited
+    if [[ "$BAR_KEEP_GOING" =~ ^[0-9]+$ ]]; then
+        if (( BAR_KEEP_GOING <= 1 )); then
+            BAR_KEEP_GOING=1  # Stop at first failure (default behavior)
+        fi
+        # else: use the number as countdown limit
+    else
+        # Non-numeric means unlimited
+        BAR_KEEP_GOING=-1
+    fi
 
     local clause
     for clause in $clauses; do
@@ -432,21 +394,6 @@ function rule_eval ## <name> [args..] - Evaluates a rule
 
         rc=0
         if [[ "$skip" != true ]]; then
-            # Check if we should stop before executing this clause
-            if [[ -n "$rule_failed" ]]; then
-                # Previous clause failed - check if this clause is pure
-                if ! clause_is_pure "$clause"; then
-                    # Non-pure clause after failure - stop keep-going
-                    if [[ -n "$evaluate_always" ]]; then
-                        unset "BAR_RULES_RESULT[#$rule_id]"
-                    else
-                        BAR_RULES_RESULT["#$rule_id"]="$rule_failure_rc"
-                    fi
-                    [[ "${BAR_RULE_FLAGS[$RULE_NAME]}" != *m* ]] && clause_local_restore
-                    return "$rule_failure_rc"
-                fi
-            fi
-            
             eval "${BAR_CLAUSES[$clause]}" || rc=$?
 
             if [[ "${BAR_RULE_FLAGS[$RULE_NAME]}" = *d* ]]; then
@@ -457,21 +404,31 @@ function rule_eval ## <name> [args..] - Evaluates a rule
                 if [[ "$rc" != 0 ]]; then
                     # Clause failed - check if we can keep going
                     local clause_flags="${BAR_CLAUSE_FLAGS[$clause]}"
-                    if [[ "$clause_flags" != *p* ]] && clause_is_pure "$clause"; then
-                        # Mark as implicitly pure for future evaluations
-                        BAR_CLAUSE_FLAGS[clause]+="p"
-                        clause_flags="${BAR_CLAUSE_FLAGS[$clause]}"
-                    fi
                     
-                    if [[ -n "$BAR_KEEP_GOING" && 
-                          "$clause_flags" = *p* && 
-                          "$clause_flags" != *c* ]]; then
-                        # Keep-going: clause is pure and not conclusive
+                    if [[ "$BAR_KEEP_GOING" != 1 && "$clause_flags" != *c* ]]; then
+                        # Check if we've exceeded the failure limit
+                        if [[ "$BAR_KEEP_GOING" -ge 0 ]]; then
+                            ((BAR_KEEP_GOING--))
+                            if [[ "$BAR_KEEP_GOING" -eq 0 ]]; then
+                                # Exhausted keep-going limit
+                                failure "$RULE_NAME"
+                                if [[ -n "$evaluate_always" ]]; then
+                                    unset "BAR_RULES_RESULT[#$rule_id]"
+                                else
+                                    BAR_RULES_RESULT["#$rule_id"]="$rc"
+                                fi
+                                [[ "${BAR_RULE_FLAGS[$RULE_NAME]}" != *m* ]] && clause_local_restore
+                                return "$rc"
+                            fi
+                        fi
+                        
+                        # Keep-going: clause is not conclusive
                         # Remember failure and continue to next clause
+                        failure "$RULE_NAME"
                         rule_failed=true
                         [[ "$rule_failure_rc" == 0 ]] && rule_failure_rc=$rc
                     else
-                        # Stop immediately: clause is non-pure or conclusive
+                        # Stop immediately: clause is conclusive or keep-going disabled
                         if [[ -n "$evaluate_always" ]]; then
                             unset "BAR_RULES_RESULT[#$rule_id]"
                         else
@@ -552,15 +509,20 @@ function rule_list ## [pattern] - lists all loaded rules or rules matching patte
 }
 
 # Define --bare rules for read-only rule query functions
-rule --bare rule_exists:
-rule --bare rule_list:
+rule --bare rule_exists: -
+rule --bare rule_list: -
 
-# Define --bare --pure rules for logging functions
-# These allow using logging functions as dependencies, making rules implicitly pure
-rule --bare error: --pure -
-rule --bare warn: --pure -
-rule --bare note: --pure -
-rule --bare info: --pure -
-rule --bare debug: --pure -
-rule --bare trace: --pure -
+# Define --bare rules for logging functions
+rule --bare error: -
+rule --bare warn: -
+rule --bare note: -
+rule --bare info: -
+rule --bare debug: -
+rule --bare trace: -
 
+# Define --bare rules for std_lib query/predicate functions
+rule --bare is_scalar: -
+rule --bare called_as: -
+rule --bare is_command_installed: -
+rule --bare bar_now: -
+rule --bare hash_args: -

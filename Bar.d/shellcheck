@@ -53,3 +53,7 @@ function shellcheck_lint ## Test if all shell scripts under git control pass the
     # shellcheck disable=SC2046
     shellcheck --color $(shellcheck_list_shscripts)
 }
+
+# Define --bare rules for shellcheck query/predicate functions
+rule --bare shellcheck_is_shscript: -
+rule --bare shellcheck_list_shscripts: -
