@@ -1,0 +1,297 @@
+#!/usr/bin/env bar
+# -*- mode: sh; sh-shell: bash -*-
+# vim: set ft=bash:
+# shellcheck shell=bash
+
+### Podman Module Usage Examples
+###
+### This file demonstrates practical usage of the Bar podman module.
+### Run examples with: ./bar podman-example.bar <rule-name>
+
+require podman
+
+## List all available examples
+rule list_examples: -- '
+    echo "Available podman module examples:"
+    echo ""
+    echo "  example_simple_build        - Simple container build"
+    echo "  example_multi_arch          - Multi-architecture test matrix"
+    echo "  example_layered_image       - Layered image construction"
+    echo "  example_network_isolation   - Network security presets"
+    echo "  example_artifacts           - Artifact collection"
+    echo "  example_resource_limits     - CPU and memory limits"
+    echo "  example_dev_environment     - Complete development workflow"
+    echo "  example_parallel            - Parallel container execution"
+    echo "  example_config_template     - Configuration templates"
+    echo ""
+    echo "Run with: ./bar podman-example.bar <example-name>"
+'
+
+## Example 1: Simple Build in Container
+rule example_simple_build: is_podman_installed -- '
+    echo "Example 1: Simple build in a container"
+    echo "======================================"
+    echo ""
+    echo "Running a build inside a Debian container..."
+    
+    # Using podman_run with timeout
+    podman_run --timeout 300 debian:stable bash -c "
+        echo Building project...
+        echo This would run: apt-get update && apt-get install -y build-essential
+        echo Simulating build process...
+        sleep 2
+        echo Build complete!
+    "
+'
+
+## Example 2: Multi-Architecture Test Matrix
+rule example_multi_arch: test_x86_64 test_arm64 -- '
+    echo ""
+    echo "Multi-architecture testing complete!"
+'
+
+## Test on x86_64
+rule test_x86_64: is_podman_installed -- '
+    echo "Testing on x86_64 architecture..."
+    if podman_run_arch amd64 alpine:latest uname -m; then
+        echo "✓ x86_64 test passed"
+    else
+        echo "✗ x86_64 test failed"
+        return 1
+    fi
+'
+
+## Test on ARM64 (if available)
+rule test_arm64: 'is_podman_arch_available arm64' -- '
+    echo "Testing on ARM64 architecture..."
+    if podman_run_arch arm64 alpine:latest uname -m; then
+        echo "✓ ARM64 test passed"
+    else
+        echo "✗ ARM64 test failed"
+        return 1
+    fi
+'
+
+## Example 3: Layered Image Construction
+rule example_layered_image: is_podman_installed -- '
+    echo "Example 3: Building layered images"
+    echo "===================================="
+    echo ""
+    
+    # Build base layer with Bar
+    echo "Step 1: Creating base image with Bar runtime..."
+    if podman_layer_bar example-bar:latest debian:stable-slim; then
+        echo "✓ Base layer created: example-bar:latest"
+    fi
+    
+    # Add Rust toolchain
+    echo ""
+    echo "Step 2: Adding Rust toolchain..."
+    if podman_layer_toolchain example-rust:latest example-bar:latest rust; then
+        echo "✓ Rust toolchain layer created: example-rust:latest"
+    fi
+    
+    # Add development tools
+    echo ""
+    echo "Step 3: Adding development tools..."
+    if podman_layer_dev example-dev:latest example-rust:latest; then
+        echo "✓ Development layer created: example-dev:latest"
+    fi
+    
+    echo ""
+    echo "Layered image stack complete:"
+    echo "  debian:stable-slim (base)"
+    echo "  └─ example-bar:latest (+ Bar runtime)"
+    echo "     └─ example-rust:latest (+ Rust toolchain)"
+    echo "        └─ example-dev:latest (+ dev tools)"
+'
+
+## Example 4: Network Isolation
+rule example_network_isolation: is_podman_installed -- '
+    echo "Example 4: Network security presets"
+    echo "====================================="
+    echo ""
+    
+    # Create networks with different security levels
+    echo "Creating isolated network..."
+    podman_network_preset example-isolated isolated || echo "Network may already exist"
+    
+    echo "Creating private network..."
+    podman_network_preset example-private private || echo "Network may already exist"
+    
+    echo "Creating public network..."
+    podman_network_preset example-public public || echo "Network may already exist"
+    
+    echo ""
+    echo "Network presets created:"
+    echo "  - isolated: No network access (maximum security)"
+    echo "  - private: RFC1918 ranges only"
+    echo "  - public: Internet access, blocks private networks"
+    
+    echo ""
+    echo "Configured firewall rules:"
+    podman_firewall_config demo-firewall
+    podman_firewall_allow_port demo-firewall 443 tcp
+    podman_firewall_allow_port demo-firewall 80 tcp
+    podman_firewall_allow_network demo-firewall 192.168.1.0/24
+    podman_firewall_deny_all demo-firewall
+    podman_firewall_show demo-firewall
+'
+
+## Example 5: Artifact Collection
+rule example_artifacts: is_podman_installed -- '
+    echo "Example 5: Artifact collection"
+    echo "==============================="
+    echo ""
+    
+    # Create artifact directory
+    local artifact_dir
+    artifact_dir=$(podman_artifact_dir ./build-artifacts)
+    echo "Artifact directory: $artifact_dir"
+    
+    # Get mount specification
+    local mount_spec
+    mount_spec=$(podman_artifact_mount "$artifact_dir")
+    echo "Mount specification: $mount_spec"
+    
+    echo ""
+    echo "Running build with artifact collection..."
+    podman_run --volume "$mount_spec" alpine:latest sh -c "
+        echo Building artifacts...
+        echo Hello from container > /artifacts/output.txt
+        date > /artifacts/build-time.txt
+        echo Build complete
+    "
+    
+    echo ""
+    echo "Artifacts collected:"
+    ls -lh "$artifact_dir"
+    
+    echo ""
+    echo "Artifact contents:"
+    cat "$artifact_dir/output.txt" 2>/dev/null || echo "(no output.txt)"
+    cat "$artifact_dir/build-time.txt" 2>/dev/null || echo "(no build-time.txt)"
+'
+
+## Example 6: Resource Limits
+rule example_resource_limits: is_podman_installed -- '
+    echo "Example 6: Container resource limits"
+    echo "======================================"
+    echo ""
+    
+    echo "Running with CPU and memory limits..."
+    echo "Limits: 1 CPU, 512MB memory"
+    
+    podman_run_limited alpine:latest echo "Running with resource limits" --cpus 1 --memory 512m || true
+    
+    echo ""
+    echo "Resource limit flags:"
+    echo "  --cpus <n>       - Limit CPU usage"
+    echo "  --memory <size>  - Limit memory (e.g., 512m, 2g)"
+'
+
+## Example 7: Development Environment
+rule example_dev_environment: is_podman_installed -- '
+    echo "Example 7: Complete development environment"
+    echo "============================================="
+    echo ""
+    
+    echo "This example demonstrates a complete containerized development workflow:"
+    echo "1. Build development image with toolchain"
+    echo "2. Run tests in isolated environment"
+    echo "3. Collect build artifacts"
+    echo "4. Clean up resources"
+    
+    echo ""
+    echo "Development image stack would include:"
+    echo "  - Base OS (Debian/Alpine)"
+    echo "  - Bar runtime"
+    echo "  - Language toolchain (Rust/Python/Go/Node.js)"
+    echo "  - Development tools (gdb, valgrind, strace)"
+    echo "  - Project dependencies"
+'
+
+## Example 8: Parallel Execution
+rule example_parallel: is_podman_installed -- '
+    echo "Example 8: Parallel container execution"
+    echo "========================================="
+    echo ""
+    
+    echo "Parallel execution allows running the same rule across multiple containers:"
+    echo ""
+    echo "Usage:"
+    echo "  podman_run_parallel <image> <rule> --parallel <count> [args]"
+    echo ""
+    echo "Example:"
+    echo "  podman_run_parallel alpine:latest tests --parallel 4"
+    echo ""
+    echo "This would run the tests rule in 4 parallel containers"
+    echo "for faster test execution or load testing."
+'
+
+## Example 9: Configuration Templates
+rule example_config_template: is_podman_installed -- '
+    echo "Example 9: Configuration templates"
+    echo "===================================="
+    echo ""
+    
+    # Define a reusable configuration
+    declare -gA PODMAN_CONFIG_EXAMPLE=(
+        [image]="debian:stable"
+        [timeout]=300
+        [network]="isolated"
+        [platform]="linux/amd64"
+    )
+    
+    echo "Configuration template defined:"
+    echo "  Image: ${PODMAN_CONFIG_EXAMPLE[image]}"
+    echo "  Timeout: ${PODMAN_CONFIG_EXAMPLE[timeout]}s"
+    echo "  Network: ${PODMAN_CONFIG_EXAMPLE[network]}"
+    echo "  Platform: ${PODMAN_CONFIG_EXAMPLE[platform]}"
+    
+    echo ""
+    echo "Load with: podman_config_load example"
+    echo "Use with: podman_run_with_config example <rule>"
+    
+    if podman_config_load example; then
+        echo "✓ Configuration loaded successfully"
+    fi
+'
+
+## Example 10: List Available Architectures
+rule example_list_archs: is_podman_installed -- '
+    echo "Example 10: Available architectures"
+    echo "====================================="
+    echo ""
+    
+    echo "Native architecture:"
+    podman_get_native_arch
+    
+    echo ""
+    echo "All available architectures (native + QEMU):"
+    podman_list_available_archs
+    
+    echo ""
+    echo "Supported platforms for completion:"
+    podman_platform_complete
+'
+
+## Clean up example resources
+rule cleanup_examples: -- '
+    echo "Cleaning up example resources..."
+    
+    # Remove example images
+    for img in example-bar example-rust example-dev; do
+        podman rmi -f "$img:latest" 2>/dev/null && echo "Removed $img:latest" || true
+    done
+    
+    # Remove example networks
+    for net in example-isolated example-private example-public; do
+        podman network rm "$net" 2>/dev/null && echo "Removed network $net" || true
+    done
+    
+    # Remove artifact directories
+    rm -rf ./build-artifacts 2>/dev/null && echo "Removed ./build-artifacts" || true
+    
+    echo "Cleanup complete!"
+'

@@ -1192,14 +1192,22 @@ function help_describe_functions
             out = out text "\n"
         }
 
-    /^function[ \t]+[A-Za-z_][A-Za-z0-9_]*[ \t]*##/ {
+        # Store lines starting with ## for potential function doc
+        /^##[^#]/ {
+            pending_doc = $0
+            sub(/^##[ \t]*/, "", pending_doc)
+            next
+        }
+
+        # Function with inline doc (existing format)
+        /^function[ \t]+[A-Za-z_][A-Za-z0-9_]*[ \t]*##/ {
             split($0, parts, "##")
             if (length(parts) < 2) {
                 next
             }
 
             namepart = parts[1]
-      sub(/^function[ \t]+/, "", namepart)
+            sub(/^function[ \t]+/, "", namepart)
             sub(/[ \t].*$/, "", namepart)
 
             infopart = parts[2]
@@ -1223,17 +1231,62 @@ function help_describe_functions
             } else {
                 printout("      " namepart)
             }
-      if (desc != "") {
+            if (desc != "") {
                 printout("        " desc)
+            }
+            
+            pending_doc = ""
+            next
+        }
+
+        # Function with preceding doc (new format for podman)
+        /^function[ \t]+[A-Za-z_][A-Za-z0-9_]*/ {
+            if (pending_doc != "") {
+                namepart = $0
+                sub(/^function[ \t]+/, "", namepart)
+                sub(/[ \t\{].*$/, "", namepart)
+
+                infopart = pending_doc
+                proto = infopart
+                desc = ""
+                split(infopart, proto_desc, " - ")
+                if (length(proto_desc) >= 2) {
+                    proto = proto_desc[1]
+                    desc = substr(infopart, length(proto) + 4)
+                }
+
+                if (proto == infopart) {
+                    desc = ""
+                }
+
+                printout()
+                if (proto != "") {
+                    printout("      " namepart " " proto)
+                } else {
+                    printout("      " namepart)
+                }
+                if (desc != "") {
+                    printout("        " desc)
+                }
+                
+                pending_doc = ""
             }
             next
         }
 
+        # Multi-line documentation continuation
         /^([ \t][ \t])+##[^#].*/ {
             line = $0
             sub(/^.*##[ ]?/, "", line)
             printout("        " line)
             next
+        }
+
+        # Clear pending doc if we hit something else
+        {
+            if (pending_doc != "" && !/^([ \t][ \t])+##[^#].*/ && !/^##[^#]/) {
+                pending_doc = ""
+            }
         }
 
         END {

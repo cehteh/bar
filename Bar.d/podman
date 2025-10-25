@@ -1,0 +1,1848 @@
+# -*- mode: sh; sh-shell: bash -*-
+# vim: set ft=bash:
+# shellcheck shell=bash
+# shellcheck disable=2016,2086
+
+### Podman container support for Bar
+###
+### Provides container-based build and test environments with multi-architecture support,
+### layered image construction, network isolation, and artifact collection.
+
+# prototype: "arch" = "literal arm64 amd64 arm/v7"
+# prototype: "platform" = "ext podman_platform_complete"
+# prototype: "network" = "literal public private local isolated"
+
+require run
+
+## Check if podman is available on this system
+function is_podman_installed
+{
+    is_command_installed podman
+}
+
+memofn is_podman_installed
+
+## Get podman version
+function podman_version
+{
+    if ! is_podman_installed; then
+        return 1
+    fi
+    podman --version | awk '{print $3}'
+}
+
+memofn podman_version
+
+## <image:tag> [--timeout <seconds>] [--platform <arch>] [--network <preset>] [--volume <src:dst>] [command] [args..] - Run command in container
+function podman_run
+{
+    trace "$*"
+    ## Executes a command inside a podman container with various options.
+    ## Options:
+    ##   --timeout <seconds>   - Maximum runtime (container killed after timeout)
+    ##   --platform <arch>     - Target architecture (e.g., linux/amd64, linux/arm64)
+    ##   --network <preset>    - Network configuration (public, private, local, isolated)
+    ##   --volume <src:dst>    - Mount volumes (can be specified multiple times)
+    ##   --env <VAR=value>     - Set environment variables (can be specified multiple times)
+    ## 
+    ## The first non-option argument is the image name, followed by the command and its arguments.
+    
+    local image=""
+    local timeout=""
+    local platform=""
+    local network=""
+    local -a volumes=()
+    local -a env_vars=()
+    local -a podman_args=()
+    
+    # Parse options
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --timeout)
+                timeout="$2"
+                shift 2
+                ;;
+            --platform)
+                platform="$2"
+                shift 2
+                ;;
+            --network)
+                network="$2"
+                shift 2
+                ;;
+            --volume)
+                volumes+=("$2")
+                shift 2
+                ;;
+            --env)
+                env_vars+=("$2")
+                shift 2
+                ;;
+            *)
+                # First non-option is the image
+                if [[ -z "$image" ]]; then
+                    image="$1"
+                    shift
+                    # Rest are the command and args
+                    break
+                else
+                    error "Unexpected argument: $1"
+                    return 1
+                fi
+                ;;
+        esac
+    done
+    
+    if [[ -z "$image" ]]; then
+        error "podman_run: image name is required"
+        return 1
+    fi
+    
+    # Build podman command
+    podman_args=(run --rm)
+    
+    # Add timeout if specified
+    if [[ -n "$timeout" ]]; then
+        podman_args+=(--timeout="$timeout")
+    fi
+    
+    # Add platform if specified
+    if [[ -n "$platform" ]]; then
+        podman_args+=(--platform="$platform")
+    fi
+    
+    # Add network configuration
+    if [[ -n "$network" ]]; then
+        case "$network" in
+            isolated)
+                podman_args+=(--network=none)
+                ;;
+            public|private|local)
+                # For now, use default network
+                # Full implementation will create custom networks
+                debug "Network preset '$network' not fully implemented, using default"
+                ;;
+            *)
+                warn "Unknown network preset: $network, using default"
+                ;;
+        esac
+    fi
+    
+    # Add volumes
+    for vol in "${volumes[@]}"; do
+        podman_args+=(--volume="$vol")
+    done
+    
+    # Add environment variables
+    for env in "${env_vars[@]}"; do
+        podman_args+=(--env="$env")
+    done
+    
+    # Add image
+    podman_args+=("$image")
+    
+    # Add command and args if provided
+    if [[ $# -gt 0 ]]; then
+        podman_args+=("$@")
+    fi
+    
+    # Execute podman
+    info "Starting container: $image${platform:+ on $platform}${timeout:+ (timeout: ${timeout}s)}"
+    debug "podman ${podman_args[*]}"
+    run_test podman "${podman_args[@]}"
+}
+
+## <platform> - List available platforms for completion
+function podman_platform_complete
+{
+    # Get platforms that podman actually supports
+    # Try to query podman for supported platforms, fall back to common ones
+    if podman info --format='{{range .Host.Arch}}{{.}}{{"\n"}}{{end}}' 2>/dev/null | grep -q .; then
+        podman info --format='{{range .Host.Arch}}linux/{{.}}{{"\n"}}{{end}}' 2>/dev/null
+    else
+        # Fallback to common platforms if podman doesn't report
+        local native_arch
+        native_arch=$(uname -m)
+        case "$native_arch" in
+            x86_64) echo "linux/amd64" ;;
+            aarch64) echo "linux/arm64" ;;
+            armv7l) echo "linux/arm/v7" ;;
+            *) echo "linux/$native_arch" ;;
+        esac
+        
+        # Add QEMU-supported platforms if binfmt_misc is available
+        if [[ -d /proc/sys/fs/binfmt_misc ]]; then
+            for fmt in /proc/sys/fs/binfmt_misc/qemu-*; do
+                [[ -f "$fmt" ]] || continue
+                local arch
+                arch=$(basename "$fmt" | sed 's/qemu-//')
+                case "$arch" in
+                    x86_64) echo "linux/amd64" ;;
+                    aarch64) echo "linux/arm64" ;;
+                    arm) echo "linux/arm/v7" ;;
+                    *) echo "linux/$arch" ;;
+                esac
+            done | sort -u
+        fi
+    fi
+}
+
+## Normalize architecture name to standard format
+## Architecture normalization mapping tables (cached, readonly)
+declare -gA _PODMAN_ARCH_TO_STANDARD=()
+declare -gA _PODMAN_STANDARD_TO_QEMU=()
+
+## Initialize architecture mapping tables
+function _podman_init_arch_mappings
+{
+    # Only initialize once
+    [[ ${#_PODMAN_ARCH_TO_STANDARD[@]} -gt 0 ]] && return
+    
+    # Map various arch names to standard names (for podman/docker platforms)
+    # Standard format follows Docker's conventions
+    _PODMAN_ARCH_TO_STANDARD=(
+        # amd64/x86_64
+        [amd64]="amd64"
+        [x86_64]="amd64"
+        [x86-64]="amd64"
+        [linux/amd64]="amd64"
+        
+        # arm64/aarch64
+        [arm64]="arm64"
+        [aarch64]="arm64"
+        [aarch64_be]="arm64"
+        [linux/arm64]="arm64"
+        
+        # arm/v7
+        [armv7]="arm/v7"
+        [arm/v7]="arm/v7"
+        [armhf]="arm/v7"
+        [armel]="arm/v7"
+        [linux/arm/v7]="arm/v7"
+        
+        # arm/v6
+        [armv6]="arm/v6"
+        [arm/v6]="arm/v6"
+        [linux/arm/v6]="arm/v6"
+        
+        # arm (generic)
+        [arm]="arm"
+        [armeb]="arm"
+        [linux/arm]="arm"
+        
+        # 386/i386
+        [386]="386"
+        [i386]="386"
+        [i686]="386"
+        [linux/386]="386"
+        
+        # ppc64le
+        [ppc64le]="ppc64le"
+        [ppc64el]="ppc64le"
+        [powerpc64le]="ppc64le"
+        [linux/ppc64le]="ppc64le"
+        
+        # ppc64
+        [ppc64]="ppc64"
+        [powerpc64]="ppc64"
+        [linux/ppc64]="ppc64"
+        
+        # ppc
+        [ppc]="ppc"
+        [powerpc]="ppc"
+        [linux/ppc]="ppc"
+        
+        # s390x
+        [s390x]="s390x"
+        [linux/s390x]="s390x"
+        
+        # riscv64
+        [riscv64]="riscv64"
+        [linux/riscv64]="riscv64"
+        
+        # riscv32
+        [riscv32]="riscv32"
+        [linux/riscv32]="riscv32"
+        
+        # mips variants
+        [mips]="mips"
+        [mips64]="mips64"
+        [mips64el]="mips64le"
+        [mips64le]="mips64le"
+        [mipsel]="mipsle"
+        [mipsle]="mipsle"
+        [mipsn32]="mips"
+        [mipsn32el]="mipsle"
+        [linux/mips]="mips"
+        [linux/mips64]="mips64"
+        [linux/mips64le]="mips64le"
+        
+        # alpha
+        [alpha]="alpha"
+        [linux/alpha]="alpha"
+        
+        # sparc variants
+        [sparc]="sparc"
+        [sparc64]="sparc64"
+        [sparc32plus]="sparc"
+        [linux/sparc]="sparc"
+        [linux/sparc64]="sparc64"
+        
+        # m68k
+        [m68k]="m68k"
+        [linux/m68k]="m68k"
+        
+        # sh4
+        [sh4]="sh4"
+        [sh4eb]="sh4"
+        [linux/sh4]="sh4"
+        
+        # microblaze
+        [microblaze]="microblaze"
+        [microblazeel]="microblaze"
+        [linux/microblaze]="microblaze"
+        
+        # hppa
+        [hppa]="hppa"
+        [linux/hppa]="hppa"
+        
+        # xtensa
+        [xtensa]="xtensa"
+        [xtensaeb]="xtensa"
+        [linux/xtensa]="xtensa"
+        
+        # or1k (OpenRISC)
+        [or1k]="or1k"
+        [linux/or1k]="or1k"
+        
+        # hexagon
+        [hexagon]="hexagon"
+        [linux/hexagon]="hexagon"
+        
+        # loong64/loongarch64
+        [loong64]="loong64"
+        [loongarch64]="loong64"
+        [linux/loong64]="loong64"
+        
+        # avr
+        [avr]="avr"
+        [linux/avr]="avr"
+        
+        # rx
+        [rx]="rx"
+        [linux/rx]="rx"
+        
+        # tricore
+        [tricore]="tricore"
+        [linux/tricore]="tricore"
+    )
+    
+    # Map standard names to QEMU binary/arch names
+    _PODMAN_STANDARD_TO_QEMU=(
+        [amd64]="x86_64"
+        [arm64]="aarch64"
+        [arm/v7]="arm"
+        [arm/v6]="arm"
+        [arm]="arm"
+        [386]="i386"
+        [ppc64le]="ppc64le"
+        [ppc64]="ppc64"
+        [ppc]="ppc"
+        [s390x]="s390x"
+        [riscv64]="riscv64"
+        [riscv32]="riscv32"
+        [mips]="mips"
+        [mips64]="mips64"
+        [mips64le]="mips64el"
+        [mipsle]="mipsel"
+        [alpha]="alpha"
+        [sparc]="sparc"
+        [sparc64]="sparc64"
+        [m68k]="m68k"
+        [sh4]="sh4"
+        [microblaze]="microblaze"
+        [hppa]="hppa"
+        [xtensa]="xtensa"
+        [or1k]="or1k"
+        [hexagon]="hexagon"
+        [loong64]="loongarch64"
+        [avr]="avr"
+        [rx]="rx"
+        [tricore]="tricore"
+    )
+}
+
+function podman_normalize_arch
+{
+    ## Converts various architecture names to standardized format
+    ## Usage: podman_normalize_arch <arch>
+    _podman_init_arch_mappings
+    
+    local arch="$1"
+    
+    # Try direct lookup in mapping table
+    if [[ -n "${_PODMAN_ARCH_TO_STANDARD[$arch]}" ]]; then
+        echo "${_PODMAN_ARCH_TO_STANDARD[$arch]}"
+        return
+    fi
+    
+    # Remove linux/ prefix and try again
+    local arch_noprefix="${arch#linux/}"
+    if [[ "$arch_noprefix" != "$arch" ]] && [[ -n "${_PODMAN_ARCH_TO_STANDARD[$arch_noprefix]}" ]]; then
+        echo "${_PODMAN_ARCH_TO_STANDARD[$arch_noprefix]}"
+        return
+    fi
+    
+    # Fallback: return as-is without linux/ prefix
+    echo "$arch_noprefix"
+}
+
+## Normalize platform name to linux/<arch> format
+function podman_normalize_platform
+{
+    ## Converts architecture names to platform format (linux/<arch>)
+    ## Usage: podman_normalize_platform <arch-or-platform>
+    local input="$1"
+    
+    # If already in platform format, return as-is
+    if [[ "$input" == linux/* ]]; then
+        echo "$input"
+        return
+    fi
+    
+    # Normalize arch first, then prefix with linux/
+    local arch
+    arch=$(podman_normalize_arch "$input")
+    echo "linux/$arch"
+}
+
+## <arch> - Check if an architecture is available (with QEMU if needed)
+function is_podman_arch_available
+{
+    trace "$*"
+    ## Checks if the specified architecture is available for use with podman.
+    ## This includes native architectures and those available via QEMU emulation.
+    local arch="$1"
+    
+    if [[ -z "$arch" ]]; then
+        error "is_podman_arch_available: architecture argument is required"
+        return 2
+    fi
+    
+    if ! is_podman_installed; then
+        return 1
+    fi
+    
+    # Normalize architecture name
+    case "$arch" in
+        amd64|x86_64|x86-64)
+            arch="amd64"
+            ;;
+        arm64|aarch64)
+            arch="arm64"
+            ;;
+        armv7|arm/v7|armhf)
+            arch="arm/v7"
+            ;;
+    esac
+    
+    # Get native architecture
+    local native_arch
+    native_arch=$(uname -m)
+    case "$native_arch" in
+        x86_64)
+            native_arch="amd64"
+            ;;
+        aarch64)
+            native_arch="arm64"
+            ;;
+        armv7l)
+            native_arch="arm/v7"
+            ;;
+    esac
+    
+    # Check if it's native
+    if [[ "$arch" == "$native_arch" ]]; then
+        debug "Architecture $arch is native"
+        return 0
+    fi
+    
+    # Check if QEMU is available for this arch
+    local qemu_bin=""
+    case "$arch" in
+        amd64)
+            qemu_bin="qemu-x86_64-static"
+            ;;
+        arm64)
+            qemu_bin="qemu-aarch64-static"
+            ;;
+        arm/v7)
+            qemu_bin="qemu-arm-static"
+            ;;
+    esac
+    
+    if [[ -n "$qemu_bin" ]] && command -v "$qemu_bin" >/dev/null 2>&1; then
+        debug "Architecture $arch is available via QEMU ($qemu_bin)"
+        return 0
+    fi
+    
+    note "Architecture $arch is not available (no QEMU support found)"
+    return 1
+}
+
+memofn is_podman_arch_available
+
+## Setup QEMU for cross-architecture support
+function podman_arch_setup
+{
+    trace "$*"
+    ## Ensures QEMU binfmt support is properly configured for multi-architecture builds.
+    ## This enables running containers for different architectures via emulation.
+    
+    if ! is_podman_installed; then
+        return 1
+    fi
+    
+    # Check if binfmt_misc is mounted
+    if [[ ! -d /proc/sys/fs/binfmt_misc ]]; then
+        warn "binfmt_misc not available - QEMU emulation may not work"
+        return 1
+    fi
+    
+    # Check for common QEMU registration methods
+    local qemu_registered=false
+    
+    # Method 1: Check if qemu interpreters are registered
+    if [[ -f /proc/sys/fs/binfmt_misc/qemu-aarch64 ]] || \
+       [[ -f /proc/sys/fs/binfmt_misc/qemu-arm ]]; then
+        debug "QEMU binfmt handlers already registered"
+        qemu_registered=true
+    fi
+    
+    # Method 2: Try using podman's built-in support via qemu-user-static container
+    if [[ "$qemu_registered" == "false" ]]; then
+        if command -v docker >/dev/null 2>&1 || command -v podman >/dev/null 2>&1; then
+            info "Registering QEMU handlers via multiarch/qemu-user-static container"
+            # Use the standard multiarch/qemu-user-static image
+            if podman run --rm --privileged multiarch/qemu-user-static --reset -p yes 2>/dev/null; then
+                info "QEMU handlers registered successfully"
+                qemu_registered=true
+            else
+                debug "Could not register QEMU handlers via container"
+            fi
+        fi
+    fi
+    
+    if [[ "$qemu_registered" == "true" ]]; then
+        info "Multi-architecture support is configured"
+        return 0
+    else
+        warn "Could not configure multi-architecture support"
+        return 1
+    fi
+}
+
+## <arch> - Check if QEMU is available for the specified architecture
+function is_qemu_available
+{
+    ## Checks if QEMU emulation is available for the given architecture.
+    local arch="$1"
+    
+    if [[ -z "$arch" ]]; then
+        error "is_qemu_available: architecture argument is required"
+        return 2
+    fi
+    
+    # Normalize architecture
+    case "$arch" in
+        amd64|x86_64|x86-64)
+            arch="x86_64"
+            ;;
+        arm64|aarch64)
+            arch="aarch64"
+            ;;
+        armv7|arm/v7|armhf)
+            arch="arm"
+            ;;
+    esac
+    
+    local qemu_bin="qemu-${arch}-static"
+    
+    if command -v "$qemu_bin" >/dev/null 2>&1; then
+        debug "QEMU binary found: $qemu_bin"
+        return 0
+    fi
+    
+    # Check if binfmt is registered
+    local binfmt_file="/proc/sys/fs/binfmt_misc/qemu-${arch}"
+    if [[ -f "$binfmt_file" ]] && grep -q "enabled" "$binfmt_file" 2>/dev/null; then
+        debug "QEMU binfmt registered for $arch"
+        return 0
+    fi
+    
+    debug "QEMU not available for $arch"
+    return 1
+}
+
+memofn is_qemu_available
+
+
+
+
+## <tag> <platform> <containerfile> - Build an image for a specific platform
+function podman_image_build_multiarch
+{
+    trace "$*"
+    ## Builds a container image for a specific platform/architecture.
+    ## Usage: podman_image_build_multiarch <tag> <platform> <containerfile>
+    ## Example: podman_image_build_multiarch myimg:latest linux/arm64 Containerfile
+    local tag="$1"
+    local platform="$2"
+    local containerfile="$3"
+    
+    if [[ -z "$tag" ]]; then
+        error "podman_image_build_multiarch: tag is required"
+        return 1
+    fi
+    
+    if [[ -z "$platform" ]]; then
+        error "podman_image_build_multiarch: platform is required"
+        return 1
+    fi
+    
+    if [[ -z "$containerfile" ]]; then
+        error "podman_image_build_multiarch: containerfile is required"
+        return 1
+    fi
+    
+    if [[ ! -f "$containerfile" ]]; then
+        error "podman_image_build_multiarch: containerfile not found: $containerfile"
+        return 1
+    fi
+    
+    # Extract architecture from platform
+    local arch="${platform##*/}"
+    
+    # Check if architecture is available
+    if ! is_podman_arch_available "$arch"; then
+        error "Architecture $arch is not available"
+        return 1
+    fi
+    
+    info "Building image $tag for platform $platform from $containerfile"
+    debug "podman build --platform=$platform -t $tag -f $containerfile ."
+    run_test podman build --platform="$platform" -t "$tag" -f "$containerfile" .
+}
+
+## <base-tag> <platforms..> - Build multi-platform images
+function podman_image_build_matrix
+{
+    trace "$*"
+    ## Builds the same image for multiple platforms.
+    ## Usage: podman_image_build_matrix <base-tag> <containerfile> <platforms..>
+    ## Example: podman_image_build_matrix myimg:v1 Containerfile linux/amd64 linux/arm64
+    local base_tag="$1"
+    local containerfile="$2"
+    shift 2
+    
+    if [[ -z "$base_tag" ]]; then
+        error "podman_image_build_matrix: base tag is required"
+        return 1
+    fi
+    
+    if [[ -z "$containerfile" ]]; then
+        error "podman_image_build_matrix: containerfile is required"
+        return 1
+    fi
+    
+    if [[ $# -eq 0 ]]; then
+        error "podman_image_build_matrix: at least one platform is required"
+        return 1
+    fi
+    
+    local -a platforms=("$@")
+    local platform
+    local failed=0
+    
+    info "Building ${base_tag} for ${#platforms[@]} platform(s): ${platforms[*]}"
+    for platform in "${platforms[@]}"; do
+        local arch="${platform##*/}"
+        local tag="${base_tag}-${arch//\//-}"
+        
+        debug "Building $tag for $platform..."
+        if podman_image_build_multiarch "$tag" "$platform" "$containerfile"; then
+            debug "✓ Built $tag successfully"
+        else
+            error "✗ Failed to build $tag"
+            failed=$((failed + 1))
+        fi
+    done
+    
+    if [[ $failed -gt 0 ]]; then
+        error "Failed to build $failed platform(s)"
+        return 1
+    fi
+    
+    info "Successfully built images for all platforms"
+    return 0
+}
+
+
+# Image Building Support (Basic)
+
+
+## <tag> <containerfile> - Build an image from a Containerfile
+function podman_image_build
+{
+    trace "$*"
+    ## Builds a container image from a Containerfile.
+    ## Usage: podman_image_build <tag> <containerfile>
+    local tag="$1"
+    local containerfile="$2"
+    
+    if [[ -z "$tag" ]]; then
+        error "podman_image_build: tag is required"
+        return 1
+    fi
+    
+    if [[ -z "$containerfile" ]]; then
+        error "podman_image_build: containerfile is required"
+        return 1
+    fi
+    
+    if [[ ! -f "$containerfile" ]]; then
+        error "podman_image_build: containerfile not found: $containerfile"
+        return 1
+    fi
+    
+    info "Building image $tag from $containerfile"
+    debug "podman build -t $tag -f $containerfile ."
+    run_test podman build -t "$tag" -f "$containerfile" .
+}
+
+
+
+
+## <arch> <image> [--timeout <sec>] [command..] - Run command for specific architecture
+function podman_run_arch
+{
+    trace "$*"
+    ## Executes a command in a container for a specific architecture.
+    ## Automatically sets the correct platform based on the architecture.
+    ## Usage: podman_run_arch <arch> <image> [--timeout <sec>] [command..]
+    local arch="$1"
+    local image="$2"
+    shift 2
+    
+    if [[ -z "$arch" ]]; then
+        error "podman_run_arch: architecture is required"
+        return 1
+    fi
+    
+    if [[ -z "$image" ]]; then
+        error "podman_run_arch: image is required"
+        return 1
+    fi
+    
+    # Check if architecture is available
+    if ! is_podman_arch_available "$arch"; then
+        error "Architecture $arch is not available"
+        return 1
+    fi
+    
+    # Normalize to platform format
+    local platform
+    platform=$(podman_normalize_platform "$arch")
+    
+    debug "Running on $platform"
+    podman_run --platform="$platform" "$image" "$@"
+}
+
+## Get the native architecture
+function podman_get_native_arch
+{
+    ## Returns the native architecture in normalized format (amd64, arm64, arm/v7).
+    local native_arch
+    native_arch=$(uname -m)
+    podman_normalize_arch "$native_arch"
+}
+
+## List all available architectures
+function podman_list_available_archs
+{
+    ## Lists all architectures available for use (native + QEMU).
+    _podman_init_arch_mappings
+    
+    # Start with native arch
+    podman_get_native_arch
+    
+    # Check for QEMU-enabled architectures via binfmt_misc
+    if [[ -d /proc/sys/fs/binfmt_misc ]]; then
+        for fmt in /proc/sys/fs/binfmt_misc/qemu-*; do
+            [[ -f "$fmt" ]] || continue
+            if grep -q "enabled" "$fmt" 2>/dev/null; then
+                local qemu_arch
+                qemu_arch=$(basename "$fmt" | sed 's/qemu-//')
+                
+                # Convert QEMU arch name to standard arch by looking it up
+                # in reverse mapping (search _PODMAN_STANDARD_TO_QEMU)
+                local found=0
+                for std_arch in "${!_PODMAN_STANDARD_TO_QEMU[@]}"; do
+                    if [[ "${_PODMAN_STANDARD_TO_QEMU[$std_arch]}" == "$qemu_arch" ]]; then
+                        echo "$std_arch"
+                        found=1
+                        break
+                    fi
+                done
+                
+                # If not found in mapping, output QEMU arch name as-is
+                if [[ $found -eq 0 ]]; then
+                    echo "$qemu_arch"
+                fi
+            fi
+        done | sort -u
+    fi
+}
+
+
+
+
+## <container-id> <tag> - Snapshot a container to an image
+function podman_image_snapshot
+{
+    trace "$*"
+    ## Creates an image from a container's current state.
+    ## Usage: podman_image_snapshot <container-id> <tag>
+    local container="$1"
+    local tag="$2"
+    
+    if [[ -z "$container" ]]; then
+        error "podman_image_snapshot: container ID is required"
+        return 1
+    fi
+    
+    if [[ -z "$tag" ]]; then
+        error "podman_image_snapshot: tag is required"
+        return 1
+    fi
+    
+    info "Creating snapshot: $tag from container $container"
+    debug "podman commit $container $tag"
+    run_test podman commit "$container" "$tag"
+}
+
+## <name:tag> <base-image> - Create base layer with Bar runtime
+function podman_layer_bar
+{
+    trace "$*"
+    ## Creates a container image with Bar and bash installed.
+    ## Usage: podman_layer_bar <name:tag> <base-image>
+    local tag="$1"
+    local base="$2"
+    
+    if [[ -z "$tag" ]]; then
+        error "podman_layer_bar: tag is required"
+        return 1
+    fi
+    
+    if [[ -z "$base" ]]; then
+        error "podman_layer_bar: base image is required"
+        return 1
+    fi
+    
+    info "Creating Bar runtime layer: $tag from $base"
+    
+    # Generate Containerfile
+    local containerfile
+    containerfile=$(mktemp)
+    debug "Generated Containerfile: $containerfile"
+    
+    cat > "$containerfile" <<EOF
+FROM $base
+RUN command -v apt-get >/dev/null && apt-get update && apt-get install -y bash git || \
+    command -v yum >/dev/null && yum install -y bash git || \
+    command -v apk >/dev/null && apk add bash git || true
+COPY bar /usr/local/bin/bar
+COPY Bar.d /usr/local/lib/bar/Bar.d
+RUN chmod +x /usr/local/bin/bar
+ENV PATH="/usr/local/bin:\$PATH"
+WORKDIR /workspace
+EOF
+    
+    # Build the image
+    debug "podman build -t $tag -f $containerfile ."
+    podman build -t "$tag" -f "$containerfile" .
+    local rc=$?
+    
+    # Cleanup
+    rm -f "$containerfile"
+    
+    return $rc
+}
+
+## <name:tag> <parent:tag> <toolchain> - Add toolchain layer (stub)
+function podman_layer_toolchain
+{
+    trace "$*"
+    ## Adds a development toolchain to an existing image.
+    ## This is a stub - toolchain configuration will be implemented in a separate module.
+    ## Usage: podman_layer_toolchain <name:tag> <parent:tag> <toolchain>
+    local tag="$1"
+    local parent="$2"
+    local toolchain="$3"
+    
+    if [[ -z "$tag" ]]; then
+        error "podman_layer_toolchain: tag is required"
+        return 1
+    fi
+    
+    if [[ -z "$parent" ]]; then
+        error "podman_layer_toolchain: parent image is required"
+        return 1
+    fi
+    
+    if [[ -z "$toolchain" ]]; then
+        error "podman_layer_toolchain: toolchain name is required"
+        return 1
+    fi
+    
+    warn "podman_layer_toolchain: stub function - toolchain '$toolchain' not yet configured"
+    info "Toolchain and package management will be configured in a separate PR"
+    info "Use podman_containerfile_* API or custom Containerfile for now"
+    return 1
+}
+
+## <name:tag> <parent:tag> - Add development tools layer (stub)
+function podman_layer_dev
+{
+    ## Adds common development tools to an existing image.
+    ## This is a stub - development tools configuration will be implemented in a separate module.
+    ## Usage: podman_layer_dev <name:tag> <parent:tag>
+    local tag="$1"
+    local parent="$2"
+    
+    if [[ -z "$tag" ]]; then
+        error "podman_layer_dev: tag is required"
+        return 1
+    fi
+    
+    if [[ -z "$parent" ]]; then
+        error "podman_layer_dev: parent image is required"
+        return 1
+    fi
+    
+    warn "podman_layer_dev: stub function - development tools not yet configured"
+    info "Development tools and package management will be configured in a separate PR"
+    info "Use podman_containerfile_* API or custom Containerfile for now"
+    return 1
+}
+
+
+# Programmatic Containerfile Generation
+
+
+# Global variable for building Containerfiles programmatically
+declare -g PODMAN_CONTAINERFILE_CONTENT=""
+
+## <base-image> - Start building a Containerfile from base image
+function podman_containerfile_from
+{
+    ## Starts a new Containerfile with the specified base image.
+    ## Usage: podman_containerfile_from <base-image>
+    local base="$1"
+    
+    if [[ -z "$base" ]]; then
+        error "podman_containerfile_from: base image is required"
+        return 1
+    fi
+    
+    PODMAN_CONTAINERFILE_CONTENT="FROM $base"$'\n'
+}
+
+## <command> - Add RUN instruction to Containerfile
+function podman_containerfile_run
+{
+    ## Adds a RUN instruction to the current Containerfile.
+    ## Usage: podman_containerfile_run <command>
+    local command="$*"
+    
+    if [[ -z "$command" ]]; then
+        error "podman_containerfile_run: command is required"
+        return 1
+    fi
+    
+    PODMAN_CONTAINERFILE_CONTENT+="RUN $command"$'\n'
+}
+
+## <src> <dst> - Add COPY instruction to Containerfile
+function podman_containerfile_copy
+{
+    ## Adds a COPY instruction to the current Containerfile.
+    ## Usage: podman_containerfile_copy <src> <dst>
+    local src="$1"
+    local dst="$2"
+    
+    if [[ -z "$src" ]]; then
+        error "podman_containerfile_copy: source is required"
+        return 1
+    fi
+    
+    if [[ -z "$dst" ]]; then
+        error "podman_containerfile_copy: destination is required"
+        return 1
+    fi
+    
+    PODMAN_CONTAINERFILE_CONTENT+="COPY $src $dst"$'\n'
+}
+
+## <key> <value> - Add ENV instruction to Containerfile
+function podman_containerfile_env
+{
+    ## Adds an ENV instruction to the current Containerfile.
+    ## Usage: podman_containerfile_env <key> <value>
+    local key="$1"
+    local value="$2"
+    
+    if [[ -z "$key" ]]; then
+        error "podman_containerfile_env: key is required"
+        return 1
+    fi
+    
+    if [[ -z "$value" ]]; then
+        error "podman_containerfile_env: value is required"
+        return 1
+    fi
+    
+    PODMAN_CONTAINERFILE_CONTENT+="ENV $key=\"$value\""$'\n'
+}
+
+## <workdir> - Add WORKDIR instruction to Containerfile
+function podman_containerfile_workdir
+{
+    ## Adds a WORKDIR instruction to the current Containerfile.
+    ## Usage: podman_containerfile_workdir <workdir>
+    local workdir="$1"
+    
+    if [[ -z "$workdir" ]]; then
+        error "podman_containerfile_workdir: workdir is required"
+        return 1
+    fi
+    
+    PODMAN_CONTAINERFILE_CONTENT+="WORKDIR $workdir"$'\n'
+}
+
+## <tag> - Build image from programmatically generated Containerfile
+function podman_containerfile_build
+{
+    ## Builds an image from the programmatically generated Containerfile.
+    ## Usage: podman_containerfile_build <tag>
+    local tag="$1"
+    
+    if [[ -z "$tag" ]]; then
+        error "podman_containerfile_build: tag is required"
+        return 1
+    fi
+    
+    if [[ -z "$PODMAN_CONTAINERFILE_CONTENT" ]]; then
+        error "podman_containerfile_build: no Containerfile content. Use podman_containerfile_from first"
+        return 1
+    fi
+    
+    # Create temporary Containerfile
+    local containerfile
+    containerfile=$(mktemp)
+    echo "$PODMAN_CONTAINERFILE_CONTENT" > "$containerfile"
+    
+    info "Building image $tag from generated Containerfile"
+    debug "Containerfile content:"
+    debug "$PODMAN_CONTAINERFILE_CONTENT"
+    
+    # Build the image
+    podman build -t "$tag" -f "$containerfile" .
+    local rc=$?
+    
+    # Cleanup
+    rm -f "$containerfile"
+    
+    # Clear the content for next build
+    PODMAN_CONTAINERFILE_CONTENT=""
+    
+    return $rc
+}
+
+
+
+
+## <name> [options..] - Create a custom podman network
+function podman_network_create
+{
+    trace "$*"
+    ## Creates a custom podman network with optional configuration.
+    ## Usage: podman_network_create <name> [--subnet <cidr>] [--gateway <ip>]
+    local name="$1"
+    shift
+    
+    if [[ -z "$name" ]]; then
+        error "podman_network_create: network name is required"
+        return 1
+    fi
+    
+    info "Creating network: $name"
+    debug "podman network create $name $*"
+    run_test podman network create "$name" "$@"
+}
+
+## <name> - Remove a podman network
+function podman_network_remove
+{
+    ## Removes a podman network.
+    ## Usage: podman_network_remove <name>
+    local name="$1"
+    
+    if [[ -z "$name" ]]; then
+        error "podman_network_remove: network name is required"
+        return 1
+    fi
+    
+    info "Removing network: $name"
+    run_test podman network rm "$name"
+}
+
+## <name> - Check if a network exists
+function podman_network_exists
+{
+    ## Checks if a podman network exists.
+    ## Usage: podman_network_exists <name>
+    local name="$1"
+    
+    if [[ -z "$name" ]]; then
+        error "podman_network_exists: network name is required"
+        return 2
+    fi
+    
+    podman network exists "$name" 2>/dev/null
+}
+
+## List all podman networks
+function podman_network_list
+{
+    ## Lists all podman networks.
+    podman network ls --format "{{.Name}}"
+}
+
+## <name> <preset> - Configure network with security preset
+function podman_network_preset
+{
+    trace "$*"
+    ## Configures a network with a security preset.
+    ## Presets: public, private, local, isolated
+    ## Usage: podman_network_preset <name> <preset>
+    local name="$1"
+    local preset="$2"
+    
+    if [[ -z "$name" ]]; then
+        error "podman_network_preset: network name is required"
+        return 1
+    fi
+    
+    if [[ -z "$preset" ]]; then
+        error "podman_network_preset: preset is required"
+        return 1
+    fi
+    
+    case "$preset" in
+        public)
+            # Public internet only - blocks RFC1918 ranges
+            # This would require custom network configuration with filtering
+            info "Creating 'public' network: $name (internet access, blocks private networks)"
+            podman_network_create "$name" \
+                --opt "com.docker.network.bridge.name=br-public-$name"
+            ;;
+        private)
+            # Private networks only - RFC1918 ranges
+            info "Creating 'private' network: $name (private networks only)"
+            podman_network_create "$name" \
+                --subnet "172.20.0.0/16" \
+                --opt "com.docker.network.bridge.name=br-private-$name"
+            ;;
+        local)
+            # Localhost only
+            info "Creating 'local' network: $name (localhost only)"
+            podman_network_create "$name" \
+                --internal \
+                --subnet "127.1.0.0/16" \
+                --opt "com.docker.network.bridge.name=br-local-$name"
+            ;;
+        isolated)
+            # No network access
+            info "Creating 'isolated' network: $name (no network access)"
+            podman_network_create "$name" \
+                --internal \
+                --opt "com.docker.network.bridge.name=br-isolated-$name"
+            ;;
+        *)
+            error "Unknown network preset: $preset"
+            error "Available presets: public, private, local, isolated"
+            return 1
+            ;;
+    esac
+}
+
+## <container-port> <host-port> [protocol] - Format port mapping
+function podman_port_map
+{
+    ## Formats a port mapping for use with podman run.
+    ## Usage: podman_port_map <container-port> <host-port> [protocol]
+    ## Returns: "<host-port>:<container-port>[/protocol]"
+    local container_port="$1"
+    local host_port="$2"
+    local protocol="${3:-tcp}"
+    
+    if [[ -z "$container_port" ]]; then
+        error "podman_port_map: container port is required"
+        return 1
+    fi
+    
+    if [[ -z "$host_port" ]]; then
+        error "podman_port_map: host port is required"
+        return 1
+    fi
+    
+    echo "${host_port}:${container_port}/${protocol}"
+}
+
+
+
+
+# Global associative array for firewall configurations
+declare -gA PODMAN_FIREWALL_RULES=()
+
+## <network-name> - Initialize firewall configuration for a network
+function podman_firewall_config
+{
+    ## Initializes firewall configuration for a network.
+    ## Usage: podman_firewall_config <network-name>
+    local network="$1"
+    
+    if [[ -z "$network" ]]; then
+        error "podman_firewall_config: network name is required"
+        return 1
+    fi
+    
+    # Initialize empty rules for this network
+    PODMAN_FIREWALL_RULES["${network}_ports"]=""
+    PODMAN_FIREWALL_RULES["${network}_networks"]=""
+    PODMAN_FIREWALL_RULES["${network}_policy"]="default"
+    
+    debug "Initialized firewall config for network: $network"
+}
+
+## <network-name> <port> [protocol] - Allow port through firewall
+function podman_firewall_allow_port
+{
+    ## Adds a port to the firewall allow list.
+    ## Usage: podman_firewall_allow_port <network-name> <port> [protocol]
+    local network="$1"
+    local port="$2"
+    local protocol="${3:-tcp}"
+    
+    if [[ -z "$network" ]]; then
+        error "podman_firewall_allow_port: network name is required"
+        return 1
+    fi
+    
+    if [[ -z "$port" ]]; then
+        error "podman_firewall_allow_port: port is required"
+        return 1
+    fi
+    
+    # Add to ports list
+    local current="${PODMAN_FIREWALL_RULES["${network}_ports"]}"
+    if [[ -n "$current" ]]; then
+        PODMAN_FIREWALL_RULES["${network}_ports"]="$current,$port/$protocol"
+    else
+        PODMAN_FIREWALL_RULES["${network}_ports"]="$port/$protocol"
+    fi
+    
+    debug "Allowed port $port/$protocol for network $network"
+}
+
+## <network-name> <cidr> - Allow network range through firewall
+function podman_firewall_allow_network
+{
+    ## Adds a network range to the firewall allow list.
+    ## Usage: podman_firewall_allow_network <network-name> <cidr>
+    local network="$1"
+    local cidr="$2"
+    
+    if [[ -z "$network" ]]; then
+        error "podman_firewall_allow_network: network name is required"
+        return 1
+    fi
+    
+    if [[ -z "$cidr" ]]; then
+        error "podman_firewall_allow_network: CIDR is required"
+        return 1
+    fi
+    
+    # Add to networks list
+    local current="${PODMAN_FIREWALL_RULES["${network}_networks"]}"
+    if [[ -n "$current" ]]; then
+        PODMAN_FIREWALL_RULES["${network}_networks"]="$current,$cidr"
+    else
+        PODMAN_FIREWALL_RULES["${network}_networks"]="$cidr"
+    fi
+    
+    debug "Allowed network $cidr for network $network"
+}
+
+## <network-name> - Set default deny policy for firewall
+function podman_firewall_deny_all
+{
+    ## Sets a default deny policy for the network.
+    ## Usage: podman_firewall_deny_all <network-name>
+    local network="$1"
+    
+    if [[ -z "$network" ]]; then
+        error "podman_firewall_deny_all: network name is required"
+        return 1
+    fi
+    
+    PODMAN_FIREWALL_RULES["${network}_policy"]="deny"
+    debug "Set deny-all policy for network $network"
+}
+
+## <network-name> - Get firewall configuration summary
+function podman_firewall_show
+{
+    ## Shows the firewall configuration for a network.
+    ## Usage: podman_firewall_show <network-name>
+    local network="$1"
+    
+    if [[ -z "$network" ]]; then
+        error "podman_firewall_show: network name is required"
+        return 1
+    fi
+    
+    echo "Firewall configuration for network: $network"
+    echo "  Policy: ${PODMAN_FIREWALL_RULES["${network}_policy"]:-default}"
+    echo "  Allowed ports: ${PODMAN_FIREWALL_RULES["${network}_ports"]:-none}"
+    echo "  Allowed networks: ${PODMAN_FIREWALL_RULES["${network}_networks"]:-none}"
+}
+
+
+
+
+## [path] - Create and return artifact directory path
+# shellcheck disable=SC2120
+function podman_artifact_dir
+{
+    ## Creates an artifact directory and returns its path.
+    ## Usage: podman_artifact_dir [path]
+    ## If no path provided, creates a temporary directory.
+    local dir="$1"
+    
+    if [[ -z "$dir" ]]; then
+        dir="$(mktemp -d -t podman-artifacts-XXXXXX)"
+        debug "Created temporary artifact directory: $dir"
+    else
+        mkdir -p "$dir"
+        debug "Using artifact directory: $dir"
+    fi
+    
+    echo "$dir"
+}
+
+## <path> - Prepare artifact mount specification
+function podman_artifact_mount
+{
+    ## Prepares a volume mount specification for artifacts.
+    ## Usage: podman_artifact_mount <path>
+    ## Returns: "<path>:/artifacts:z"
+    local path="$1"
+    
+    if [[ -z "$path" ]]; then
+        error "podman_artifact_mount: path is required"
+        return 1
+    fi
+    
+    if [[ ! -d "$path" ]]; then
+        mkdir -p "$path"
+    fi
+    
+    # Use :z for SELinux compatibility
+    echo "${path}:/artifacts:z"
+}
+
+## <container> <src> <dst> - Copy artifacts from container to host
+function podman_artifact_fetch
+{
+    trace "$*"
+    ## Copies artifacts from a container to the host filesystem.
+    ## Usage: podman_artifact_fetch <container> <src> <dst>
+    ## Example: podman_artifact_fetch my-container /app/target/release/binary ./artifacts/
+    local container="$1"
+    local src="$2"
+    local dst="$3"
+    
+    if [[ -z "$container" ]]; then
+        error "podman_artifact_fetch: container ID/name is required"
+        return 1
+    fi
+    
+    if [[ -z "$src" ]]; then
+        error "podman_artifact_fetch: source path is required"
+        return 1
+    fi
+    
+    if [[ -z "$dst" ]]; then
+        error "podman_artifact_fetch: destination path is required"
+        return 1
+    fi
+    
+    # Ensure destination directory exists
+    local dst_dir
+    if [[ "$dst" == */ ]] || [[ -d "$dst" ]]; then
+        dst_dir="$dst"
+    else
+        dst_dir="$(dirname "$dst")"
+    fi
+    mkdir -p "$dst_dir"
+    
+    info "Fetching artifacts from $container:$src to $dst"
+    run_test podman cp "$container:$src" "$dst"
+}
+
+## <container> <dst-dir> - Extract all artifacts from container's /artifacts directory
+function podman_artifact_extract_all
+{
+    ## Extracts all files from container's /artifacts directory to host.
+    ## Usage: podman_artifact_extract_all <container> <dst-dir>
+    local container="$1"
+    local dst="$2"
+    
+    if [[ -z "$container" ]]; then
+        error "podman_artifact_extract_all: container ID/name is required"
+        return 1
+    fi
+    
+    if [[ -z "$dst" ]]; then
+        error "podman_artifact_extract_all: destination directory is required"
+        return 1
+    fi
+    
+    mkdir -p "$dst"
+    
+    info "Extracting all artifacts from $container:/artifacts to $dst"
+    podman_artifact_fetch "$container" "/artifacts/." "$dst/"
+}
+
+## <container> <src-path> <dst-dir> - Fetch and extract tarball from container
+function podman_artifact_fetch_tarball
+{
+    ## Fetches a tarball from container and extracts it.
+    ## Usage: podman_artifact_fetch_tarball <container> <src-path> <dst-dir>
+    local container="$1"
+    local src="$2"
+    local dst="$3"
+    
+    if [[ -z "$container" ]]; then
+        error "podman_artifact_fetch_tarball: container ID/name is required"
+        return 1
+    fi
+    
+    if [[ -z "$src" ]]; then
+        error "podman_artifact_fetch_tarball: source tarball path is required"
+        return 1
+    fi
+    
+    if [[ -z "$dst" ]]; then
+        error "podman_artifact_fetch_tarball: destination directory is required"
+        return 1
+    fi
+    
+    mkdir -p "$dst"
+    
+    local tarball
+    tarball="$(mktemp)"
+    
+    info "Fetching tarball from $container:$src"
+    if podman_artifact_fetch "$container" "$src" "$tarball"; then
+        info "Extracting tarball to $dst"
+        tar -xf "$tarball" -C "$dst"
+        local rc=$?
+        rm -f "$tarball"
+        return $rc
+    else
+        rm -f "$tarball"
+        return 1
+    fi
+}
+
+## <image> <rule> <artifact-dir> [args..] - Run rule and collect artifacts
+function podman_run_with_artifacts
+{
+    trace "$*"
+    ## Runs a rule in container and collects artifacts automatically.
+    ## Usage: podman_run_with_artifacts <image> <rule> <artifact-dir> [args..]
+    local image="$1"
+    local rule="$2"
+    local artifact_dir="$3"
+    shift 3
+    
+    if [[ -z "$image" ]]; then
+        error "podman_run_with_artifacts: image is required"
+        return 1
+    fi
+    
+    if [[ -z "$rule" ]]; then
+        error "podman_run_with_artifacts: rule is required"
+        return 1
+    fi
+    
+    if [[ -z "$artifact_dir" ]]; then
+        # shellcheck disable=SC2119
+        artifact_dir="$(podman_artifact_dir)"
+    else
+        mkdir -p "$artifact_dir"
+    fi
+    
+    local mount_spec
+    mount_spec="$(podman_artifact_mount "$artifact_dir")"
+    
+    info "Running rule '$rule' with artifacts collected to $artifact_dir"
+    debug "podman_run --volume $mount_spec $image bar $rule $*"
+    
+    # Run with artifact mount
+    podman_run --volume "$mount_spec" "$image" bar "$rule" "$@"
+    local rc=$?
+    
+    if [[ $rc -eq 0 ]]; then
+        debug "Artifacts collected in: $artifact_dir"
+        if [[ -n "$(ls -A "$artifact_dir" 2>/dev/null)" ]]; then
+            echo "Artifact contents:"
+            ls -lh "$artifact_dir"
+        else
+            note "No artifacts were generated"
+        fi
+    fi
+    
+    return $rc
+}
+
+## <container-id> - Export container filesystem as tarball
+function podman_container_export
+{
+    ## Exports a container's entire filesystem as a tarball.
+    ## Usage: podman_container_export <container-id> [output-file]
+    ## If no output file specified, outputs to stdout
+    local container="$1"
+    local output="${2:--}"
+    
+    if [[ -z "$container" ]]; then
+        error "podman_container_export: container ID/name is required"
+        return 1
+    fi
+    
+    if [[ "$output" == "-" ]]; then
+        debug "Exporting container $container to stdout"
+        podman export "$container"
+    else
+        info "Exporting container $container to $output"
+        run_test podman export -o "$output" "$container"
+    fi
+}
+
+
+
+
+## <config-name> - Load container configuration template
+function podman_config_load
+{
+    ## Loads a container configuration from an associative array.
+    ## Usage: Declare a config array, then use: podman_config_load CONFIG_NAME
+    ## The array should be named PODMAN_CONFIG_<config-name> in uppercase.
+    local config_name="$1"
+    
+    if [[ -z "$config_name" ]]; then
+        error "podman_config_load: configuration name is required"
+        return 1
+    fi
+    
+    # Convert to uppercase for array name
+    local array_name="PODMAN_CONFIG_${config_name^^}"
+    
+    # Check if array exists
+    if ! declare -p "$array_name" &>/dev/null; then
+        error "Configuration not found: $array_name"
+        return 1
+    fi
+    
+    debug "Loaded configuration: $config_name"
+}
+
+## <config-name> <rule> [args..] - Run with configuration template
+function podman_run_with_config
+{
+    ## Runs a rule using a predefined configuration template.
+    ## Usage: podman_run_with_config <config-name> <rule> [args..]
+    local config_name="$1"
+    local rule="$2"
+    shift 2
+    
+    if [[ -z "$config_name" ]]; then
+        error "podman_run_with_config: configuration name is required"
+        return 1
+    fi
+    
+    if [[ -z "$rule" ]]; then
+        error "podman_run_with_config: rule is required"
+        return 1
+    fi
+    
+    # Get configuration array name
+    local array_name="PODMAN_CONFIG_${config_name^^}"
+    
+    # Check if configuration exists
+    if ! declare -p "$array_name" &>/dev/null; then
+        error "Configuration not found: $array_name"
+        return 1
+    fi
+    
+    # Get configuration using nameref
+    local -n config="$array_name"
+    
+    # Extract configuration values
+    local image="${config[image]}"
+    local timeout="${config[timeout]:-}"
+    local network="${config[network]:-}"
+    local platform="${config[platform]:-}"
+    
+    if [[ -z "$image" ]]; then
+        error "Configuration $config_name missing required 'image' field"
+        return 1
+    fi
+    
+    # Build podman_run arguments
+    local -a run_args=()
+    
+    if [[ -n "$timeout" ]]; then
+        run_args+=(--timeout "$timeout")
+    fi
+    
+    if [[ -n "$platform" ]]; then
+        run_args+=(--platform "$platform")
+    fi
+    
+    if [[ -n "$network" ]]; then
+        run_args+=(--network "$network")
+    fi
+    
+    # Add volumes if specified
+    if [[ -v config[volumes] ]]; then
+        IFS=',' read -ra volumes <<< "${config[volumes]}"
+        for vol in "${volumes[@]}"; do
+            run_args+=(--volume "$vol")
+        done
+    fi
+    
+    info "Running '$rule' with configuration '$config_name'"
+    podman_run "${run_args[@]}" "$image" bar "$rule" "$@"
+}
+
+## <image> <rule> [--parallel <count>] [args..] - Run rule in parallel containers
+function podman_run_parallel
+{
+    trace "$*"
+    ## Runs the same rule in multiple parallel containers.
+    ## Usage: podman_run_parallel <image> <rule> [--parallel <count>] [args..]
+    local image="$1"
+    local rule="$2"
+    shift 2
+    
+    local parallel_count=2
+    local -a run_args=()
+    local -a rule_args=()
+    
+    # Parse options
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --parallel)
+                parallel_count="$2"
+                shift 2
+                ;;
+            --*)
+                run_args+=("$1" "$2")
+                shift 2
+                ;;
+            *)
+                rule_args+=("$@")
+                break
+                ;;
+        esac
+    done
+    
+    if [[ -z "$image" ]]; then
+        error "podman_run_parallel: image is required"
+        return 1
+    fi
+    
+    if [[ -z "$rule" ]]; then
+        error "podman_run_parallel: rule is required"
+        return 1
+    fi
+    
+    info "Running '$rule' in $parallel_count parallel containers"
+    debug "Container args: ${run_args[*]}, Rule args: ${rule_args[*]}"
+    
+    local -a pids=()
+    local failed=0
+    
+    # Start parallel containers
+    for ((i=1; i<=parallel_count; i++)); do
+        (
+            debug "[$i/$parallel_count] Starting container"
+            podman_run "${run_args[@]}" "$image" bar "$rule" "${rule_args[@]}"
+        ) &
+        pids+=($!)
+    done
+    
+    # Wait for all to complete
+    for pid in "${pids[@]}"; do
+        if ! wait "$pid"; then
+            failed=$((failed + 1))
+        fi
+    done
+    
+    if [[ $failed -gt 0 ]]; then
+        error "$failed of $parallel_count containers failed"
+        return 1
+    fi
+    
+    info "All $parallel_count containers completed successfully"
+    return 0
+}
+
+## <image> <rule> [--cpus <n>] [--memory <size>] [args..] - Run with resource limits
+function podman_run_limited
+{
+    trace "$*"
+    ## Runs a rule with CPU and memory limits.
+    ## Usage: podman_run_limited <image> <rule> [--cpus <n>] [--memory <size>] [args..]
+    ## Example: podman_run_limited myimage:latest build --cpus 2 --memory 4g
+    local image="$1"
+    local rule="$2"
+    shift 2
+    
+    local cpus=""
+    local memory=""
+    local -a extra_args=()
+    local -a rule_args=()
+    
+    # Parse resource limits
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --cpus)
+                cpus="$2"
+                shift 2
+                ;;
+            --memory)
+                memory="$2"
+                shift 2
+                ;;
+            --*)
+                extra_args+=("$1" "$2")
+                shift 2
+                ;;
+            *)
+                rule_args+=("$@")
+                break
+                ;;
+        esac
+    done
+    
+    if [[ -z "$image" ]]; then
+        error "podman_run_limited: image is required"
+        return 1
+    fi
+    
+    if [[ -z "$rule" ]]; then
+        error "podman_run_limited: rule is required"
+        return 1
+    fi
+    
+    # Build resource limit arguments
+    local -a limits=()
+    if [[ -n "$cpus" ]]; then
+        limits+=(--cpus="$cpus")
+        info "CPU limit: $cpus"
+    fi
+    
+    if [[ -n "$memory" ]]; then
+        limits+=(--memory="$memory")
+        info "Memory limit: $memory"
+    fi
+    
+    # Run with podman directly to pass resource limits
+    info "Running '$rule' with resource limits"
+    run_test podman run --rm "${limits[@]}" "${extra_args[@]}" "$image" bar "$rule" "${rule_args[@]}"
+}
+
+## <image> <rule> [args..] - Schedule background container execution via memodb
+function podman_run_background
+{
+    ## Schedules a container execution in the background using memodb.
+    ## Usage: podman_run_background <image> <rule> [args..]
+    ## Requires memodb module to be loaded.
+    local image="$1"
+    local rule="$2"
+    shift 2
+    
+    if [[ -z "$image" ]]; then
+        error "podman_run_background: image is required"
+        return 1
+    fi
+    
+    if [[ -z "$rule" ]]; then
+        error "podman_run_background: rule is required"
+        return 1
+    fi
+    
+    # Check if memodb is available
+    if ! declare -F memodb_schedule >/dev/null; then
+        error "memodb module not loaded - cannot schedule background execution"
+        error "Try: require memodb"
+        return 1
+    fi
+    
+    info "Scheduling background execution: $rule in $image"
+    memodb_schedule podman_run "$image" bar "$rule" "$@"
+}
+
+## <image> <rule> - Wait for background container execution to complete
+function podman_run_background_wait
+{
+    ## Waits for a background container execution to complete.
+    ## Usage: podman_run_background_wait <image> <rule>
+    local image="$1"
+    local rule="$2"
+    
+    if [[ -z "$image" ]]; then
+        error "podman_run_background_wait: image is required"
+        return 1
+    fi
+    
+    if [[ -z "$rule" ]]; then
+        error "podman_run_background_wait: rule is required"
+        return 1
+    fi
+    
+    # Check if memodb is available
+    if ! declare -F memodb_result >/dev/null; then
+        error "memodb module not loaded"
+        return 1
+    fi
+    
+    info "Waiting for background execution: $rule in $image"
+    memodb_result podman_run "$image" bar "$rule"
+}
