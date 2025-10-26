@@ -392,8 +392,8 @@ MODULE API/RULES
 
       git_ls_files [git-ls-files-opts]..
         Sorted list of files in the git repository.
-        git-ls-files '--cached' and '--exclude-standard' are always implied.  Notable options
-        are '-z' for zero terminated output and '--others' to show untracked files.
+        git-ls-files '--exclude-standard' is always implied. Use '-c' or '--cached' to list
+        tracked files, '--others' to show untracked files, or both for all files.
 
       git_branch_name Returns the branch name that is checked out, dies when not in a git branch.
 

@@ -21,7 +21,7 @@ function shellcheck_is_shscript ## <file> - Check if <file> is a shell script
 function shellcheck_has_shscripts
 {
     local file
-    for file in $(git_ls_files --other ${SHELLCHECK_LS_FILES:+-- $SHELLCHECK_LS_FILES}); do
+    for file in $(git_ls_files -c --other ${SHELLCHECK_LS_FILES:+-- $SHELLCHECK_LS_FILES}); do
         if shellcheck_is_shscript "$file"; then
             trace "Shell scripts found"
             return 0
@@ -39,7 +39,7 @@ rule shellcheck_has_shscripts: is_git_toplevel -
 function shellcheck_list_shscripts ## List all shell scripts under git control
 {
     local file
-    for file in $(git_ls_files --other ${SHELLCHECK_LS_FILES:+-- $SHELLCHECK_LS_FILES}); do
+    for file in $(git_ls_files -c --other ${SHELLCHECK_LS_FILES:+-- $SHELLCHECK_LS_FILES}); do
         if shellcheck_is_shscript "$file"; then
             echo "$file"
         fi

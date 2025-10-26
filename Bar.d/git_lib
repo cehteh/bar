@@ -41,14 +41,14 @@ function git_dir ## Returns the absolute path to the 'GIT_DIR' (.git/).
 
 function git_ls_files ## [git-ls-files-opts].. - Sorted list of files in the git repository.
 {
-    ## git-ls-files '--cached' and '--exclude-standard' are always implied.  Notable options
-    ## are '-z' for zero terminated output and '--others' to show untracked files.
+    ## git-ls-files '--exclude-standard' is always implied. Use '-c' or '--cached' to list
+    ## tracked files, '--others' to show untracked files, or both for all files.
     local zero_terminated=
     local z
     for z in "$@"; do
         [[ "$z" = "-z" ]] && { zero_terminated=true; break; }
     done
-    git ls-files --cached --exclude-standard "$@" | sort -u ${zero_terminated:+-z}
+    git ls-files --exclude-standard "$@" | sort -u ${zero_terminated:+-z}
 }
 
 function git_branch_name ## Returns the branch name that is checked out, dies when not in a git branch.

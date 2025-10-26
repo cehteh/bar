@@ -10,7 +10,7 @@ rule is_entr_installed: 'is_command_installed entr'
 
 function entr_watch
 {
-    while ! git_ls_files --other | entr -c -s "sleep 0.25 ; $BAR_SELF $BARF_FILE $*"; do :; done
+    while ! git_ls_files -c --other | entr -c -s "sleep 0.25 ; $BAR_SELF $BARF_FILE $*"; do :; done
 }
 
 ## Runs bar in a loop again whenever a file gets changed.
@@ -33,7 +33,7 @@ function entr_watch_git_index
         declare -gxr treehash="$treehash"
         # shellcheck disable=2016
         echo "${GIT_INDEX_FILE:-$(git rev-parse --git-dir)/index}" | entr -s '
-             new_hash=$(git_ls_files -s | sha1sum -)
+             new_hash=$(git_ls_files -c -s | sha1sum -)
              hash="$(<"$treehash")"
              if [[ "$new_hash" != "$hash" ]]; then
                 echo "$new_hash" >"$treehash"

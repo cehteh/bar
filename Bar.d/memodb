@@ -221,7 +221,7 @@ function memodb_analyze # - analyzes tree hash mismatches
     
     # Show untracked non-ignored files (these affect the tree hash)
     local untracked_files
-    untracked_files="$(git_ls_files --others 2>/dev/null || true)"
+    untracked_files="$(git_ls_files --others || true)"
     
     if [[ -n "$untracked_files" ]]; then
         error "Untracked files found (these affect the tree hash):"
