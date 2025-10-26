@@ -119,15 +119,22 @@ function memodb_replay_stdio # <cmdhash> - replays the stdout and stderr of a co
     cat "$MEMODB_DIR/$1.stderr" 1>&2
 }
 
-function memodb_log # state hash cmd args.. - logs the state of a command
+function memodb_log # state hash [pwd] cmd args.. - logs the state of a command
 {
     local state="$1"
     local hash="$2"
     shift 2
+    
+    # If third argument looks like a path (starts with /), use it as pwd
+    local log_pwd="$PWD"
+    if [[ "$1" =~ ^/ ]]; then
+        log_pwd="$1"
+        shift
+    fi
 
     trace "$state $* >> $MEMODB_LOG"
-    echo "$state $hash $PWD//#$*" >>"$MEMODB_LOG"
-    MEMODB[$PWD//#$*]="$state $hash"
+    echo "$state $hash $log_pwd//#$*" >>"$MEMODB_LOG"
+    MEMODB[$log_pwd//#$*]="$state $hash"
 }
 
 # PLANNED: function memodb_eval # [--tag <tag>]
@@ -212,11 +219,30 @@ function memodb_schedule ## <cmd> [args..] - Schedules a command to be run in ba
     fi
 }
 
-function memodb_analyze # - analyzes tree hash mismatches
+function memodb_analyze # cmd args.. - analyzes tree hash mismatches
 {
     error ""
     error "Tree hash mismatch - memodb result not available."
-    error "This usually means untracked files are changing the tree hash."
+    error "Searching for: $PWD//#$*"
+    error ""
+    
+    # Show what's actually in the memodb
+    if [[ -f "$MEMODB_LOG" ]]; then
+        error "Available results in memodb:"
+        while IFS= read -r line; do
+            local state="${line%% *}"
+            local rest="${line#* }"
+            rest="${rest#* }"
+            if [[ "$state" =~ ^[0-9]+$ ]]; then
+                error "  $rest (exit: $state)"
+            fi
+        done < "$MEMODB_LOG"
+        error ""
+    fi
+    
+    error "This usually means:"
+    error "  1. The command was run in a different directory, or"
+    error "  2. Untracked files are changing the tree hash"
     error ""
     
     # Show untracked non-ignored files (these affect the tree hash)
@@ -248,7 +274,7 @@ function memodb_analyze # - analyzes tree hash mismatches
         done
     else
         error "No untracked files found."
-        error "Check that .gitignore properly excludes build artifacts."
+        error "The command may have been run from a different directory."
     fi
 }
 
@@ -301,7 +327,7 @@ function memodb_result ## <cmd> [args..] - Retrieves the background results.
         ;;
     esac
 
-    memodb_analyze
+    memodb_analyze "$@"
     die "No result available for '$*'"
 }
 
@@ -331,11 +357,11 @@ function memodb_start_background_processing
                 # shellcheck disable=2086
                 if rule_eval $cmd 1>"$MEMODB_DIR/$cmdhash.stdout" 2>"$MEMODB_DIR/$cmdhash.stderr" ; then
                     debug "success: $cmd"
-                    memodb_log 0 "$cmdhash" "$cmd"
+                    memodb_log 0 "$cmdhash" "$directory" $cmd
                 else
                     local rc=$?
                     debug "fail: $cmd"
-                    memodb_log "$rc" "$cmdhash" "$*"
+                    memodb_log "$rc" "$cmdhash" "$directory" $cmd
                 fi
             fi
         done
