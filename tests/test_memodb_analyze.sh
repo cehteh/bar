@@ -34,7 +34,7 @@ else
 fi
 
 # Check that it provides helpful error messages
-if grep -q "Tree hash mismatch detected" Bar.d/memodb; then
+if grep -q "Tree hash mismatch" Bar.d/memodb; then
     echo "✓ Provides tree hash mismatch diagnostics"
 else
     echo "✗ Missing tree hash diagnostics"

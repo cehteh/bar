@@ -214,30 +214,14 @@ function memodb_schedule ## <cmd> [args..] - Schedules a command to be run in ba
 
 function memodb_analyze # - analyzes tree hash mismatches
 {
-    # Find the last memodb directory that is NOT the current one
-    local current_tree_hash="${MEMODB_DIR##*-}"
-    local last_memodb
-    
-    last_memodb="$(find "$BAR_TOPLEVEL/.bar.db" -type d -name "*-*" ! -name "*-$current_tree_hash" 2>/dev/null | sort -n | tail -1)"
-    
-    if [[ -z "$last_memodb" ]]; then
-        error "No previous memodb found to analyze"
-        return 1
-    fi
-    
-    local last_tree_hash="${last_memodb##*-}"
-    
-    error "Tree hash mismatch detected!"
-    error "Previous: $last_tree_hash"
-    error "Current:  $current_tree_hash"
     error ""
-    error "This usually means files are changing between runs that should be in .gitignore"
-    error "Checking for untracked files that may need to be ignored:"
+    error "Tree hash mismatch - memodb result not available."
+    error "This usually means untracked files are changing the tree hash."
     error ""
     
-    # Show untracked files that are not ignored
+    # Show untracked non-ignored files (these affect the tree hash)
     local untracked_files
-    untracked_files="$(git_ls_files --others -c 2>/dev/null || true)"
+    untracked_files="$(git_ls_files --others 2>/dev/null || true)"
     
     if [[ -n "$untracked_files" ]]; then
         error "Untracked files found (these affect the tree hash):"
@@ -264,7 +248,7 @@ function memodb_analyze # - analyzes tree hash mismatches
         done
     else
         error "No untracked files found."
-        error "The tree hash change may be due to modified tracked files."
+        error "Check that .gitignore properly excludes build artifacts."
     fi
 }
 
