@@ -240,7 +240,7 @@ function DBG ## [message..] - For print-style debugging, should not be present i
 {
     {
         tty_newline
-        echo "${TTYERR[ce]:-}${TTYERR[r_R]:-}${TTYERR[__B]:-}  DBG:${TTYERR[n]:-} $(source_info 1) $*"
+        echo "${TTYERR[r_R]:-}${TTYERR[__B]:-}  DBG:${TTYERR[n]:-} $(source_info 1) $*"
     } >&2
 }
 
@@ -249,7 +249,7 @@ function die ## [message..] - Prints 'message' to stderr and exits with failure
     ## Unexpected fatal problem. Will terminate execution, CLEANUP rules will be called.
     if (( BAR_VERBOSITY_LEVEL > 0 )); then
         tty_newline
-        echo "${TTYERR[ce]:-}${TTYERR[R_B]:-}PANIC:${TTYERR[n]:-} $(source_info 1) $*"
+        echo "${TTYERR[R_B]:-}PANIC:${TTYERR[n]:-} $(source_info 1) $*"
     fi >&2
     exit 1
 }
@@ -259,7 +259,7 @@ function error ## [message..] - Print a error message to stderr.
     ## Unexpected but not fatal.
     if (( BAR_VERBOSITY_LEVEL > 0 )); then
         tty_newline
-        echo "${TTYERR[ce]:-}${TTYERR[r_B]:-}ERROR:${TTYERR[n]:-} $(source_info 1) $*"
+        echo "${TTYERR[r_B]:-}ERROR:${TTYERR[n]:-} $(source_info 1) $*"
     fi >&2
 }
 
@@ -268,7 +268,7 @@ function warn ## [message..] - Print an warning to stderr.
     ## Expected, non fatal problem.
     if (( BAR_VERBOSITY_LEVEL > 1 )); then
         tty_newline
-        echo "${TTYERR[ce]:-}${TTYERR[m_B]:-} WARN:${TTYERR[n]:-} $*" >&2
+        echo "${TTYERR[m_B]:-} WARN:${TTYERR[n]:-} $*" >&2
     fi >&2
 }
 
@@ -277,7 +277,7 @@ function note ## [message..] - Print an important notice to stderr.
     ## Important message the user should be notified about.
     if (( BAR_VERBOSITY_LEVEL > 2 )); then
         tty_newline
-        echo "${TTYERR[ce]:-}${TTYERR[m_B]:-} NOTE:${TTYERR[n]:-} $*"
+        echo "${TTYERR[m_B]:-} NOTE:${TTYERR[n]:-} $*"
     fi >&2
 }
 
@@ -286,7 +286,7 @@ function info ## [message..] - Print an informal message to stderr.
     ## Broader message about non rule related progress.
     if (( BAR_VERBOSITY_LEVEL > 3 )); then
         tty_newline
-        echo "${TTYERR[ce]:-}${TTYERR[b_B]:-} INFO:${TTYERR[n]:-} $*"
+        echo "${TTYERR[b_B]:-} INFO:${TTYERR[n]:-} $*"
     fi >&2
 }
 
@@ -295,7 +295,7 @@ function debug ## [message..] - Print a debug message to stderr.
     ## Finer grained progress messages.
     if (( BAR_VERBOSITY_LEVEL > 4 )); then
         tty_newline
-        echo "${TTYERR[ce]:-}${TTYERR[c_B]:-}DEBUG:${TTYERR[n]:-} $(source_info 1) $*"
+        echo "${TTYERR[c_B]:-}DEBUG:${TTYERR[n]:-} $(source_info 1) $*"
     fi >&2
 }
 
@@ -304,7 +304,7 @@ function trace ## [message] - Prints a trace message to stderr.
     ## Very verbose function call or finer messages.
     if (( BAR_VERBOSITY_LEVEL > 5 )); then
         tty_newline
-        echo "${TTYERR[ce]:-}${TTYERR[C_B]:-}TRACE:${TTYERR[n]:-} $(source_info 1) $*"
+        echo "${TTYERR[C_B]:-}TRACE:${TTYERR[n]:-} $(source_info 1) $*"
     fi >&2
 }
 

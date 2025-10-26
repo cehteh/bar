@@ -101,12 +101,12 @@ function success # [message..] - Message for success.
     if (( BAR_CHECK_LEVEL > 0 )); then
         (( "${BAR_VERBOSITY_LEVEL:-5}" > 2 )) && {
             tty_newline
-            echo -e "${TTYERR[ce]:-}${TTYERR[g_B]:-}CHECK:${TTYERR[n]:-} $*"
+            echo -e "${TTYERR[g_B]:-}CHECK:${TTYERR[n]:-} $*"
         }
     else
         (( "${BAR_VERBOSITY_LEVEL:-5}" > 1 )) && {
             tty_newline
-            echo -e "${TTYERR[ce]:-}${TTYERR[g_B]:-}   OK:${TTYERR[n]:-} $*"
+            echo -e "${TTYERR[g_B]:-}   OK:${TTYERR[n]:-} $*"
         }
     fi >&2
 }
@@ -116,12 +116,12 @@ function failure # [message..] - Message for failure.
     if (( BAR_CHECK_LEVEL > 0 )); then
         (( "${BAR_VERBOSITY_LEVEL:-5}" > 2 )) && {
             tty_newline
-            echo -e "${TTYERR[ce]:-}${TTYERR[K_B]:-}CHECK: ${TTYERR[__S]:-}$*${TTYERR[n]:-}"
+            echo -e "${TTYERR[K_B]:-}CHECK: ${TTYERR[__S]:-}$*${TTYERR[n]:-}"
         }
     else
         (( "${BAR_VERBOSITY_LEVEL:-5}" > 1 )) && {
             tty_newline
-            echo -e "${TTYERR[ce]:-}${TTYERR[r_B]:-} FAIL:${TTYERR[n]:-} $*"
+            echo -e "${TTYERR[r_B]:-} FAIL:${TTYERR[n]:-} $*"
         }
     fi >&2
 }
@@ -133,9 +133,9 @@ function uncond_call # <rc> [message..] - Message for unconditional dependency c
     if (( "${BAR_VERBOSITY_LEVEL:-5}" > 2 )); then
         tty_newline
         if (( rc == 0 )); then
-            echo -e "${TTYERR[ce]:-}${TTYERR[g_B]:-} EVAL:${TTYERR[n]:-} $*"
+            echo -e "${TTYERR[g_B]:-} EVAL:${TTYERR[n]:-} $*"
         else
-            echo -e "${TTYERR[ce]:-}${TTYERR[K_B]:-} EVAL:${TTYERR[n]:-} $*"
+            echo -e "${TTYERR[K_B]:-} EVAL:${TTYERR[n]:-} $*"
         fi
     fi >&2
 }

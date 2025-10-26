@@ -394,6 +394,8 @@ function rule_eval ## <name> [args..] - Evaluates a rule
 
         rc=0
         if [[ "$skip" != true ]]; then
+            # Clear any progress message before executing clause body
+            tty_newline
             eval "${BAR_CLAUSES[$clause]}" || rc=$?
 
             if [[ "${BAR_RULE_FLAGS[$RULE_NAME]}" = *d* ]]; then

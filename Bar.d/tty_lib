@@ -126,12 +126,21 @@ function tty_echo ## [echo_args] - Echos only when the output is a tty.
     [[ -t 1 ]] && echo "$@"
 }
 
-[[ "${TERM:-dumb}" = "dumb" ]] || function tty_newline ## Outputs a newline when we are not at column 1.
+[[ "${TERM:-dumb}" = "dumb" ]] || function tty_newline ## Clears line when at column 0, outputs newline otherwise.
 {
     [[ -t 0 && -t 1 ]] || return 0
+    
     local col
-    IFS=';' read -srdR -p $'\033[6n' _ col || true
-    col="${col%R}"
-    [[ "$col" != 1 ]] && echo
+    # Use 1 second timeout to prevent hanging, discard stderr in case of issues
+    if IFS=';' read -t 1 -srdR -p $'\033[6n' _ col 2>/dev/null; then
+        col="${col%R}"
+        if [[ "$col" = 1 ]]; then
+            # At column 1 (0-based), clear the line to remove any progress message
+            echo -ne "${TTYERR[cl]:-}"
+        else
+            # Not at column 1, output newline
+            echo
+        fi
+    fi
     return 0
 }
