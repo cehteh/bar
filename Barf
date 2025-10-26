@@ -42,6 +42,7 @@ rule tests: test_cache
 rule tests: test_cargo_completers
 rule tests: test_cargo_variable_expansion
 rule tests: test_completion
+rule tests: test_email
 rule tests: test_ext_completers
 rule tests: test_extcomp
 rule tests: test_function_completion
@@ -59,6 +60,7 @@ rule test_cache: -- tests/test_cache.sh
 rule test_cargo_completers: -- tests/test_cargo_completers.sh
 rule test_cargo_variable_expansion: -- tests/test_cargo_variable_expansion.sh
 rule test_completion: -- tests/test_completion.sh
+rule test_email: -- tests/test_email.sh
 rule test_ext_completers: -- tests/test_ext_completers.sh
 rule test_extcomp: -- tests/test_extcomp.sh
 rule test_function_completion: -- tests/test_function_completion.sh
