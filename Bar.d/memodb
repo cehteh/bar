@@ -212,6 +212,62 @@ function memodb_schedule ## <cmd> [args..] - Schedules a command to be run in ba
     fi
 }
 
+function memodb_analyze # - analyzes tree hash mismatches
+{
+    # Find the last memodb directory that is NOT the current one
+    local current_tree_hash="${MEMODB_DIR##*-}"
+    local last_memodb
+    
+    last_memodb="$(find "$BAR_TOPLEVEL/.bar.db" -type d -name "*-*" ! -name "*-$current_tree_hash" 2>/dev/null | sort -n | tail -1)"
+    
+    if [[ -z "$last_memodb" ]]; then
+        error "No previous memodb found to analyze"
+        return 1
+    fi
+    
+    local last_tree_hash="${last_memodb##*-}"
+    
+    error "Tree hash mismatch detected!"
+    error "Previous: $last_tree_hash"
+    error "Current:  $current_tree_hash"
+    error ""
+    error "This usually means files are changing between runs that should be in .gitignore"
+    error "Checking for untracked files that may need to be ignored:"
+    error ""
+    
+    # Show untracked files that are not ignored
+    local untracked_files
+    untracked_files="$(git_ls_files --others -c 2>/dev/null || true)"
+    
+    if [[ -n "$untracked_files" ]]; then
+        error "Untracked files found (these affect the tree hash):"
+        echo "$untracked_files" | while IFS= read -r file; do
+            error "  $file"
+        done
+        error ""
+        error "Consider adding these patterns to .gitignore:"
+        # Extract unique directory patterns and file patterns
+        echo "$untracked_files" | while IFS= read -r file; do
+            # Show both the specific file and directory patterns
+            if [[ "$file" =~ / ]]; then
+                # Has a directory component
+                local dir="${file%/*}"
+                echo "$dir/"
+            fi
+            # Also show file extension patterns
+            if [[ "$file" =~ \. ]]; then
+                local ext="${file##*.}"
+                echo "*.$ext"
+            fi
+        done | sort -u | while IFS= read -r pattern; do
+            error "  $pattern"
+        done
+    else
+        error "No untracked files found."
+        error "The tree hash change may be due to modified tracked files."
+    fi
+}
+
 function memodb_replay_bg_log
 {
     [[ "$MEMODB_BACKGROUNDING" = true && -f "$MEMODB_DIR/.bg.log" ]] || return 0
@@ -261,6 +317,7 @@ function memodb_result ## <cmd> [args..] - Retrieves the background results.
         ;;
     esac
 
+    memodb_analyze
     die "No result available for '$*'"
 }
 

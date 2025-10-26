@@ -48,6 +48,7 @@ rule tests: test_function_completion
 rule tests: test_integration
 rule tests: test_is_cargo_tool_completion
 rule tests: test_issue_fixes
+rule tests: test_memodb_analyze
 rule tests: test_prototype_parsing
 rule tests: test_prototype_scoping
 rule tests: test_public_mode
@@ -64,6 +65,7 @@ rule test_function_completion: -- tests/test_function_completion.sh
 rule test_integration: -- tests/test_integration.sh
 rule test_is_cargo_tool_completion: -- tests/test_is_cargo_tool_completion.sh
 rule test_issue_fixes: -- tests/test_issue_fixes.sh
+rule test_memodb_analyze: -- tests/test_memodb_analyze.sh
 rule test_prototype_parsing: -- tests/test_prototype_parsing.sh
 rule test_prototype_scoping: -- tests/test_prototype_scoping.sh
 rule test_public_mode: -- tests/test_public_mode.sh
