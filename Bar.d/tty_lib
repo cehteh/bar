@@ -131,8 +131,8 @@ function tty_echo ## [echo_args] - Echos only when the output is a tty.
     [[ -t 0 && -t 1 ]] || return 0
     
     local col
-    # Use 1 second timeout to prevent hanging, discard stderr in case of issues
-    if IFS=';' read -t 1 -srdR -p $'\033[6n' _ col 2>/dev/null; then
+    # Use 0.05 second timeout to prevent hanging, discard stderr in case of issues
+    if IFS=';' read -t 0.05 -srdR -p $'\033[6n' _ col 2>/dev/null; then
         col="${col%R}"
         if [[ "$col" = 1 ]]; then
             # At column 1 (0-based), clear the line to remove any progress message

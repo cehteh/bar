@@ -91,7 +91,7 @@ function progress # [message..] - elusive progress notice, will be overwritten b
     else
         (( "${BAR_VERBOSITY_LEVEL:-5}" > 1 )) && {
             tty_newline
-            tty_echo -n "${TTYERR[K_B]:-}  RUN: $*${TTYERR[cr]:-}${TTYERR[n]:-}"
+            tty_echo -n "${TTYERR[K_B]:-}  RUN: $*${TTYERR[ce]:-}${TTYERR[cr]:-}${TTYERR[n]:-}"
         }
     fi >&2
 }
