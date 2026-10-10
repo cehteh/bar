@@ -29,6 +29,8 @@
 #   AC17 evidence line numbers really address the log (sed -n '<n>p' returns that line)
 #   AC18 the evidence budget is tunable (BAR_AGENT_HEAD/TAIL) and the elision stays consistent
 #   AC19 the linter bar runs does not force colour into a captured log (F13)
+#   AC20 several targets in one run: one block each, rc of the first failure
+#   AC21 bar's own records are never evidence, and a short log gets no elision marker
 
 set -euo pipefail
 
@@ -300,6 +302,9 @@ if [[ ! -e "$WORK/.bar.agent/latest/needle.log" ]]; then pass "AC12: the newest 
 run_bar log needle tail:1
 check "$RC" "0" "AC12: 'bar log needle' still resolves after newer runs"
 check "$OUT" "the needle says: krehcs liah" "AC12: and returns the right log"
+run_bar log pass
+check "$RC" "0" "AC12: 'bar log' works for a successful target too"
+check "$OUT" "all good" "AC12: the success log holds what the target wrote"
 
 # --------------------------------------------------------------------------------------------
 # AC13  the module is shellcheck clean
@@ -427,6 +432,42 @@ if command -v shellcheck >/dev/null; then
     fi
 else
     echo "  - AC19: shellcheck not installed, skipped"
+fi
+
+# --------------------------------------------------------------------------------------------
+# AC20  several targets in one run: one block each, rc of the first failure
+# --------------------------------------------------------------------------------------------
+run_bar check pass needle
+check "$RC" "1" "AC20: one failing target in two yields rc 1"
+check "$(sed -n 1p <<<"$OUT")" "OK pass" "AC20: the passing target keeps its one line"
+check "$(sed -n 2p <<<"$OUT")" "FAIL needle (rc=1)" "AC20: the failing target follows in order"
+run_bar check needle pass
+check "$RC" "1" "AC20: the target order does not change the rc"
+check "$(sed -n 1p <<<"$OUT")" "FAIL needle (rc=1)" "AC20: the failing target comes first here"
+check "$(tail -1 <<<"$OUT")" "OK pass" "AC20: the passing target is still reported"
+run_bar verdict needle pass
+check "$RC" "1" "AC20: verdict propagates the first failure too"
+check "$(sed -n 1p <<<"$OUT")" "FAIL needle (rc=1)" "AC20: verdict prints the failing target first"
+check "$(sed -n 3p <<<"$OUT")" "OK pass" "AC20: verdict prints one line per target"
+
+# --------------------------------------------------------------------------------------------
+# AC21  bar's own records are never evidence, short logs get no elision marker
+# --------------------------------------------------------------------------------------------
+run_bar check dep_fail
+if [[ "$OUT" != *"FAIL: dep_fail: leaf_fail"* ]]; then
+    pass "AC21: bar's own FAIL: record is not printed as evidence"
+else
+    fail "AC21: bar's own record leaked into the evidence"
+fi
+if [[ "$OUT" == *"leaf says no"* ]]; then
+    pass "AC21: the tool's own line is the evidence"
+else
+    fail "AC21: the tool's line is missing from the block"
+fi
+if [[ "$OUT" != *"log lines not shown"* ]]; then
+    pass "AC21: a short log is shown without an elision marker"
+else
+    fail "AC21: an elision was announced although nothing was elided"
 fi
 
 echo
