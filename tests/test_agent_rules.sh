@@ -32,6 +32,8 @@
 #   AC20 several targets in one run: one block each, rc of the first failure
 #   AC21 bar's own records are never evidence, and a short log gets no elision marker
 #   AC22 the capture does not leak the outer output format into the target
+#   AC23 a bar option written after the target is dropped, not run as a phantom target (and a
+#        target whose name begins with a dash stays reachable behind '--')
 
 set -euo pipefail
 
@@ -104,6 +106,9 @@ rule agent: pass
 
 # a target that runs bar itself -- the capture must not change how it behaves
 rule nested: -- '"$BAR_SELF" check pass'
+
+# a target whose name begins with a dash -- only reachable behind a bare '--'
+rule --weird: -- 'echo "weird target ran"'
 BARF
 
 OUT=""
@@ -495,6 +500,62 @@ if [[ "$(cat "$nested_log")" == *"OK pass"* ]]; then
 else
     fail "AC22: unexpected nested log: [$(cat "$nested_log")]"
 fi
+
+# --------------------------------------------------------------------------------------------
+# AC23  a bar option after the target is not a target
+# --------------------------------------------------------------------------------------------
+# rule_lib hands everything after the rule name to the rule, so an option written after the target
+# used to arrive at the contract as just another target: 'bar check agent --quiet' printed
+# 'OK agent' *and* a phantom 'OK --quiet' -- a measured-looking line for something that was never
+# run as a target.  Dashed arguments are dropped now, and announced from verbosity 3 on.
+for opt in --quiet -q --json --definitely-not-a-bar-option; do
+    run_bar check agent "$opt"
+    check "$RC" "0" "AC23: 'check agent $opt' exits 0"
+    check "$OUT" "OK agent" "AC23: 'check agent $opt' reports the real target only"
+done
+run_bar verdict agent --quiet
+check "$RC" "0" "AC23: 'verdict agent --quiet' exits 0"
+check "$OUT" "OK agent" "AC23: 'verdict agent --quiet' is one line for the one real target"
+run_bar verdict agent -q
+check "$OUT" "OK agent" "AC23: 'verdict agent -q' is one line for the one real target"
+if [[ "$(sed -n 's#.*\"ok\":true.*#json#p' <<<"$OUT")" != json ]]; then
+    pass "AC23: '--json' after the target does not switch the format (options precede the rule)"
+else
+    fail "AC23: '--json' after the target was honoured, the test is not conclusive"
+fi
+
+# a dropped option must not swallow a failure, duplicate a target or reorder the verdicts
+run_bar verdict pass needle --quiet
+check "$RC" "1" "AC23: a dropped option keeps the rc of the failing target"
+check "$(lines_of "$OUT")" "3" "AC23: two targets stay two verdicts plus the failing log path"
+check "$(sed -n 1p <<<"$OUT")" "OK pass" "AC23: the passing target keeps its position"
+check "$(sed -n 2p <<<"$OUT")" "FAIL needle (rc=1)" "AC23: the failing target keeps its position"
+run_bar check needle --quiet
+check "$RC" "1" "AC23: 'check needle --quiet' still exits 1"
+check "$(grep -c '^FAIL needle (rc=1)$' <<<"$OUT")" "1" "AC23: exactly one failure block is printed"
+if [[ "$OUT" != "OK "* ]]; then
+    pass "AC23: the block carries no phantom OK line"
+else
+    fail "AC23: a phantom OK line survived: [$OUT]"
+fi
+
+# dropping is not the same as swallowing: from verbosity 3 the argument is named on stderr
+noted="$(cd "$WORK" && BAR_VERBOSITY_LEVEL=3 "$BAR" verdict agent --quiet 2>&1 >/dev/null | grep -- '--quiet' || true)"
+if [[ "$noted" == *"not a target"* ]]; then
+    pass "AC23: verbosity 3 names the dropped argument"
+else
+    fail "AC23: the dropped argument is not announced at verbosity 3"
+fi
+
+# a target whose *name* begins with a dash stays reachable behind a bare '--'
+run_bar check -- --weird
+check "$RC" "0" "AC23: 'bar check -- --weird' runs the dashed target"
+check "$OUT" "OK --weird" "AC23: the dashed target is reported as the target it is"
+run_bar log --weird
+check "$OUT" "weird target ran" "AC23: and it really ran (its log holds its output)"
+run_bar check -- --weird pass
+check "$RC" "0" "AC23: '--' makes every following argument a target again"
+check "$OUT" "$(printf 'OK --weird\nOK pass')" "AC23: both targets are reported"
 
 echo
 if (( failures == 0 )); then

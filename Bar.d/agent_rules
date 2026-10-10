@@ -30,7 +30,12 @@
 ###     window) and the elision is announced with the exact log line range that was left out;
 ###   * every evidence line carries its line number in the log, so 'bar log <target> <n>' (or
 ###     'sed -n <n>p <log>') retrieves that line again, byte for byte;
-###   * a failure is never masked: the exit code is the rc of the first failing target.
+###   * a failure is never masked: the exit code is the rc of the first failing target;
+###   * bar's own options are never run as targets either.  Everything after a rule name belongs to
+###     that rule, so 'bar check agent --quiet' hands the option to 'check' -- it is dropped (with a
+###     NOTE from verbosity 3 on) instead of being reported as the phantom result 'OK --quiet'.  A
+###     target whose *name* begins with a dash stays reachable behind a bare '--': 'bar check --
+###     --weird' runs the target '--weird'.
 ###
 ### Measured on bar itself: 'bar tests' 16 kB / 409 lines -> 'bar check tests' 9 B / 1 line
 ### (success), and a 401 line failure of 14,6 kB -> ~1 kB carrying the verdict, the failing chain,
@@ -405,14 +410,39 @@ function agent_run_block ## <mode> <target>.. - body of the 'check' and 'verdict
     ## <mode> is 'verdict' (one line per target, plus the log path on failure) or 'check' (the
     ## full bounded failure block).  Nothing changes the verdict itself: that line is always
     ## printed, at every verbosity.
+    ##
+    ## Everything after the rule name belongs to the rule, so bar's own options land here when they
+    ## are written *after* the target ('bar check agent --quiet').  Such an argument is not a
+    ## target: running it would print a verdict line for it, and a consumer reads 'OK --quiet' as a
+    ## measured result -- a lie shaped line in the one surface that must never lie.  Dashed
+    ## arguments are therefore dropped (a NOTE from verbosity 3 on names them), and a bare '--'
+    ## turns the dropping off again, so a target whose name starts with a dash stays reachable:
+    ## 'bar check -- --weird'.
     local mode="$1"
     shift
-    if (( $# == 0 )); then
+    local -a targets=()
+    local only_targets='' arg
+    for arg in "$@"; do
+        if [[ -z "$only_targets" ]]; then
+            case "$arg" in
+                --)
+                    only_targets=true
+                    continue
+                    ;;
+                -*)
+                    note "'$arg' is not a target, it was dropped (bar options precede the rule: 'bar $arg $mode <target>')"
+                    continue
+                    ;;
+            esac
+        fi
+        targets+=("$arg")
+    done
+    if (( ${#targets[@]} == 0 )); then
         printf 'usage: bar %s <target> [target..]\n' "$mode" >&2
         return 2
     fi
     local target dir rc
-    for target in "$@"; do
+    for target in "${targets[@]}"; do
         if [[ -z "$target" || "$target" == */* ]]; then
             printf 'usage: bar %s <target> [target..] (a target name has no directory part)\n' \
                 "$mode" >&2
@@ -423,7 +453,7 @@ function agent_run_block ## <mode> <target>.. - body of the 'check' and 'verdict
     local -i rc_all=0
     local -a objects=()
     dir="$(agent_run_dir)"
-    for target in "$@"; do
+    for target in "${targets[@]}"; do
         rc="$(agent_run_target "$target" "$dir")"
         if [[ "$rc" == 0 ]]; then
             if [[ -n "$BAR_AGENT_JSON" ]]; then
@@ -498,12 +528,17 @@ function agent_log_body ## <target> [<from>,<to>|tail:<n>] - print the raw log o
 ## Run targets and print a bounded verdict block: one 'OK <target>' line when a target passed,
 ## otherwise its verdict, the failing chain, the exact totals of its raw output, a bounded and line
 ## numbered excerpt of it and the path of the untruncated log.  Exits with the rc of the first
-## failing target.
+## failing target.  Only targets are run: an argument that begins with a dash -- bar's own option
+## written after the target, 'bar check agent --quiet' -- is not one and is dropped with a notice
+## from verbosity 3 on.  Write the option before the rule ('bar --quiet check agent') or a target
+## whose name begins with a dash behind a '--' ('bar check -- --weird').
 rule check: -- agent_run_block check '"${RULE_ARGS[@]}"'
 
 ## Run targets and print one line per target only ('OK <target>' / 'FAIL <target> (rc=..)').  The
 ## cheapest form, meant for polling loops and gating conditions; a failure additionally gets the
-## path of its log so it can be retrieved with 'bar log'.
+## path of its log so it can be retrieved with 'bar log'.  The same argument handling as for
+## 'check': a dashed argument after the target is dropped, never reported as a target of its own,
+## and a '--' makes everything after it a target again.
 rule verdict: -- agent_run_block verdict '"${RULE_ARGS[@]}"'
 
 ## Print the raw log a previous 'bar check'/'bar verdict' produced for <target>: everything, a line
