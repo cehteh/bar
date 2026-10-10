@@ -80,6 +80,13 @@ function called_as ## [pattern..] - Checks whenever bar is called as a symlink m
     return 1
 }
 
+# The reporting helpers below are called as plain statements from rule_eval()/bar_main() which run
+# under 'set -euo pipefail'. Their verbosity guards are written as '(( ... )) && { ... }', and when
+# the guard suppresses the output that list evaluates to the status 1 -- under 'set -e' the caller
+# then aborts, i.e. a *successful* rule exits 1 as soon as BAR_VERBOSITY_LEVEL <= 1 (or '--quiet').
+# The guards must therefore never leak a non-zero status: every path ends in 'return 0'.
+# Regression test: tests/test_verbosity.sh
+
 function progress # [message..] - elusive progress notice, will be overwritten by the next output.
 {
     [[ "${TERM:-dumb}" = "dumb" ]] && return 0
@@ -94,6 +101,7 @@ function progress # [message..] - elusive progress notice, will be overwritten b
             tty_echo -n "${TTYERR[K_B]:-}  RUN: $*${TTYERR[ce]:-}${TTYERR[cr]:-}${TTYERR[n]:-}"
         }
     fi >&2
+    return 0
 }
 
 function success # [message..] - Message for success.
@@ -109,6 +117,7 @@ function success # [message..] - Message for success.
             echo -e "${TTYERR[g_B]:-}   OK:${TTYERR[n]:-} $*"
         }
     fi >&2
+    return 0
 }
 
 function failure # [message..] - Message for failure.
@@ -124,6 +133,7 @@ function failure # [message..] - Message for failure.
             echo -e "${TTYERR[r_B]:-} FAIL:${TTYERR[n]:-} $*"
         }
     fi >&2
+    return 0
 }
 
 function uncond_call # <rc> [message..] - Message for unconditional dependency calls
