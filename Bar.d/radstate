@@ -1,0 +1,960 @@
+# -*- mode: sh; sh-shell: bash -*-
+# vim: set ft=bash:
+# shellcheck shell=bash
+
+### Radicle repository state: what this checkout is, what it carries and what is still local.
+###
+### One invocation answers the questions an agent asks before it touches a radicle repository:
+### which repository is this (RID, name, path), which identity does 'rad' use here, how the
+### patches stand (how many, by state, ours against others), how the issues stand (state, labels,
+### when something happened last) and which local branches still carry commits no patch exposes.
+###
+###   bar radstate [--json] [--max <n>]                     the whole state, one screen
+###   bar radstate_patches [--state <s>] [--author <a>] [--json] [--max <n>]
+###                                                         only the patches, filtered
+###
+### Nothing here goes to the network: 'rad patch/issue list' answer from the local node storage
+### and the divergence is measured against 'rad/main' as the last 'git fetch rad' left it, which
+### the 'head' line names.  Syncing is the caller's business ('rad sync', 'git fetch rad'): this
+### helper reports what is there and says how old it is.
+###
+### SOURCES
+###
+###   rad inspect --rid         the repository identity, 'git rev-parse' the toplevel
+###   rad self                  alias and DID of the identity 'rad' uses here
+###   rad patch list --all      patch id, title, author and head (the state is not in the list)
+###   rad issue list --all      issue id, title, author, labels and assignees
+###   rad patch/issue list --authored/--draft/--merged/--archived/--closed/--solved
+###                             rad prints one state per call, so the states are subtracted as
+###                             sets: 'open' is what is in '--all' and in none of the others, and
+###                             'ours' is what '--authored' (patches) or '(you)' (issues) says
+###   the node storage          time and kind of the last event of every patch and issue, read
+###                             from 'refs/namespaces/*/refs/cobs/xyz.radicle.<type>' below
+###                             '$(rad path)/storage/<RID>' with 'git for-each-ref'
+###   git for-each-ref/rev-list the current branch, the local branches and their distance from
+###                             'refs/remotes/rad/main' or 'refs/remotes/rad/master'
+###
+### OUTPUT
+###
+###   Text: one header line per section -- '<section>  <counts>' -- then one line per item, the
+###   free text last so that nothing has to be padded.  Ages are short ('6m', '2h', '1y') and are
+###   those of the last event.  '--json': one object with 'bar_radstate': 1, the complete data,
+###   never elided.
+###   At most '--max' items per section (default 10, '--max 0' lists all).  A section which is
+###   cut states exactly how much ('n of N elided'), and when anything was cut the complete text
+###   is written to a file whose path the last line prints, so the elision loses nothing.
+###
+###   'ours' is what 'rad' itself calls ours, everything else is 'other' (whose author is then
+###   named behind the title); a patch which rad lists in more than one state is named by the
+###   first of 'draft', 'merged', 'archived'.
+###
+### EXIT CODES
+###
+###   0  answered (an empty repository -- no patch, no issue -- is an answer, not a failure)
+###   2  usage error
+###   3  no data: not a git repository, or no radicle repository here
+###   1  could not answer: 'rad' is missing or failed, or its output was not understood
+###
+### 'RADSTATE_RAD' names the command to run instead of 'rad' (the tests point it at a fake),
+### 'RADSTATE_MAX' is the default of '--max'.  Reading rad's tables back needs a character aware
+### shell; bar exports a UTF-8 'LC_ALL' whenever the system has one.
+###
+### The rules below are about 'rad', the radicle frontend and the repository it is used in.
+### Building a radicle installation itself is Bar.d/radicle.
+
+# helper-module: radstate
+
+declare -gx RADSTATE_RAD="${RADSTATE_RAD:-rad}"  ## the command to use instead of 'rad'
+declare -gx RADSTATE_MAX="${RADSTATE_MAX:-10}"   ## default of '--max': items printed per section
+
+## the field separator of the internal records, US for the same reason Bar.d/helpers_rules uses
+## it: a field may be empty and a space would collapse
+declare -gr RADSTATE_US=$'\037'
+## the field separator of a 'git for-each-ref' line
+declare -gr RADSTATE_RS=$'\011'
+
+declare -ga RADSTATE_PATCHES=()   ## one record per patch, see 'radstate_collect'
+declare -ga RADSTATE_ISSUES=()    ## one record per issue, see 'radstate_collect'
+declare -ga RADSTATE_BRANCHES=()  ## one record per local branch, see 'radstate_collect'
+declare -gA RADSTATE_COB_TIME=()  ## '<type>:<id>' -> '<updated> <created> <kind>'
+declare -g RADSTATE_RID="" RADSTATE_NAME="" RADSTATE_PATH=""
+declare -g RADSTATE_ALIAS="" RADSTATE_DID="" RADSTATE_KNOWN="no"
+declare -g RADSTATE_BRANCH="" RADSTATE_COMMIT="" RADSTATE_CANONICAL=""
+declare -g RADSTATE_CANONICAL_COMMIT="" RADSTATE_AHEAD="" RADSTATE_BEHIND="" RADSTATE_NOTCANONICAL=""
+declare -gi RADSTATE_CUT=0        ## items the last text rendering elided
+declare -gi RADSTATE_NOW=0        ## the timestamp the ages are relative to
+
+## - 0 when this shell counts characters, which reading rad's tables needs
+function radstate_charwise
+{
+    ## 'rad' pads the cells of its tables by character, so the columns can only be cut at the same
+    ## offsets when the shell measures the same way.  That is the case in a UTF-8 locale, which bar
+    ## exports whenever the system has one; in a byte locale a cell holding a non ASCII character
+    ## shifts everything behind it and 'radstate' says so instead of reporting it wrongly.
+    ## (A double width character -- CJK, emoji -- is one column to a character wise shell and two
+    ## to rad: such a title would shift the columns of its row too.)
+    local probe="…"
+    [[ "${#probe}" == 1 ]]
+}
+
+## <line> - a table line without the box edges, the state marker cell and the padding
+function radstate_line
+{
+    ## '│ ●  a1bd13a  title  ...  │' -> 'a1bd13a  title  ...'.  The marker cell is a single token
+    ## ('●' or '✓', whatever rad prints there) and is dropped: the columns behind it then start at
+    ## the same offset in the header line and in every row, which is what 'radstate_table' cuts by.
+    local line="$1"
+    line="${line#*│}"
+    line="${line%│*}"
+    line="${line#"${line%%[![:space:]]*}"}"
+    line="${line#*[[:space:]]}"
+    line="${line#"${line%%[![:space:]]*}"}"
+    printf '%s' "${line%"${line##*[![:space:]]}"}"
+}
+
+## <header> - the start offset of every column of a normalized table header, space separated
+function radstate_columns
+{
+    ## A column starts where a run of two or more spaces ends and content follows (plus the first
+    ## one): the two spaces are the separator between two cells, the padding of a cell is never
+    ## part of its neighbour.  Neither a name nor a value is needed for this, the header line
+    ## carries the layout itself.
+    local header="$1"
+    local count="${#header}"
+    local i=0 out="0" char before="" earlier=""
+    for (( i = 1; i < count; i++ )); do
+        char="${header:i:1}"
+        before="${header:i-1:1}"
+        earlier="${header:i-2:1}"
+        if [[ "$char" != " " && "$before" == " " && "$earlier" == " " ]]; then
+            out+=" $i"
+        fi
+    done
+    printf '%s' "$out"
+}
+
+## <table> <column>.. - the named cells of every row of a 'rad' table, US separated
+function radstate_table
+{
+    ## The columns are located by name in the header line (see 'radstate_columns' for where a
+    ## column starts), then every row is cut at the same offsets -- up to where the next column
+    ## begins, so that a requested cell never carries the ones behind it.  Cut and not split: a
+    ## cell may itself contain two spaces (a truncated author reads 'ct_vibes  (you)'), which
+    ## splitting on whitespace would tear apart.  Every requested name has to exist in the table,
+    ## otherwise this returns 1 and the caller reports that rad's output could not be understood.
+    local table="$1"
+    shift
+    local -a names=("$@")
+    local -a lines=() offsets=() starts=()
+    local line header="" row cell id start end
+    local index=0 length=0
+    local i name complete column
+
+    while IFS= read -r line; do
+        lines+=( "$(radstate_line "$line")" )
+    done <<<"$table"
+
+    for i in "${!lines[@]}"; do
+        complete=1
+        for name in "${names[@]}"; do
+            if [[ " ${lines[i]} " != *" $name "* ]]; then
+                complete=0
+                break
+            fi
+        done
+        if (( complete )); then
+            header="${lines[i]}"
+            index=$i
+            break
+        fi
+    done
+    [[ -n "$header" ]] || return 1
+    read -r -a starts <<<"$(radstate_columns "$header")"
+
+    for name in "${names[@]}"; do
+        column=""
+        for start in "${starts[@]}"; do
+            if [[ "${header:start:${#name}}" == "$name" ]]; then
+                column="$start"
+                break
+            fi
+        done
+        [[ -n "$column" ]] || return 1
+        offsets+=( "$column" )
+    done
+
+    for (( i = index + 1; i < ${#lines[@]}; i++ )); do
+        line="${lines[i]}"
+        id="${line%%[[:space:]]*}"
+        [[ "$id" =~ ^[0-9a-f]{7}$ ]] || continue
+        row=""
+        for (( start = 0; start < ${#names[@]}; start++ )); do
+            end=""
+            for column in "${starts[@]}"; do
+                if (( column > offsets[start] )); then
+                    end="$column"
+                    break
+                fi
+            done
+            length=$(( ${end:-${#line}} - offsets[start] ))
+            cell="${line:offsets[start]:length}"
+            cell="${cell#"${cell%%[![:space:]]*}"}"
+            cell="${cell%"${cell##*[![:space:]]}"}"
+            if (( start == 0 )); then
+                row="$cell"
+            else
+                row+="${RADSTATE_US}${cell}"
+            fi
+        done
+        printf '%s\n' "$row"
+    done
+}
+
+## <table> - the ids of the rows of a 'rad' table, one per line
+function radstate_ids
+{
+    ## A state filter is answered with a table of the same shape and only the ids are taken from
+    ## it.  An empty result is 'Nothing to show.' or nothing at all -- that is no id, not an
+    ## error; box drawing characters without a header to cut by are an error (return 1).
+    local table="$1"
+    local ids
+    [[ "$table" == *│* ]] || return 0
+    ids="$(radstate_table "$table" ID)" || return 1
+    [[ -n "$ids" ]] || return 0
+    printf '%s\n' "$ids"
+}
+
+## <newline separated ids> <id> - 0 when <id> is one of them
+function radstate_has_id
+{
+    local ids="${1//$'\n'/ }"
+    [[ " $ids " == *" $2 "* ]]
+}
+
+## <ids> <description> <table> - as 'radstate_ids', but a table it cannot cut is a diagnostic
+function radstate_ids_checked
+{
+    local description="$1" table="$2"
+    local ids=""
+    ids="$(radstate_ids "$table")" || {
+        error "cannot read what '$RADSTATE_RAD $description' printed: a table without the expected columns"
+        return 1
+    }
+    printf '%s' "$ids"
+}
+
+## <description> <table> <column>.. - as 'radstate_table', but a table it cannot cut is a diagnostic
+function radstate_table_checked
+{
+    local description="$1" table="$2"
+    shift 2
+    local rows=""
+    ## 'Nothing to show.' and nothing at all are no rows, not an error; box drawing characters
+    ## without a header to cut by are.
+    [[ "$table" == *│* ]] || return 0
+    rows="$(radstate_table "$table" "$@")" || {
+        error "cannot read what '$RADSTATE_RAD $description' printed: a table without the expected columns"
+        return 1
+    }
+    printf '%s' "$rows"
+}
+
+## <cell> - an author cell of a table as one name ('ct_vibes  (you)' -> 'ct_vibes')
+function radstate_author
+{
+    local cell="${1//$'\t'/ }"
+    while [[ "$cell" == *"  "* ]]; do
+        cell="${cell//  / }"
+    done
+    printf '%s' "${cell% (you)}"
+}
+
+## <now> <epoch> - a short age ('6m', '2h', '3d', '1y'), '-' when there is no epoch
+function radstate_age
+{
+    local now="$1"
+    local epoch="${2:-}"
+    [[ "$epoch" =~ ^[0-9]+$ ]] || {
+        printf '%s' "-"
+        return 0
+    }
+    local delta=$(( now - epoch ))
+    (( delta < 0 )) && delta=0
+    if (( delta < 60 )); then
+        printf '%ds' "$delta"
+    elif (( delta < 3600 )); then
+        printf '%dm' "$(( (delta + 30) / 60 ))"
+    elif (( delta < 86400 )); then
+        printf '%dh' "$(( (delta + 1800) / 3600 ))"
+    elif (( delta < 604800 )); then
+        printf '%dd' "$(( (delta + 43200) / 86400 ))"
+    elif (( delta < 2592000 )); then
+        printf '%dw' "$(( (delta + 302400) / 604800 ))"
+    elif (( delta < 31536000 )); then
+        printf '%dmo' "$(( (delta + 1296000) / 2592000 ))"
+    else
+        printf '%dy' "$(( (delta + 15768000) / 31536000 ))"
+    fi
+}
+
+## <args>.. - run 'rad' and print what it wrote
+function radstate_rad
+{
+    ## Fails with 1 and a diagnostic on stderr when rad failed, with 3 when the failure was that
+    ## there is no radicle repository: stderr is folded into the output so both can be told apart.
+    local out
+    if ! out="$(LC_ALL=C "$RADSTATE_RAD" "$@" 2>&1)"; then
+        if [[ "$out" == *"not a Radicle repository"* ]]; then
+            error "no radicle repository here: '$RADSTATE_RAD $*' says '${out##*$'\n'}'"
+            return 3
+        fi
+        error "'$RADSTATE_RAD $*' failed: '${out##*$'\n'}'"
+        return 1
+    fi
+    printf '%s' "$out"
+}
+
+## <type> <rid> - when and how the last event of every <type> ('patch', 'issue') happened
+function radstate_cobs
+{
+    ## The kind and the time of the last event of every patch and issue, into 'RADSTATE_COB_TIME'.
+    ## Every namespace of the node storage keeps a copy of a COB, so the newest commit over all of
+    ## them is the last event and its subject names its kind ('Comment', 'Merge revision', ...).
+    ## A storage which is not there is not an error, the times stay empty then.
+    local type="$1" rid="$2"
+    local radpath storage id updated kind
+    radpath="$(LC_ALL=C "$RADSTATE_RAD" path 2>/dev/null)" || radpath=""
+    storage="$radpath/storage/${rid#rad:}"
+    [[ -n "$radpath" && -d "$storage" ]] || return 0
+    while IFS="$RADSTATE_RS" read -r id updated kind; do
+        [[ -n "$id" ]] || continue
+        RADSTATE_COB_TIME["$type:$id"]="$updated $kind"
+    done < <(git --git-dir="$storage" for-each-ref --sort=-committerdate \
+        --format="%(committerdate:unix)${RADSTATE_RS}%(subject)${RADSTATE_RS}%(refname:lstrip=4)" \
+        "refs/namespaces/*/refs/cobs/xyz.radicle.$type/*" 2>/dev/null |
+        LC_ALL=C awk -F'\t' '
+            {
+                id = $3
+                sub(/.*\//, "", id)
+                id = substr(id, 1, 7)
+                if (!(id in newest)) {
+                    newest[id] = $1
+                    kind[id] = $2
+                }
+            }
+            END {
+                for (id in newest)
+                    print id "\t" newest[id] "\t" kind[id]
+            }')
+}
+
+## - collect the whole state into the 'RADSTATE_*' variables
+function radstate_collect
+{
+    ##   patch  id state own author head title updated created kind
+    ##   issue  id state own author labels assignees title updated created kind
+    ##   branch name commit ahead patch
+    ##
+    ## Returns 3 when there is no repository to report on (a radicle repository is a git
+    ## repository with a radicle identity), 1 when rad failed or its output was not understood.
+    local toplevel="" rid="" all="" ours="" draft="" merged="" archived="" closed="" solved=""
+    local myself="" inspected="" ref=""
+    local id="" title="" author="" head="" state="" own="" labels="" assignees=""
+    local draftids="" mergedids="" archivedids="" closedids="" solvedids="" rows=""
+    local -a heads=() headmap=()
+    local type="" name="" branch="" commit="" ahead="" patch="" full="" entry="" object=""
+    local updated="" kind=""
+
+    RADSTATE_PATCHES=() RADSTATE_ISSUES=() RADSTATE_BRANCHES=() RADSTATE_COB_TIME=()
+    RADSTATE_CUT=0
+
+    if ! toplevel="$(git rev-parse --show-toplevel 2>/dev/null)"; then
+        error "not a git repository: 'bar radstate' reports on a radicle checkout"
+        return 3
+    fi
+    RADSTATE_NAME="${toplevel##*/}"
+    RADSTATE_PATH="${toplevel/#"$HOME"/\~}"
+
+    inspected="$(cd "$toplevel" && radstate_rad inspect --rid)" || return $?
+    rid="${inspected##*$'\n'}"
+    RADSTATE_RID="$rid"
+
+    RADSTATE_ALIAS="" RADSTATE_DID="" RADSTATE_KNOWN="no"
+    myself="$(LC_ALL=C "$RADSTATE_RAD" self 2>/dev/null)" || myself=""
+    if [[ -n "$myself" ]]; then
+        RADSTATE_ALIAS="$(printf '%s\n' "$myself" | LC_ALL=C sed -n 's/^Alias[[:space:]]\{1,\}//p' | head -1)"
+        RADSTATE_DID="$(printf '%s\n' "$myself" | LC_ALL=C sed -n 's/^DID[[:space:]]\{1,\}//p' | head -1)"
+        [[ -n "$RADSTATE_DID" ]] && RADSTATE_KNOWN="yes"
+    else
+        warn "'$RADSTATE_RAD self' failed, the identity rad uses here stays unknown"
+    fi
+
+    RADSTATE_BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null)" || RADSTATE_BRANCH="HEAD"
+    RADSTATE_COMMIT="$(git rev-parse --short HEAD 2>/dev/null)" || RADSTATE_COMMIT=""
+    RADSTATE_CANONICAL="" RADSTATE_CANONICAL_COMMIT=""
+    RADSTATE_AHEAD="" RADSTATE_BEHIND="" RADSTATE_NOTCANONICAL=""
+    for ref in refs/remotes/rad/main refs/remotes/rad/master; do
+        if git rev-parse --verify --quiet "$ref" >/dev/null 2>&1; then
+            RADSTATE_CANONICAL="${ref#refs/remotes/}"
+            RADSTATE_CANONICAL_COMMIT="$(git rev-parse --short "$ref")"
+            read -r RADSTATE_BEHIND RADSTATE_AHEAD <<<"$(git rev-list --left-right --count "$ref...HEAD" 2>/dev/null)" ||
+                RADSTATE_BEHIND=""
+            RADSTATE_NOTCANONICAL="$(git rev-list --count --branches --not "$ref" 2>/dev/null)" ||
+                RADSTATE_NOTCANONICAL=""
+            break
+        fi
+    done
+
+    for type in patch issue; do
+        radstate_cobs "$type" "$rid"
+    done
+
+    radstate_charwise ||
+        warn "the shell does not count characters ('LC_ALL=${LC_ALL:-unset}'): cells with non ASCII characters may be cut wrongly"
+
+    # the patches: the states and our own ones as id sets, the rest from the table of '--all'
+    all="$(radstate_rad patch list --repo "$rid" --all)" || return $?
+    ours="$(radstate_rad patch list --repo "$rid" --all --authored)" || return $?
+    draft="$(radstate_rad patch list --repo "$rid" --draft)" || return $?
+    merged="$(radstate_rad patch list --repo "$rid" --merged)" || return $?
+    archived="$(radstate_rad patch list --repo "$rid" --archived)" || return $?
+    draftids="$(radstate_ids_checked "patch list --draft" "$draft")" || return 1
+    mergedids="$(radstate_ids_checked "patch list --merged" "$merged")" || return 1
+    archivedids="$(radstate_ids_checked "patch list --archived" "$archived")" || return 1
+    ours="$(radstate_ids_checked "patch list --all --authored" "$ours")" || return 1
+    rows="$(radstate_table_checked "patch list --all" "$all" ID Title Author Head)" || return 1
+    while IFS="$RADSTATE_US" read -r id title author head; do
+        [[ -n "$id" ]] || continue
+        own="other"
+        radstate_has_id "$ours" "$id" && own="ours"
+        if radstate_has_id "$draftids" "$id"; then
+            state="draft"
+        elif radstate_has_id "$mergedids" "$id"; then
+            state="merged"
+        elif radstate_has_id "$archivedids" "$id"; then
+            state="archived"
+        else
+            state="open"
+        fi
+        updated="" kind=""
+        read -r updated kind <<<"${RADSTATE_COB_TIME["patch:$id"]:-}"
+        RADSTATE_PATCHES+=( "$id${RADSTATE_US}$state${RADSTATE_US}$own${RADSTATE_US}$(radstate_author "$author")${RADSTATE_US}$head${RADSTATE_US}$title${RADSTATE_US}$updated${RADSTATE_US}$kind" )
+        heads+=( "$head${RADSTATE_US}$id" )
+    done <<<"$rows"
+
+    # the heads resolved once, so that every local branch is compared without another git call
+    for entry in ${heads[@]+"${heads[@]}"}; do
+        full="$(git rev-parse --verify --quiet "${entry%%"$RADSTATE_US"*}^{commit}" 2>/dev/null)" || continue
+        [[ -n "$full" ]] && headmap+=( "$full${RADSTATE_US}${entry##*"$RADSTATE_US"}" )
+    done
+
+    # the issues
+    all="$(radstate_rad issue list --repo "$rid" --all)" || return $?
+    closed="$(radstate_rad issue list --repo "$rid" --closed)" || return $?
+    solved="$(radstate_rad issue list --repo "$rid" --solved)" || return $?
+    closedids="$(radstate_ids_checked "issue list --closed" "$closed")" || return 1
+    solvedids="$(radstate_ids_checked "issue list --solved" "$solved")" || return 1
+    rows="$(radstate_table_checked "issue list --all" "$all" ID Title Author Labels Assignees)" ||
+        return 1
+    while IFS="$RADSTATE_US" read -r id title author labels assignees; do
+        [[ -n "$id" ]] || continue
+        own="other"
+        [[ "$author" == *"(you)"* ]] && own="ours"
+        if radstate_has_id "$closedids" "$id"; then
+            state="closed"
+        elif radstate_has_id "$solvedids" "$id"; then
+            state="solved"
+        else
+            state="open"
+        fi
+        updated="" kind=""
+        read -r updated kind <<<"${RADSTATE_COB_TIME["issue:$id"]:-}"
+        RADSTATE_ISSUES+=( "$id${RADSTATE_US}$state${RADSTATE_US}$own${RADSTATE_US}$(radstate_author "$author")${RADSTATE_US}$labels${RADSTATE_US}$assignees${RADSTATE_US}$title${RADSTATE_US}$updated${RADSTATE_US}$kind" )
+    done <<<"$rows"
+
+    # the branches: one carries a patch when its tip is the head of one
+    while IFS="$RADSTATE_RS" read -r branch commit; do
+        [[ -n "$branch" ]] || continue
+        ahead=""
+        if [[ -n "$RADSTATE_CANONICAL" ]]; then
+            ahead="$(git rev-list --count "$RADSTATE_CANONICAL..$branch" 2>/dev/null)" || ahead=""
+        fi
+        patch="-"
+        full="$(git rev-parse --verify --quiet "$commit^{commit}" 2>/dev/null)" || full=""
+        if [[ -n "$full" ]]; then
+            for entry in ${headmap[@]+"${headmap[@]}"}; do
+                [[ "${entry%%"$RADSTATE_US"*}" == "$full" ]] || continue
+                patch="${entry##*"$RADSTATE_US"}"
+                break
+            done
+        fi
+        RADSTATE_BRANCHES+=( "$branch${RADSTATE_US}$commit${RADSTATE_US}$ahead${RADSTATE_US}$patch" )
+    done < <(git for-each-ref --format="%(refname:short)${RADSTATE_RS}%(objectname:short)" refs/heads)
+}
+
+## <shown> <total> - the elision of a cut section, nothing when every item is shown
+function radstate_cut
+{
+    local shown="$1" total="$2"
+    (( shown < total )) || return 0
+    RADSTATE_CUT=$(( RADSTATE_CUT + total - shown ))
+    printf '  ... %d of %d elided (%s %s --max 0)\n' "$(( total - shown ))" "$total" \
+        "${BAR_CALLED_AS:-bar}" "${RULE_NAME:-radstate}"
+}
+
+## - where the complete text of this run is written, see 'radstate_complete'
+function radstate_complete_file
+{
+    printf '%s' "${TMPDIR:-/tmp}/bar-radstate.${RADSTATE_RID//[!A-Za-z0-9]/_}.${RULE_NAME:-radstate}.txt"
+}
+
+## <file> - say where the complete text went, after a section was cut
+function radstate_complete_note
+{
+    printf 'complete  %s  (the same text, nothing elided)\n' "$1"
+}
+
+## <max> [<state> [<author>]] - the patch section as text
+function radstate_text_patches
+{
+    local max="$1" select_state="${2:-all}" select_author="${3:-all}"
+    local total=${#RADSTATE_PATCHES[@]} shown=0 ours=0 others=0
+    local open=0 draft=0 merged=0 archived=0
+    local entry="" id="" state="" own="" author="" head="" title="" updated="" kind="" suffix=""
+    local -a selected=()
+
+    for entry in ${RADSTATE_PATCHES[@]+"${RADSTATE_PATCHES[@]}"}; do
+        IFS="$RADSTATE_US" read -r id state own author head title updated kind <<<"$entry"
+        if [[ "$own" == ours ]]; then
+            ours=$(( ours + 1 ))
+        else
+            others=$(( others + 1 ))
+        fi
+        case "$state" in
+        open) open=$(( open + 1 )) ;;
+        draft) draft=$(( draft + 1 )) ;;
+        merged) merged=$(( merged + 1 )) ;;
+        archived) archived=$(( archived + 1 )) ;;
+        esac
+        [[ "$select_state" == all || "$select_state" == "$state" ]] || continue
+        [[ "$select_author" == all || "$select_author" == "$own" ]] || continue
+        selected+=( "$entry" )
+    done
+
+    if [[ "$select_state" == all && "$select_author" == all ]]; then
+        printf 'patches   %d   ours %d  others %d   open %d  draft %d  merged %d  archived %d\n' \
+            "$total" "$ours" "$others" "$open" "$draft" "$merged" "$archived"
+    else
+        printf 'patches   %d of %d   ours %d  others %d   open %d  draft %d  merged %d  archived %d   (state %s, author %s)\n' \
+            "${#selected[@]}" "$total" "$ours" "$others" "$open" "$draft" "$merged" "$archived" \
+            "$select_state" "$select_author"
+    fi
+    for entry in ${selected[@]+"${selected[@]}"}; do
+        (( max == 0 || shown < max )) || break
+        IFS="$RADSTATE_US" read -r id state own author head title updated kind <<<"$entry"
+        ## the author of a patch of ours is us, naming it again would only repeat the identity
+        ## line; for the others it says who to talk to
+        suffix=""
+        [[ "$own" == other && -n "$author" ]] && suffix="  [${author}]"
+        printf '  %s  %-8s %-5s  %-7s %-4s %s%s\n' "$id" "$state" "$own" "$head" \
+            "$(radstate_age "$RADSTATE_NOW" "$updated")" "$title" "$suffix"
+        shown=$(( shown + 1 ))
+    done
+    radstate_cut "$shown" "${#selected[@]}"
+}
+
+## <max> - the issue section as text
+function radstate_text_issues
+{
+    local max="$1"
+    local total=${#RADSTATE_ISSUES[@]} shown=0 ours=0 others=0 open=0 closed=0 solved=0
+    local entry="" id="" state="" own="" author="" labels="" assignees="" title="" updated="" kind="" suffix=""
+
+    for entry in ${RADSTATE_ISSUES[@]+"${RADSTATE_ISSUES[@]}"}; do
+        IFS="$RADSTATE_US" read -r id state own author labels assignees title updated kind <<<"$entry"
+        if [[ "$own" == ours ]]; then
+            ours=$(( ours + 1 ))
+        else
+            others=$(( others + 1 ))
+        fi
+        case "$state" in
+        open) open=$(( open + 1 )) ;;
+        closed) closed=$(( closed + 1 )) ;;
+        solved) solved=$(( solved + 1 )) ;;
+        esac
+    done
+    printf 'issues    %d   ours %d  others %d   open %d  closed %d  solved %d\n' \
+        "$total" "$ours" "$others" "$open" "$closed" "$solved"
+    for entry in ${RADSTATE_ISSUES[@]+"${RADSTATE_ISSUES[@]}"}; do
+        (( max == 0 || shown < max )) || break
+        IFS="$RADSTATE_US" read -r id state own author labels assignees title updated kind <<<"$entry"
+        suffix=""
+        [[ -n "$labels" ]] && suffix+="  [${labels}]"
+        [[ -n "$assignees" ]] && suffix+="  [@${assignees}]"
+        printf '  %s  %-6s %-5s  %-4s %s%s\n' "$id" "$state" "$own" \
+            "$(radstate_age "$RADSTATE_NOW" "$updated")" "$title" "$suffix"
+        shown=$(( shown + 1 ))
+    done
+    radstate_cut "$shown" "$total"
+}
+
+## <max> - the branch section as text
+function radstate_text_branches
+{
+    local max="$1"
+    local total=${#RADSTATE_BRANCHES[@]} shown=0 without=0
+    local entry="" name="" commit="" ahead="" patch=""
+
+    for entry in ${RADSTATE_BRANCHES[@]+"${RADSTATE_BRANCHES[@]}"}; do
+        IFS="$RADSTATE_US" read -r name commit ahead patch <<<"$entry"
+        [[ "$patch" == "-" ]] && without=$(( without + 1 ))
+    done
+    printf 'branches  %d   no patch %d   %s commits not in %s\n' "$total" "$without" \
+        "${RADSTATE_NOTCANONICAL:-?}" "${RADSTATE_CANONICAL:-rad/main}"
+    for entry in ${RADSTATE_BRANCHES[@]+"${RADSTATE_BRANCHES[@]}"}; do
+        (( max == 0 || shown < max )) || break
+        IFS="$RADSTATE_US" read -r name commit ahead patch <<<"$entry"
+        if [[ "$patch" == "-" ]]; then
+            patch="no patch"
+        else
+            patch="patch $patch"
+        fi
+        printf '  %-28s %-7s %-8s %s\n' "$name" "$commit" "${ahead:+ahead $ahead}" "$patch"
+        shown=$(( shown + 1 ))
+    done
+    radstate_cut "$shown" "$total"
+}
+
+## - the repository, identity and head lines of the text form
+function radstate_text_head
+{
+    printf 'repo      %s  %s  %s\n' "$RADSTATE_NAME" "$RADSTATE_RID" "$RADSTATE_PATH"
+    if [[ "$RADSTATE_KNOWN" == yes ]]; then
+        printf 'ident     %s  %s\n' "${RADSTATE_ALIAS:-?}" "$RADSTATE_DID"
+    else
+        printf 'ident     unknown  (rad self did not answer)\n'
+    fi
+    if [[ -n "$RADSTATE_CANONICAL" ]]; then
+        printf 'head      %s %s   %s %s   ahead %s  behind %s  (as of the last fetch)\n' \
+            "$RADSTATE_BRANCH" "$RADSTATE_COMMIT" "$RADSTATE_CANONICAL" \
+            "$RADSTATE_CANONICAL_COMMIT" "${RADSTATE_AHEAD:-?}" "${RADSTATE_BEHIND:-?}"
+    else
+        printf 'head      %s %s   no rad/main as a base (run '\''git fetch rad'\'')\n' \
+            "$RADSTATE_BRANCH" "$RADSTATE_COMMIT"
+    fi
+}
+
+## <max> - the whole state as text, at most <max> items per section
+function radstate_text
+{
+    local max="$1"
+    local file=""
+
+    RADSTATE_CUT=0
+    radstate_text_head
+    radstate_text_patches "$max" all all
+    radstate_text_issues "$max"
+    radstate_text_branches "$max"
+    if (( max != 0 && RADSTATE_CUT != 0 )); then
+        file="$(radstate_complete_file)"
+        if radstate_text 0 >"$file" 2>/dev/null; then
+            radstate_complete_note "$file"
+        else
+            warn "could not write the complete text to $file"
+        fi
+    fi
+}
+
+## <text> - a JSON string literal
+function radstate_json_string
+{
+    local text="$1"
+    text="${text//\\/\\\\}"
+    text="${text//\"/\\\"}"
+    text="${text//$'\t'/\\t}"
+    printf '"%s"' "$(printf '%s' "$text" | LC_ALL=C tr -d '[:cntrl:]')"
+}
+
+## <value> - the value as a JSON number, 'null' when there is none
+function radstate_json_number
+{
+    if [[ "${1:-}" =~ ^[0-9]+$ ]]; then
+        printf '%s' "$1"
+    else
+        printf 'null'
+    fi
+}
+
+## <yes|no> - the JSON literal of a condition
+function radstate_json_bool
+{
+    if [[ "$1" == yes ]]; then
+        printf 'true'
+    else
+        printf 'false'
+    fi
+}
+
+## <text> - the comma separated text as a JSON array of strings
+function radstate_json_list
+{
+    local text="$1"
+    local -a entries=()
+    local entry="" joined="" separator=""
+    if [[ -n "$text" ]]; then
+        IFS=',' read -r -a entries <<<"$text"
+    fi
+    for entry in ${entries[@]+"${entries[@]}"}; do
+        entry="${entry#"${entry%%[![:space:]]*}"}"
+        entry="${entry%"${entry##*[![:space:]]}"}"
+        [[ -n "$entry" ]] || continue
+        joined+="${separator}$(radstate_json_string "$entry")"
+        separator=","
+    done
+    printf '[%s]' "$joined"
+}
+
+## <state> <author> - the selected patches as one JSON object
+function radstate_json_patches
+{
+    local select_state="$1" select_author="$2"
+    local entry="" id="" state="" own="" author="" head="" title=""
+    local updated="" kind="" joined="" object=""
+    local total=0 ours=0 others=0 open=0 draft=0 merged=0 archived=0
+
+    for entry in ${RADSTATE_PATCHES[@]+"${RADSTATE_PATCHES[@]}"}; do
+        IFS="$RADSTATE_US" read -r id state own author head title updated kind <<<"$entry"
+        total=$(( total + 1 ))
+        if [[ "$own" == ours ]]; then
+            ours=$(( ours + 1 ))
+        else
+            others=$(( others + 1 ))
+        fi
+        case "$state" in
+        open) open=$(( open + 1 )) ;;
+        draft) draft=$(( draft + 1 )) ;;
+        merged) merged=$(( merged + 1 )) ;;
+        archived) archived=$(( archived + 1 )) ;;
+        esac
+        [[ "$select_state" == all || "$select_state" == "$state" ]] || continue
+        [[ "$select_author" == all || "$select_author" == "$own" ]] || continue
+        object="$(printf '{"id":%s,"state":%s,"author":%s,"ours":%s,"title":%s,"head":%s,"updated":%s,"age":%s,"last":%s}' \
+            "$(radstate_json_string "$id")" "$(radstate_json_string "$state")" \
+            "$(radstate_json_string "$author")" "$(radstate_json_bool "$([[ "$own" == ours ]] && printf yes || printf no)")" \
+            "$(radstate_json_string "$title")" "$(radstate_json_string "$head")" \
+            "$(radstate_json_number "$updated")" \
+            "$(radstate_json_string "$(radstate_age "$RADSTATE_NOW" "$updated")")" \
+            "$(radstate_json_string "$kind")")"
+        joined+="${joined:+,}${object}"
+    done
+    printf '{"count":%d,"ours":%d,"others":%d,"open":%d,"draft":%d,"merged":%d,"archived":%d,"items":[%s]}' \
+        "$total" "$ours" "$others" "$open" "$draft" "$merged" "$archived" "$joined"
+}
+
+## - the issues as one JSON object
+function radstate_json_issues
+{
+    local entry="" id="" state="" own="" author="" labels="" assignees="" title=""
+    local updated="" kind="" joined="" object=""
+    local total=0 ours=0 others=0 open=0 closed=0 solved=0
+
+    for entry in ${RADSTATE_ISSUES[@]+"${RADSTATE_ISSUES[@]}"}; do
+        IFS="$RADSTATE_US" read -r id state own author labels assignees title updated kind <<<"$entry"
+        total=$(( total + 1 ))
+        if [[ "$own" == ours ]]; then
+            ours=$(( ours + 1 ))
+        else
+            others=$(( others + 1 ))
+        fi
+        case "$state" in
+        open) open=$(( open + 1 )) ;;
+        closed) closed=$(( closed + 1 )) ;;
+        solved) solved=$(( solved + 1 )) ;;
+        esac
+        object="$(printf '{"id":%s,"state":%s,"author":%s,"ours":%s,"labels":%s,"assignees":%s,"title":%s,"updated":%s,"age":%s,"last":%s}' \
+            "$(radstate_json_string "$id")" "$(radstate_json_string "$state")" \
+            "$(radstate_json_string "$author")" "$(radstate_json_bool "$([[ "$own" == ours ]] && printf yes || printf no)")" \
+            "$(radstate_json_list "$labels")" "$(radstate_json_list "$assignees")" \
+            "$(radstate_json_string "$title")" "$(radstate_json_number "$updated")" \
+            "$(radstate_json_string "$(radstate_age "$RADSTATE_NOW" "$updated")")" \
+            "$(radstate_json_string "$kind")")"
+        joined+="${joined:+,}${object}"
+    done
+    printf '{"count":%d,"ours":%d,"others":%d,"open":%d,"closed":%d,"solved":%d,"items":[%s]}' \
+        "$total" "$ours" "$others" "$open" "$closed" "$solved" "$joined"
+}
+
+## - the local branches as one JSON object
+function radstate_json_branches
+{
+    local entry="" name="" commit="" ahead="" patch=""
+    local joined="" object=""
+    local total=0 without=0
+
+    for entry in ${RADSTATE_BRANCHES[@]+"${RADSTATE_BRANCHES[@]}"}; do
+        IFS="$RADSTATE_US" read -r name commit ahead patch <<<"$entry"
+        total=$(( total + 1 ))
+        [[ "$patch" == "-" ]] && without=$(( without + 1 ))
+        if [[ "$patch" == "-" ]]; then
+            patch="null"
+        else
+            patch="$(radstate_json_string "$patch")"
+        fi
+        object="$(printf '{"name":%s,"commit":%s,"ahead":%s,"patch":%s}' \
+            "$(radstate_json_string "$name")" "$(radstate_json_string "$commit")" \
+            "$(radstate_json_number "$ahead")" "$patch")"
+        joined+="${joined:+,}${object}"
+    done
+    printf '{"count":%d,"without_patch":%d,"not_in_canonical":%s,"items":[%s]}' \
+        "$total" "$without" "$(radstate_json_number "$RADSTATE_NOTCANONICAL")" "$joined"
+}
+
+## <state> <author> - the complete state as one JSON object
+function radstate_json
+{
+    printf '{"bar_radstate":1,"repo":{"rid":%s,"name":%s,"path":%s},"identity":{"alias":%s,"did":%s,"known":%s},"head":{"branch":%s,"commit":%s,"canonical":%s,"canonical_commit":%s,"ahead":%s,"behind":%s},"select":{"state":%s,"author":%s},"patches":' \
+        "$(radstate_json_string "$RADSTATE_RID")" "$(radstate_json_string "$RADSTATE_NAME")" \
+        "$(radstate_json_string "$RADSTATE_PATH")" "$(radstate_json_string "$RADSTATE_ALIAS")" \
+        "$(radstate_json_string "$RADSTATE_DID")" "$(radstate_json_bool "$RADSTATE_KNOWN")" \
+        "$(radstate_json_string "$RADSTATE_BRANCH")" "$(radstate_json_string "$RADSTATE_COMMIT")" \
+        "$(radstate_json_string "$RADSTATE_CANONICAL")" "$(radstate_json_string "$RADSTATE_CANONICAL_COMMIT")" \
+        "$(radstate_json_number "$RADSTATE_AHEAD")" "$(radstate_json_number "$RADSTATE_BEHIND")" \
+        "$(radstate_json_string "$1")" "$(radstate_json_string "$2")"
+    radstate_json_patches "$1" "$2"
+    printf ',"issues":'
+    radstate_json_issues
+    printf ',"branches":'
+    radstate_json_branches
+    printf '}\n'
+}
+
+## - the usage of both rules, on stderr
+function radstate_usage
+{
+    printf 'usage: %s radstate [--json] [--max <n>]\n' "${BAR_CALLED_AS:-bar}" >&2
+    printf '       %s radstate_patches [--json] [--max <n>] [--state <open|draft|merged|archived|all>] [--author <ours|other|all>]\n' \
+        "${BAR_CALLED_AS:-bar}" >&2
+}
+
+## [--json] [--max <n>] - the whole state, see the module header
+function radstate
+{
+    local json="" max="$RADSTATE_MAX" arg="" i=0
+    local -a args=( ${RULE_ARGS[@]+"${RULE_ARGS[@]}"} )
+
+    while (( i < ${#args[@]} )); do
+        arg="${args[i]}"
+        case "$arg" in
+        --json)
+            json=1
+            ;;
+        --max)
+            i=$(( i + 1 ))
+            max="${args[i]:-}"
+            ;;
+        *)
+            radstate_usage
+            return 2
+            ;;
+        esac
+        i=$(( i + 1 ))
+    done
+    [[ "$max" =~ ^[0-9]+$ ]] || {
+        radstate_usage
+        return 2
+    }
+    [[ -n "${BAR_AGENT_JSON:-}" ]] && json=1
+
+    is_command_installed "$RADSTATE_RAD" || {
+        error "'$RADSTATE_RAD' is not installed"
+        return 1
+    }
+    radstate_collect || return $?
+    RADSTATE_NOW="$(date +%s)"
+
+    if [[ -n "$json" ]]; then
+        radstate_json all all
+    else
+        radstate_text "$max"
+    fi
+}
+
+## [--json] [--max <n>] [--state <s>] [--author <a>] - the patches, see the module header
+function radstate_patches
+{
+    local json="" max="$RADSTATE_MAX" select_state="all" select_author="all" arg="" i=0
+    local -a args=( ${RULE_ARGS[@]+"${RULE_ARGS[@]}"} )
+
+    while (( i < ${#args[@]} )); do
+        arg="${args[i]}"
+        case "$arg" in
+        --json)
+            json=1
+            ;;
+        --max | --state | --author)
+            i=$(( i + 1 ))
+            case "$arg" in
+            --max) max="${args[i]:-}" ;;
+            --state) select_state="${args[i]:-}" ;;
+            --author) select_author="${args[i]:-}" ;;
+            esac
+            ;;
+        *)
+            radstate_usage
+            return 2
+            ;;
+        esac
+        i=$(( i + 1 ))
+    done
+    case "$select_state" in
+    all | open | draft | merged | archived) ;;
+    *)
+        radstate_usage
+        return 2
+        ;;
+    esac
+    case "$select_author" in
+    all | ours | other) ;;
+    *)
+        radstate_usage
+        return 2
+        ;;
+    esac
+    [[ "$max" =~ ^[0-9]+$ ]] || {
+        radstate_usage
+        return 2
+    }
+    [[ -n "${BAR_AGENT_JSON:-}" ]] && json=1
+
+    is_command_installed "$RADSTATE_RAD" || {
+        error "'$RADSTATE_RAD' is not installed"
+        return 1
+    }
+    radstate_collect || return $?
+    RADSTATE_NOW="$(date +%s)"
+
+    if [[ -n "$json" ]]; then
+        radstate_json "$select_state" "$select_author"
+    else
+        local file=""
+        radstate_text_head
+        radstate_text_patches "$max" "$select_state" "$select_author"
+        if (( max != 0 && RADSTATE_CUT != 0 )); then
+            file="$(radstate_complete_file)"
+            if { radstate_text_head; radstate_text_patches 0 "$select_state" "$select_author"; } >"$file" 2>/dev/null; then
+                radstate_complete_note "$file"
+            else
+                warn "could not write the complete text to $file"
+            fi
+        fi
+    fi
+}
+
+## The radicle state of this checkout: repository, identity, patches, issues and the branches
+## which still carry local work.
+# helper: radstate | the radicle state of this checkout in one invocation | radstate [--json] [--max <n>] | one '<section>  <counts>' line and the items per section; '--json' the same as one object
+rule radstate: -
+
+## The patches of this checkout, by state and by author.
+# helper: radstate_patches | the patches filtered by state and author | radstate_patches [--json] [--max <n>] [--state <one of open, draft, merged, archived, all>] [--author <one of ours, other, all>] | the patch section of 'radstate', filtered; '--json' the same as one object
+rule radstate_patches: -

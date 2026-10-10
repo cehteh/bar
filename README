@@ -1043,6 +1043,139 @@ MODULE API/RULES
       update_radicle_desktop [HEAD|TAG]
         Build radicle-desktop, [HEAD|TAG] or the latest stable
 
+  radstate - Radicle repository state: what this checkout is, what it carries and what is still local.
+    
+    One invocation answers the questions an agent asks before it touches a radicle repository:
+    which repository is this (RID, name, path), which identity does 'rad' use here, how the
+    patches stand (how many, by state, ours against others), how the issues stand (state, labels,
+    when something happened last) and which local branches still carry commits no patch exposes.
+    
+      bar radstate [--json] [--max <n>]                     the whole state, one screen
+      bar radstate_patches [--state <s>] [--author <a>] [--json] [--max <n>]
+                                                            only the patches, filtered
+    
+    Nothing here goes to the network: 'rad patch/issue list' answer from the local node storage
+    and the divergence is measured against 'rad/main' as the last 'git fetch rad' left it, which
+    the 'head' line names.  Syncing is the caller's business ('rad sync', 'git fetch rad'): this
+    helper reports what is there and says how old it is.
+    
+    SOURCES
+    
+      rad inspect --rid         the repository identity, 'git rev-parse' the toplevel
+      rad self                  alias and DID of the identity 'rad' uses here
+      rad patch list --all      patch id, title, author and head (the state is not in the list)
+      rad issue list --all      issue id, title, author, labels and assignees
+      rad patch/issue list --authored/--draft/--merged/--archived/--closed/--solved
+                                rad prints one state per call, so the states are subtracted as
+                                sets: 'open' is what is in '--all' and in none of the others, and
+                                'ours' is what '--authored' (patches) or '(you)' (issues) says
+      the node storage          time and kind of the last event of every patch and issue, read
+                                from 'refs/namespaces/*/refs/cobs/xyz.radicle.<type>' below
+                                '$(rad path)/storage/<RID>' with 'git for-each-ref'
+      git for-each-ref/rev-list the current branch, the local branches and their distance from
+                                'refs/remotes/rad/main' or 'refs/remotes/rad/master'
+    
+    OUTPUT
+    
+      Text: one header line per section -- '<section>  <counts>' -- then one line per item, the
+      free text last so that nothing has to be padded.  Ages are short ('6m', '2h', '1y') and are
+      those of the last event.  '--json': one object with 'bar_radstate': 1, the complete data,
+      never elided.
+      At most '--max' items per section (default 10, '--max 0' lists all).  A section which is
+      cut states exactly how much ('n of N elided'), and when anything was cut the complete text
+      is written to a file whose path the last line prints, so the elision loses nothing.
+    
+      'ours' is what 'rad' itself calls ours, everything else is 'other' (whose author is then
+      named behind the title); a patch which rad lists in more than one state is named by the
+      first of 'draft', 'merged', 'archived'.
+    
+    EXIT CODES
+    
+      0  answered (an empty repository -- no patch, no issue -- is an answer, not a failure)
+      2  usage error
+      3  no data: not a git repository, or no radicle repository here
+      1  could not answer: 'rad' is missing or failed, or its output was not understood
+    
+    'RADSTATE_RAD' names the command to run instead of 'rad' (the tests point it at a fake),
+    'RADSTATE_MAX' is the default of '--max'.  Reading rad's tables back needs a character aware
+    shell; bar exports a UTF-8 'LC_ALL' whenever the system has one.
+    
+    The rules below are about 'rad', the radicle frontend and the repository it is used in.
+    Building a radicle installation itself is Bar.d/radicle.
+
+    Variables:
+
+      RADSTATE_RAD (gx)
+        the command to use instead of 'rad'
+        Default: ${RADSTATE_RAD:-rad}
+
+      RADSTATE_MAX (gx)
+        default of '--max': items printed per section
+        Default: ${RADSTATE_MAX:-10}
+
+      RADSTATE_PATCHES (ga)
+        one record per patch, see 'radstate_collect'
+        Default: ()
+
+      RADSTATE_ISSUES (ga)
+        one record per issue, see 'radstate_collect'
+        Default: ()
+
+      RADSTATE_BRANCHES (ga)
+        one record per local branch, see 'radstate_collect'
+        Default: ()
+
+      RADSTATE_COB_TIME (gA)
+        '<type>:<id>' -> '<updated> <created> <kind>'
+        Default: ()
+
+      RADSTATE_CUT (gi)
+        items the last text rendering elided
+        Default: 0
+
+      RADSTATE_NOW (gi)
+        the timestamp the ages are relative to
+        Default: 0
+
+    Functions:
+        'rad' pads the cells of its tables by character, so the columns can only be cut at the same
+        offsets when the shell measures the same way.  That is the case in a UTF-8 locale, which bar
+        exports whenever the system has one; in a byte locale a cell holding a non ASCII character
+        shifts everything behind it and 'radstate' says so instead of reporting it wrongly.
+        (A double width character -- CJK, emoji -- is one column to a character wise shell and two
+        to rad: such a title would shift the columns of its row too.)
+        '│ ●  a1bd13a  title  ...  │' -> 'a1bd13a  title  ...'.  The marker cell is a single token
+        ('●' or '✓', whatever rad prints there) and is dropped: the columns behind it then start at
+        the same offset in the header line and in every row, which is what 'radstate_table' cuts by.
+        A column starts where a run of two or more spaces ends and content follows (plus the first
+        one): the two spaces are the separator between two cells, the padding of a cell is never
+        part of its neighbour.  Neither a name nor a value is needed for this, the header line
+        carries the layout itself.
+        The columns are located by name in the header line (see 'radstate_columns' for where a
+        column starts), then every row is cut at the same offsets -- up to where the next column
+        begins, so that a requested cell never carries the ones behind it.  Cut and not split: a
+        cell may itself contain two spaces (a truncated author reads 'ct_vibes  (you)'), which
+        splitting on whitespace would tear apart.  Every requested name has to exist in the table,
+        otherwise this returns 1 and the caller reports that rad's output could not be understood.
+        A state filter is answered with a table of the same shape and only the ids are taken from
+        it.  An empty result is 'Nothing to show.' or nothing at all -- that is no id, not an
+        error; box drawing characters without a header to cut by are an error (return 1).
+        'Nothing to show.' and nothing at all are no rows, not an error; box drawing characters
+        without a header to cut by are.
+        Fails with 1 and a diagnostic on stderr when rad failed, with 3 when the failure was that
+        there is no radicle repository: stderr is folded into the output so both can be told apart.
+        The kind and the time of the last event of every patch and issue, into 'RADSTATE_COB_TIME'.
+        Every namespace of the node storage keeps a copy of a COB, so the newest commit over all of
+        them is the last event and its subject names its kind ('Comment', 'Merge revision', ...).
+        A storage which is not there is not an error, the times stay empty then.
+          patch  id state own author head title updated created kind
+          issue  id state own author labels assignees title updated created kind
+          branch name commit ahead patch
+        Returns 3 when there is no repository to report on (a radicle repository is a git
+        repository with a radicle identity), 1 when rad failed or its output was not understood.
+        the author of a patch of ours is us, naming it again would only repeat the identity
+        line; for the others it says who to talk to
+
   release - Rules for software releases
     
     The 'release' module implements a (opinionated) release workflow. Making releases starts
