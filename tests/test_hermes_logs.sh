@@ -259,8 +259,17 @@ if has jq; then
     check "$(printf '%s' "$OUT" | jq -r '.sources | join(",")')" "logs,workers,cron,sessions,store" \
         "AC5: the sources are named in the corpus order"
     check "$(printf '%s' "$OUT" | jq -r '.roots | length')" "1" "AC5: the object names its corpus root"
-    check "$(printf '%s' "$OUT" | jq -r '.since')" "$(date -d '-1 day' '+%Y-%m-%d %H:%M:%S')" \
-        "AC5: the resolved cutoff is part of the answer"
+    ## The helper resolves its own 'date -d "-1 day"' while it runs; comparing that against a
+    ## second 'date' call of this test is a clock race which failed whenever the two calls
+    ## straddled a second boundary (measured: '2026-10-10 01:34:16' against '...:17').  Assert
+    ## the window the cutoff must fall in instead, which is what the answer means.
+    SINCE="$(printf '%s' "$OUT" | jq -r '.since')"
+    SINCE_AGE=$(( $(date '+%s') - $(date -d "$SINCE" '+%s') ))
+    if (( SINCE_AGE >= 86400 && SINCE_AGE <= 86405 )); then
+        pass "AC5: the resolved cutoff is part of the answer (${SINCE}, ${SINCE_AGE}s back)"
+    else
+        fail "AC5: the resolved cutoff is ${SINCE}, ${SINCE_AGE}s back (want one day)"
+    fi
     ABSENT="$(printf '%s' "$OUT" | jq -r '.max')"
     if [[ -f "$ABSENT" ]]; then pass "AC5: the object carries the retrieval handle"; else fail "AC5: no file at [$ABSENT]"; fi
     run --root "$CORPUS" --grep needle --json --count
