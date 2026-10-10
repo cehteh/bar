@@ -180,17 +180,16 @@ check "$RC" "0" "AC1: an empty repertoire exits 0"
 check "$OUT" "(0 helpers)" "AC1: an empty repertoire says so"
 
 # --------------------------------------------------------------------------------------------
-# AC2  deterministic
+# AC2  deterministic, and independent of the working directory
 # --------------------------------------------------------------------------------------------
 run_bar "$PROJ" helpers
 check "$OUT" "$INDEX" "AC2: two runs print the same index (order and alignment are stable)"
 run_bar "$WORK/empty" helpers
 check "$RC" "0" "AC2: a repertoire without any helper still answers"
-
-# 'please helpers' from an arbitrary directory is covered by AC13/AC14 below.  Plain 'bar' only
-# looks for './Bar.d' in the current directory: its upward walk is broken (measured: 'barfd' is
-# built once, before 'BAR_TOPLEVEL' is advanced, so the parent levels are never really checked)
-# -- a bar limitation which this module does not depend on.
+mkdir -p "$PROJ/sub/dir"
+run_bar "$PROJ/sub/dir" helpers
+check "$RC" "0" "AC2: the index works from a subdirectory (the module directory is found upwards)"
+check "$OUT" "$INDEX" "AC2: and does not depend on the cwd"
 
 # --------------------------------------------------------------------------------------------
 # AC3  --json, from the argument and from 'bar --json'
