@@ -24,6 +24,19 @@ function has_cargo_manifest ## Checks if 'Cargo.toml' exists.
 
 memofn has_cargo_manifest
 
+function has_cargo_lock ## Checks if 'Cargo.lock' exists.
+{
+    if [[ -f "Cargo.lock" ]]; then
+        debug "has Cargo.lock file"
+        return 0
+    else
+        trace "no Cargo.lock file"
+        return 1
+    fi
+}
+
+memofn has_cargo_lock
+
 ## Check whenever we are ready to use cargo here.
 rule is_cargo_project: --conclusive !has_cargo_manifest -- '
      false
@@ -43,10 +56,9 @@ rule test_integrations: is_cargo_project? cargo_test_integrations
 
 rule test_expensive: is_cargo_project? cargo_outdated
 rule test_expensive: is_cargo_project? cargo_miri
-rule test_expensive: is_cargo_project? cargo_check_msrv
+rule test_expensive: is_cargo_project? cargo_msrv_check
 rule test_expensive: is_cargo_project? cargo_mutants
 
-rule audit: is_cargo_project? cargo_audit
 rule audit: is_cargo_project? cargo_audit
 
 rule build_libs: is_cargo_project? 'cargo_build --lib --quiet'

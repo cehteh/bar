@@ -7,6 +7,7 @@ require --opt tty_lib
 ### Library of general functions which are always present
 
 # TODO: add [-s|--state "extrastate"]
+# FIXME: all is_foo must be in foo module with require foo_lib as dependency
 
 function memo ## [-c|-d] [cmd args..].. - memoize the result/stdout/stderr of commands, will always return the same result again
 {
