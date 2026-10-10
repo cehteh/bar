@@ -936,6 +936,148 @@ MODULE API/RULES
         version is available and all modules including ones that are not present in 'Bar.d/' will
         be updated as well.  Barf will be left untouched.
 
+  kanban - Hermes Kanban board state: what the local board holds right now, bounded.
+    
+    'kanban_state' answers the board questions that otherwise cost several turns of hand written
+    sqlite -- and that 'hermes kanban' refuses to answer at all inside a worker context -- by
+    reading the board database directly: the counts by status together with how stale the oldest
+    ready card is and how many runs are live (the summary, which lists no card); the cards matching
+    a filter, one per line, with their dependencies and their live run; why a blocked card is
+    blocked; and what a card's runs did.
+    
+      kanban_state                              the bounded summary digest, no card listed
+      kanban_state --status blocked             the blocked cards, one line each, with the reason
+      kanban_state --assignee default           the cards of one agent, highest priority first
+      kanban_state --parent t_4bdcb8bb          the children of one card
+      kanban_state --runs t_4bdcb8bb            the runs of one card, newest first
+      kanban_state --json                       the same numbers as one JSON object
+    
+    A listing is bounded by '--limit' (default 50) and prints the exact elision counts plus the path
+    of a file holding every matching card whenever it elides anything; the summary always fits in
+    six lines.  Nothing but the answer goes to stdout.
+    
+    EXIT CODES: 0 answered (a filter matching no card is an answer, not a failure), 2 usage error,
+    3 the board could not be read (no database, not a Kanban database, 'sqlite3' missing), 4 the
+    card asked for ('--id', '--parent', '--runs') does not exist.
+    
+    The board is resolved the way the kernel resolves it: '--db', then '--board', else
+    '$HERMES_KANBAN_DB', '$HERMES_KANBAN_BOARD' or '<root>/kanban/current', finally the default
+    board.  '<root>' is '$HERMES_KANBAN_HOME' or '~/.hermes'; a named board lives in
+    '<root>/kanban/boards/<slug>/kanban.db'.  The first line of the summary names the board after
+    the database it read: 'default', the slug of a named board, or 'custom' for anything else.
+
+    Functions:
+
+      kanban_root - '$HERMES_KANBAN_HOME' or '~/.hermes'
+
+      kanban_db_default - the database the kernel would resolve for this caller
+
+      kanban_db_path <db option> <board option>
+        the path the explicit options resolve to
+
+      kanban_board_name <board option>
+        the board slug for the output header
+
+      kanban_sql <sql>
+        run one query, print its rows with US separated fields
+        '-readonly' keeps a board the caller may not write untouched; the second attempt covers a
+        WAL database whose shared memory sidecar the kernel has not materialised yet.  A failure of
+        both is a failure to read the board, which the caller turns into exit code 3.
+
+      kanban_quote <value>
+        a SQL single quoted literal
+
+      kanban_in_list <value..>
+        a quoted, comma joined SQL literal list
+
+      kanban_project_id <id-or-slug>
+        the project id, or the argument unchanged
+        '<root>/projects.db' maps a slug to its id; without it (or without that project) the
+        argument is taken as an id verbatim, so a board database alone is enough to filter.
+
+      kanban_json <text>
+        sets KANBAN_JSON to <text> as a JSON string literal
+        Sets a global instead of printing: a command substitution would fork a subshell for every
+        field of every record, which is what makes a listing of a hundred cards take a second
+        (measured 800 ms for 90 cards before this, 90 ms after).  Control characters -- a newline in
+        a title, a tab -- are replaced, so one record stays on one line.
+
+      kanban_json_number_or_null <number|''>
+        sets KANBAN_JSON to a JSON number, or 'null'
+
+      kanban_duration <seconds>
+        '3d4h', '5h12m', '12m30s' or '45s'
+
+      kanban_stamp <epoch>
+        a local 'YYYY-MM-DD HH:MM:SS', '-' for 0
+
+      kanban_truncate <text> <max>
+        <text>, shortened to <max> bytes with a '...' tail
+
+      kanban_card_sql <where clauses..>
+        the SELECT of one card record
+
+      kanban_card_field <record> <index, 1 based>
+        one field of a card record
+
+      kanban_card_reason <kind> <reason> <error>
+        why a blocked card is blocked
+
+      kanban_card_line <record> <reason budget, 0 = full>
+        one card as one text line
+        The record is split once, here: a 'read' per field would fork a subshell per field and cost
+        a hundred milliseconds over a listing (measured on a 90 card answer).
+
+      kanban_gather_cards <where clauses..>
+        load every matching card into KANBAN_ROWS
+
+      kanban_card_exists <task-id>
+        0 when the card is on the board
+
+      kanban_write_all <suffix> <budget>
+        write every record, print the path of the file
+        The complete, untruncated answer: the convention is that whatever the screen leaves out is
+        retrievable from a file whose path is printed next to the elision counts.  Written through a
+        temporary name so a reader never sees a half written file.
+
+      kanban_record_line <record> <budget>
+        one record through the active renderer
+
+      kanban_status_count <status>
+        the count of one status, 0 when it is not a status
+
+      kanban_list_view <json> <limit>
+        the matching cards, oldest of one priority first
+
+      kanban_list_json <printed> <limit>
+        the listing as one JSON object
+
+      kanban_runs_sql <task-id>
+        the SELECT of one run record
+
+      kanban_gather_runs <task-id>
+        load the runs of a card into KANBAN_ROWS
+
+      kanban_run_line <record> <budget>
+        one run as one text line
+
+      kanban_runs_view <task-id> <json> <limit>
+        the runs of one card, newest first
+
+      kanban_runs_json <task-id> <status> <kind> <path> <branch> <title> <printed> <limit>
+
+      kanban_help - the usage text, on stdout
+
+      kanban_usage <message>
+        the failure report, on stderr
+        RULE_ARGS are the positional parameters of this function: the rule body passes them on.
+
+    Rules:
+
+      kanban_state
+        The bounded board state digest.  See the module header for the exit codes, the board resolution
+        and the elision rules; nothing but the answer is written to stdout.
+
   lock - Library for managing lockfiles
 
     Functions:
