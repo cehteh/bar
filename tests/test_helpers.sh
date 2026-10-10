@@ -20,7 +20,7 @@
 #   AC11 'bar init_install' links a module which was added later, without a manual symlink
 #   AC12 a re-run of 'init_install' from another checkout does not repoint existing links
 #   AC13 'please helpers' works from an arbitrary directory, in a fresh installation
-#   AC14 the index stays cheap (best of 5, against a bare call)
+#   AC14 the index stays below 150 ms (best of 5)
 
 set -euo pipefail
 
@@ -447,14 +447,10 @@ for _ in 1 2 3 4 5; do
     t="$(time_run "$FAKE_HOME/.local/bin/please" rule_exists foo)"
     (( t < base )) && base="$t"
 done
-## The index walks the code lines of every helper module (one record per line, ~25 us each), so its
-## cost grows with the repertoire: a fixed millisecond bound is a constant which the next helper
-## module invalidates.  Measured against the bare call of the same run instead.
-budget=$(( base + 150 ))
-if (( best < budget )); then
-    pass "AC14: 'please helpers' takes ${best} ms (best of 5, budget a bare call + 150 = ${budget} ms; a bare bar call is ${base} ms)"
+if (( best < 150 )); then
+    pass "AC14: 'please helpers' takes ${best} ms (best of 5, budget 150 ms; a bare bar call is ${base} ms)"
 else
-    fail "AC14: 'please helpers' takes ${best} ms (over the ${budget} ms budget; a bare bar call is ${base} ms)"
+    fail "AC14: 'please helpers' takes ${best} ms (over the 150 ms budget; a bare bar call is ${base} ms)"
 fi
 
 echo
