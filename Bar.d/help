@@ -395,6 +395,14 @@ INVOCATION AND SEMANTICS
   located in different paths. This is a opinionated choice to make the module system
   self-contained and not depend on secondary locations.
 
+  That single directory is the closest rule directory ('Bar.d', 'bar.d', '.Bar.d' or '.bar.d')
+  in the current directory or, walking upwards, in an ancestor of it.  The walk stops at the
+  filesystem boundary unless '\$BAR_CROSS_FS' is set.  When no rule directory exists, the
+  modules installed below '\$BAR_PREFIX' are used and '\$BAR_TOPLEVEL' stays the directory bar
+  was invoked from: it is the directory that holds the rule directory, and the rulefile lookup
+  and everything else bar keeps in the project (the memodb state, run logs) resolves below it
+  -- never below an ancestor or the filesystem root.
+
   Then the given rule (or MAIN) with the supplied arguments becomes evaluated. Finally, if
   a 'CLEANUP' rule exists, it is evaluated.
 
