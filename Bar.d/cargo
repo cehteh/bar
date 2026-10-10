@@ -216,15 +216,15 @@ function cargo_miri ## [miriargs..] - Run tests under miri (memory sanitizer)
 ## Requires the '+nightly' toolchain.
 rule cargo_miri: cargo_has_unsafe_code? 'cargo_toolchain +nightly' -
 
-function cargo_check_msrv
+function cargo_msrv_check
 {
     run_test --timeout 300 cargo msrv --bisect --ignore-lockfile verify
 }
 
 ## Checks whenever the 'rust_version' in the manifest is sufficient.
 ## This check only happens when 'cargo-msrv' is installed, otherwise a warning is printed.
-rule cargo_check_msrv: --conclusive 'is_cargo_tool_installed? msrv' -
-rule cargo_check_msrv: --conclusive '!is_cargo_tool_installed msrv' -- warn "cargo msrv is not installed"
+rule cargo_msrv_check: --conclusive 'is_cargo_tool_installed? msrv' -
+rule cargo_msrv_check: --conclusive '!is_cargo_tool_installed msrv' -- warn "cargo msrv is not installed"
 
 function cargo_mutants
 {
@@ -253,9 +253,9 @@ function cargo_audit
 
 ## Run 'cargo audit' when it is available.
 ## When 'cargo-audit' is not installed a warning is printed.
-rule cargo_audit: --conclusive 'is_cargo_tool_installed? audit' 'test -f Cargo.lock' -
+rule cargo_audit: --conclusive has_cargo_lock? 'is_cargo_tool_installed? audit' -
 rule cargo_audit: --conclusive '!is_cargo_tool_installed audit' -- warn "cargo audit is not installed"
-rule cargo_audit: --conclusive '!test -f Cargo.lock' -- warn "No 'Cargo.lock' file"
+rule cargo_audit: --conclusive !has_cargo_lock -- warn "No 'Cargo.lock' file"
 
 function cargo_semver_checks
 {
@@ -263,8 +263,9 @@ function cargo_semver_checks
 }
 
 ## Run cargo semver-checks to test if a semver for a release is sufficient
-rule cargo_semver_checks: --conclusive 'is_cargo_tool_installed? semver-checks' -
+rule cargo_semver_checks: --conclusive has_cargo_lock? 'is_cargo_tool_installed? semver-checks' -
 rule cargo_semver_checks: --conclusive '!is_cargo_tool_installed semver-checks' -- warn "cargo semver-checks is not installed"
+rule cargo_semver_checks: --conclusive !has_cargo_lock -- warn "No 'Cargo.lock' file"
 
 function cargo_bench ## Run 'cargo bench'
 {

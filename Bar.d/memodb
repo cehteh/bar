@@ -100,41 +100,37 @@ function memodb_cached # cmd args.. - returns the last cached log entry memo
     echo "${entry%% *}"
 }
 
-function memodb_cmdhash # cmd args.. - returns the hash of $PWD, a command and its args
+function memodb_cmdhash # dir cmd args.. - returns the hash of dir, a command and its args
 {
-    local entry="${MEMODB[${PWD}//#$*]:-}"
+    local dir="$1"
+    shift
+    local entry="${MEMODB[${dir}//#$*]:-}"
 
     if [[ -n "$entry" ]]; then
         entry="${entry#* }"
         echo "${entry%% *}"
     else
-        hash_args "$*"
+        hash_args "$dir" "$*"
     fi
 }
 
 function memodb_replay_stdio # <cmdhash> - replays the stdout and stderr of a command
 {
     trace "$*"
-    cat "$MEMODB_DIR/$1.stdout"
-    cat "$MEMODB_DIR/$1.stderr" 1>&2
+#    cat "$MEMODB_DIR/$1.stdout"
+#    cat "$MEMODB_DIR/$1.stderr" 1>&2
 }
 
-function memodb_log # state hash [pwd] cmd args.. - logs the state of a command
+function memodb_log # state hash dir cmd args.. - logs the state of a command
 {
     local state="$1"
     local hash="$2"
-    shift 2
-    
-    # If third argument looks like a path (starts with /), use it as pwd
-    local log_pwd="$PWD"
-    if [[ "$1" =~ ^/ ]]; then
-        log_pwd="$1"
-        shift
-    fi
+    local dir="$3"
+    shift 3
 
-    trace "$state $* >> $MEMODB_LOG"
-    echo "$state $hash $log_pwd//#$*" >>"$MEMODB_LOG"
-    MEMODB[$log_pwd//#$*]="$state $hash"
+    trace "$state $dir $* >> $MEMODB_LOG"
+    echo "$state $hash $dir//#$*" >>"$MEMODB_LOG"
+    MEMODB[$dir//#$*]="$state $hash"
 }
 
 # PLANNED: function memodb_eval # [--tag <tag>]
@@ -145,7 +141,7 @@ function memodb_eval ## <cmd> [args..] - Execute a command in foreground and sto
     memodb_init ''
 
     # shellcheck disable=SC2155
-    local cmdhash="$(memodb_cmdhash "$*")"
+    local cmdhash="$(memodb_cmdhash "$PWD" "$*")"
 
     # shellcheck disable=SC2155
     local cached_state="$(memodb_cached "$*")"
@@ -170,9 +166,10 @@ function memodb_eval ## <cmd> [args..] - Execute a command in foreground and sto
     esac
 
     debug "eval: $*"
+    local pwd="$PWD" # eval may change the dir
     local rc=0
     rule_eval "$@"  1> >(tee "$MEMODB_DIR/$cmdhash.stdout") 2> >(tee "$MEMODB_DIR/$cmdhash.stderr" 1>&2 ) || rc=$?
-    memodb_log "$rc" "$cmdhash" "$*"
+    memodb_log "$rc" "$cmdhash" "$pwd" "$*"
     return $rc
 }
 
@@ -187,7 +184,7 @@ function memodb_schedule ## <cmd> [args..] - Schedules a command to be run in ba
     memodb_init ''
     if [[ "$MEMODB_BACKGROUNDING" = true ]]; then
         # shellcheck disable=SC2155
-        local cmdhash="$(memodb_cmdhash "$*")"
+        local cmdhash="$(memodb_cmdhash "$PWD" "$*")"
 
         # shellcheck disable=SC2155
         local cached_state="$(memodb_cached "$*")"
@@ -211,70 +208,11 @@ function memodb_schedule ## <cmd> [args..] - Schedules a command to be run in ba
             ;;
         esac
 
-        memodb_log "bg" "$cmdhash" "$@"
+        memodb_log "bg" "$cmdhash" "$PWD" "$@"
         # TODO: should become "$tag $cmdhash $PWD//#$*"
         MEMODB_SCHEDULED+=("$cmdhash $PWD//#$*")
     else
         memodb_eval "$@"
-    fi
-}
-
-function memodb_analyze # cmd args.. - analyzes tree hash mismatches
-{
-    error ""
-    error "Tree hash mismatch - memodb result not available."
-    error "Searching for: $PWD//#$*"
-    error ""
-    
-    # Show what's actually in the memodb
-    if [[ -f "$MEMODB_LOG" ]]; then
-        error "Available results in memodb:"
-        while IFS= read -r line; do
-            local state="${line%% *}"
-            local rest="${line#* }"
-            rest="${rest#* }"
-            if [[ "$state" =~ ^[0-9]+$ ]]; then
-                error "  $rest (exit: $state)"
-            fi
-        done < "$MEMODB_LOG"
-        error ""
-    fi
-    
-    error "This usually means:"
-    error "  1. The command was run in a different directory, or"
-    error "  2. Untracked files are changing the tree hash"
-    error ""
-    
-    # Show untracked non-ignored files (these affect the tree hash)
-    local untracked_files
-    untracked_files="$(git_ls_files --others || true)"
-    
-    if [[ -n "$untracked_files" ]]; then
-        error "Untracked files found (these affect the tree hash):"
-        echo "$untracked_files" | while IFS= read -r file; do
-            error "  $file"
-        done
-        error ""
-        error "Consider adding these patterns to .gitignore:"
-        # Extract unique directory patterns and file patterns
-        echo "$untracked_files" | while IFS= read -r file; do
-            # Show both the specific file and directory patterns
-            if [[ "$file" =~ / ]]; then
-                # Has a directory component
-                local dir="${file%/*}"
-                echo "$dir/"
-            fi
-            # Also show file extension patterns
-            if [[ "$file" =~ \. ]]; then
-                local ext="${file##*.}"
-                echo "*.$ext"
-            fi
-        done | sort -u | while IFS= read -r pattern; do
-            error "  $pattern"
-        done
-    else
-        error "No untracked files found."
-        error "The command may have been run from a different directory."
     fi
 }
 
@@ -286,10 +224,9 @@ function memodb_replay_bg_log
     local cmdhash
     local rest
     while read -r state cmdhash rest; do
-        trace "MEMODB merge: $state $rest >> $MEMODB_LOG"
         MEMODB[$rest]="$state $cmdhash"
-        echo "$state $cmdhash $rest" >>"$MEMODB_LOG"
-    done <"$MEMODB_DIR/.bg.log"
+        echo "$state $cmdhash $rest"
+    done <"$MEMODB_DIR/.bg.log" >>"$MEMODB_LOG"
     rm "$MEMODB_DIR/.bg.log"
 }
 
@@ -303,8 +240,9 @@ function memodb_result ## <cmd> [args..] - Retrieves the background results.
     trace "$*"
     memodb_init ''
     # shellcheck disable=SC2155
-    local cmdhash="$(memodb_cmdhash "$*")"
+    local cmdhash="$(memodb_cmdhash "$PWD" "$*")"
 
+    trace "RESULTFOR: $cmdhash: $PWD//#$*"
     memodb_replay_bg_log
 
     # shellcheck disable=SC2155
@@ -327,7 +265,6 @@ function memodb_result ## <cmd> [args..] - Retrieves the background results.
         ;;
     esac
 
-    memodb_analyze "$@"
     die "No result available for '$*'"
 }
 
@@ -353,15 +290,17 @@ function memodb_start_background_processing
             # shellcheck disable=SC2155
             local cached_state="$(memodb_cached "$cmd")"
             if [[ "$cached_state" = [[:alpha:]]* ]]; then
+                local pwd="$PWD" # eval may change the dir
                 debug "bgeval: $cmd"
+
                 # shellcheck disable=2086
                 if rule_eval $cmd 1>"$MEMODB_DIR/$cmdhash.stdout" 2>"$MEMODB_DIR/$cmdhash.stderr" ; then
                     debug "success: $cmd"
-                    memodb_log 0 "$cmdhash" "$directory" $cmd
+                    memodb_log 0 "$cmdhash" "$pwd" "$cmd"
                 else
                     local rc=$?
                     debug "fail: $cmd"
-                    memodb_log "$rc" "$cmdhash" "$directory" $cmd
+                    memodb_log "$rc" "$cmdhash" "$pwd" "$*"
                 fi
             fi
         done

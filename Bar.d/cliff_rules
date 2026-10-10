@@ -9,4 +9,4 @@
 rule build_versioned_artifacts: is_cliff_installed? cliff_changelog??
 
 ## Create a cliff changelog for releases when there is a 'cliff.toml' at the project root.
-rule release_changelog: is_cliff_installed 'test -f cliff.toml' cliff_release_changelog
+rule release_changelog: is_cliff_installed 'test? -f cliff.toml' cliff_release_changelog
