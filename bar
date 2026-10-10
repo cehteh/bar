@@ -150,8 +150,17 @@ or
     fi
 }
 
+# When no rule directory is found the modules installed below BAR_PREFIX are used, but BAR_TOPLEVEL
+# still stays the directory bar was invoked from: it must never end up as some ancestor or '/', which
+# would resolve the rulefile (and everything else bar keeps in the project) outside of it.
 function find_toplevel
 {
+    # The rule directory is 'Bar.d', 'bar.d', '.Bar.d' or '.bar.d' in the directory bar was invoked
+    # from or in the closest ancestor that has one.  The walk upwards stops at the filesystem
+    # boundary unless BAR_CROSS_FS is set.  On success BAR_TOPLEVEL is the directory that contains
+    # the rule directory and is made readonly; everything that is project relative is resolved
+    # below it.  'please' is the exception: its modules live in a single, absolute directory
+    # (~/.config/please), no ancestor is searched.
     # shellcheck disable=2155
     local origin="$(command -v bar)"
     declare -gxr BAR_PREFIX="${origin%/bin/*}"
@@ -159,31 +168,42 @@ function find_toplevel
     # shellcheck disable=2155
     local initial_fs_id="$(stat -f -c %i "$BAR_TOPLEVEL")"
 
-    local barfd=("$BAR_TOPLEVEL/Bar.d" "$BAR_TOPLEVEL/bar.d/" "$BAR_TOPLEVEL/.Bar.d/" "$BAR_TOPLEVEL/.bar.d/")
+    local -a barfd=("Bar.d" "bar.d" ".Bar.d" ".bar.d")
+    local -i walk=1
     if [[ "$BAR_CALLED_AS" = please ]]; then
         barfd=("$HOME/.config/please")
+        walk=0
     fi
 
-    for BAR_DIR in "${barfd[@]}"; do
-        if [[ -d "$BAR_DIR" ]]; then
-            readonly BAR_TOPLEVEL
-            return 0
-        fi
-        if [[ "$BAR_TOPLEVEL" = "/" ]]; then
+    local cursor="$BAR_TOPLEVEL" name candidate
+    while :; do
+        for name in "${barfd[@]}"; do
+            if [[ "$name" = /* ]]; then
+                candidate="$name"
+            else
+                candidate="$cursor/$name"
+            fi
+            if [[ -d "$candidate" ]]; then
+                BAR_DIR="$candidate"
+                BAR_TOPLEVEL="$cursor"
+                readonly BAR_TOPLEVEL
+                return 0
+            fi
+        done
+        (( walk )) || break
+        if [[ "$cursor" = "/" ]]; then
             break
         fi
-        BAR_TOPLEVEL="$(readlink -f "$BAR_TOPLEVEL/..")"
-        if [[ ! -v BAR_CROSS_FS && "$(stat -f -c %i "$BAR_TOPLEVEL")" != "$initial_fs_id" ]]; then
+        cursor="$(readlink -f "$cursor/..")"
+        if [[ ! -v BAR_CROSS_FS && "$(stat -f -c %i "$cursor")" != "$initial_fs_id" ]]; then
             break
         fi
     done
 
     warn "No Bar.d directory found, trying original/installed"
 
-    if [[ ! -d "$BAR_DIR" ]]; then
-        BAR_DIR="$BAR_PREFIX/share/bar/Bar.d"
-        [[ -d "$BAR_DIR" ]] || die "Bar directory '$BAR_DIR' does not exist"
-    fi
+    BAR_DIR="$BAR_PREFIX/share/bar/Bar.d"
+    [[ -d "$BAR_DIR" ]] || die "Bar directory '$BAR_DIR' does not exist"
 }
 
 function require ## [--opt] [modules..] - Loads modules.
