@@ -31,6 +31,7 @@
 #   AC19 the linter bar runs does not force colour into a captured log (F13)
 #   AC20 several targets in one run: one block each, rc of the first failure
 #   AC21 bar's own records are never evidence, and a short log gets no elision marker
+#   AC22 the capture does not leak the outer output format into the target
 
 set -euo pipefail
 
@@ -100,6 +101,9 @@ rule longlines: -- '
 
 # the std 'agent' target (std_rules), hooked by the project
 rule agent: pass
+
+# a target that runs bar itself -- the capture must not change how it behaves
+rule nested: -- '"$BAR_SELF" check pass'
 BARF
 
 OUT=""
@@ -468,6 +472,28 @@ if [[ "$OUT" != *"log lines not shown"* ]]; then
     pass "AC21: a short log is shown without an elision marker"
 else
     fail "AC21: an elision was announced although nothing was elided"
+fi
+
+# --------------------------------------------------------------------------------------------
+# AC22  the capture does not leak the outer output format into the target
+# --------------------------------------------------------------------------------------------
+run_bar --json check nested
+check "$RC" "0" "AC22: a target that runs bar itself still passes under --json"
+nested_log="$(sed -n 's#.*"log":"\([^"]*\)".*#\1#p' <<<"$OUT")"
+if [[ -n "$nested_log" && -f "$nested_log" ]]; then
+    pass "AC22: the JSON names the nested target's log"
+else
+    fail "AC22: no nested log in [$OUT]"
+fi
+if [[ "$(cat "$nested_log")" != *'"bar_agent"'* ]]; then
+    pass "AC22: BAR_AGENT_JSON did not leak into the target"
+else
+    fail "AC22: the target inherited the JSON output format"
+fi
+if [[ "$(cat "$nested_log")" == *"OK pass"* ]]; then
+    pass "AC22: the nested bar printed its terse text into the log"
+else
+    fail "AC22: unexpected nested log: [$(cat "$nested_log")]"
 fi
 
 echo

@@ -167,7 +167,7 @@ MODULE API/RULES
         Number of runs (log directories) to keep.
         Default: ${BAR_AGENT_KEEP:-5}
 
-      BAR_AGENT_JSON (gx)
+      BAR_AGENT_JSON (g)
         When set, print one JSON object per run.
         Default: ${BAR_AGENT_JSON:-}
 
@@ -223,7 +223,9 @@ MODULE API/RULES
         loses that order).  The subshell also contains a target whose clause body calls 'exit' --
         that would otherwise take the whole report down with it -- and hands back its real rc.
         The verbosity of the inner run is pinned so the records bar writes into the log do not
-        depend on how 'bar check' itself was called.
+        depend on how 'bar check' itself was called, and the output format of the outer invocation
+        is dropped: a target that calls bar itself (a project checking its own checks) must not
+        suddenly print JSON just because 'bar --json check <target>' was used.
 
       agent_max_block - bytes of BAR_AGENT_MAX_BYTES that may go into evidence
         The block carries a fixed part (verdict, chain, totals, log path) and the elision marker;
