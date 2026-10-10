@@ -374,6 +374,11 @@ contains "$OUT" "HELPER REPERTOIRE" "AC10: the topic is reachable by name"
 # --------------------------------------------------------------------------------------------
 # AC11/AC12/AC13/AC14 a fresh installation
 # --------------------------------------------------------------------------------------------
+# The fixture installation carries the three helpers of the fixture project ('frob', 'frob_extra'
+# and 'quux') plus every helper this repository itself ships.  That second part is counted here
+# from the module sources: a card which adds a helper module must not have to edit these numbers,
+# and hardcoding them made this test fail for every helper the repertoire gains.
+REPO_HELPERS="$(LC_ALL=C grep -h -E '^# helper: .*\|' "$REPO_ROOT"/Bar.d/* | wc -l)"
 FAKE_HOME="$WORK/home"
 SITE="$WORK/site"
 SITE2="$WORK/site2"
@@ -397,7 +402,8 @@ fi
 
 run_in "$WORK" env HOME="$FAKE_HOME" "$FAKE_HOME/.local/bin/please" helpers
 check "$RC" "0" "AC13: 'please helpers' works from an arbitrary directory"
-check "$(printf '%s\n' "$OUT" | tail -1)" "(3 helpers)" "AC13: and lists the installed repertoire"
+check "$(printf '%s\n' "$OUT" | tail -1)" "($((REPO_HELPERS + 3)) helpers)" \
+    "AC13: and lists the installed repertoire (the fixture helpers and the ones shipped here)"
 run_in "$WORK" env HOME="$FAKE_HOME" "$FAKE_HOME/.local/bin/please" frob_extra
 check "$OUT" "extra" "AC13: an installed helper runs through 'please' too"
 
@@ -415,7 +421,8 @@ else
     fail "AC11: the module added later was not linked (a manual symlink would be needed)"
 fi
 run_in "$WORK" env HOME="$FAKE_HOME" "$FAKE_HOME/.local/bin/please" helpers
-check "$(printf '%s\n' "$OUT" | tail -1)" "(4 helpers)" "AC11: and the index shows it without any other edit"
+check "$(printf '%s\n' "$OUT" | tail -1)" "($((REPO_HELPERS + 4)) helpers)" \
+    "AC11: and the index shows it without any other edit"
 run_in "$WORK" env HOME="$FAKE_HOME" "$FAKE_HOME/.local/bin/please" late
 check "$OUT" "late" "AC11: the new helper runs through 'please'"
 
@@ -426,7 +433,8 @@ mkinstall "$SITE2"
 after="$(readlink "$FAKE_HOME/.config/please/helpers_rules")"
 check "$after" "$before" "AC14: 'init_install' leaves an existing link alone"
 run_in "$WORK" env HOME="$FAKE_HOME" "$FAKE_HOME/.local/bin/please" helpers
-check "$(printf '%s\n' "$OUT" | tail -1)" "(4 helpers)" "AC14: the installation still works"
+check "$(printf '%s\n' "$OUT" | tail -1)" "($((REPO_HELPERS + 4)) helpers)" \
+    "AC14: the installation still works"
 
 # AC14  the index stays cheap
 time_run() { # <cmd..>

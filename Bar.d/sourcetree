@@ -1,0 +1,664 @@
+# -*- mode: sh; sh-shell: bash -*-
+# vim: set ft=bash:
+# shellcheck shell=bash
+# shellcheck disable=SC2016
+
+### The source trees below a source-work root: the clones, their worktrees, their state and what
+### is not merged yet.
+###
+### On this host the layout is fixed: every project is a clone below '~/hermes_src/<project>' and
+### every topic lives in a *worktree* below '<clone>/.worktrees/<topic>'.  The main checkout of a
+### clone is the local trunk and the single place where topics meet -- a topic branch is branched
+### off it and merged back into it, and the main checkout is the only coordination point.  A topic
+### branch that exists nowhere else is never reclaimed, so 'what is not merged yet' is the question
+### that has to be answered before anything is cleaned up.
+###
+### Answering it the obvious way costs a 'git worktree list', a 'git status' per tree, a merge base
+### question per tree and a shell loop to line the results up -- a dozen commands and a page of
+### output for a handful of facts.  This helper answers it in one line per tree.
+###
+###   bar sourcetree_state                 # the digest of '~/hermes_src'
+###   bar sourcetree_state <root>          # the digest of another source-work root
+###   bar sourcetree_state --json <root>   # the same digest as one JSON object, for a wrapper
+###
+### THE ROOT
+###
+### <root> defaults to '~/hermes_src', the source-work root of this host.  A root which is itself
+### a repository (a '.git' at its top, or a bare git directory) is reported as that one clone --
+### handy for a repository which is not part of a source-work root -- otherwise every direct
+### sub-directory holding a repository is one.  The walk is one level deep and never descends into
+### a clone or into object, build or vendor directories: a clone belonging to a clone is not part
+### of the layout this helper describes.
+###
+### '~/src' is *not* a source-work root, it is the read-only discovery index of everything ever
+### checked out on this host: historical variants of the same project side by side, no worktrees
+### and no current state.  A clone there is history, not the working tree a topic is built on.
+### Using it as the root is therefore named on stderr -- the answer is still printed, because
+### auditing exactly that may be the intent.
+###
+### THE TREES
+###
+### One line per tree -- the main checkout of a clone first, then the clone's own worktrees and
+### last the trees it registered elsewhere, each group by path -- followed by the total counts:
+### the order only depends on the layout, so two digests of the same layout are comparable line
+### for line and a new tree does not reshuffle the rest.
+###
+###   <path>  <kind>  <branch>@<head>  <state>  <relation>  [<flags>]
+###
+###   <path>      the tree, relative to <root> -- '.' for the root itself -- or absolute when the
+###               tree lives outside of the root
+###   <kind>      'main'  the clone's trunk, the merge base of the clone
+###               'worktree'  a worktree below '<clone>/.worktrees/'
+###               'external'  a worktree registered elsewhere; Hermes' worktree GC never
+###                           reclaims an externally registered tree
+###               'bare'  a bare repository (no working tree), 'broken'  no usable git
+###   <branch>    the checked out branch -- '(detached)' or '(unborn)' when it is not a branch --
+###               and '@<head>', the short commit of that tree ('-' while it has none)
+###   <state>     'clean'  nothing to report
+###               'dirty <changed>/<untracked>'  files git reports as modified, staged, renamed
+###                     or untracked; the two counts are kept apart because a tree full of build
+###                     output is untracked while a tree with a touched tracked file is changed
+###               '?'  git refused to answer, '-'  bare
+###   <relation>  for the main checkout: 'wtexclude <sources>' -- how '.worktrees/' is kept out
+###               of the checkout: 'local' ('.git/info/exclude', the convention), 'gitignore'
+###               (a *tracked* '.gitignore': the machinery put it there on first use, it is
+###               project pollution and the usual reason a main checkout reports as dirty) or
+###               'none'.  Sources are joined with '+' when both are present.
+###   <relation>  for a worktree: 'unmerged <n> behind <m>' -- '<n>' commits of that tree are not
+###               reachable from the main checkout (exactly what a merge would bring in, the two
+###               halves of the merge base) and '<m>' commits of the main checkout are not in that
+###               tree; 'unmerged 0 behind 0' means 'in step with the trunk'
+###   <flags>     'locked' (a stale worktree lock, with its reason), 'prunable'
+###
+### The last line is the total: '(N clones, M worktrees, U unmerged, D dirty)'.
+###
+### '--json' prints one object with those counts, the resolved 'root' and 'trees', one object per
+### tree: 'path' (as printed), 'abs', 'clone', 'clone_abs', 'kind', 'branch', 'commit', 'head',
+### 'detached', 'state', 'changed', 'untracked', 'unmerged', 'behind', 'merge_base', 'locked',
+### 'lock_reason', 'prunable', 'bare' and 'exclude' (the sources of the '.worktrees/' exclusion).
+### A number git could not answer is 'null'.  Text for reading, the object for a wrapper; both are
+### the same single pass over the same data.
+###
+### EXIT CODES
+###
+###   0  answered -- a root without any clone answers '(0 clones, 0 worktrees, 0 unmerged, 0 dirty)'
+###   2  usage error, the usage line goes to stderr and stdout stays empty
+###   3  <root> is not a directory: the question could not be asked
+###
+### COST (measured on this host, 2026-10-10)
+###
+### The digest of '~/hermes_src' -- 4 clones with 13 worktrees, 18 lines, 2.2 kB of text or 8.3 kB
+### of JSON -- takes 0.3 s (best of five; a bare 'bar rule_exists' call takes 0.09 s), the digest
+### of a throw-away root with one clone and three trees 0.15 s.  Two git calls per tree are the
+### cost ('status' and the left-right count, plus 'merge-base' when a tree is both ahead and
+### behind); the layout is read through them once, nothing is paged and no interface is entered
+### which refuses to run outside its own context.
+###
+### WHAT IT DOES NOT DO
+###
+### It reports, it never repairs: no fetch, no prune, no removal of a worktree, no edit of a
+### '.gitignore' and no judgement about whether a topic should live on.  Diffing two digests is
+### how a change (a merge, a new topic, a dirtied trunk) is seen.
+
+# helper-module: sourcetree
+
+declare -gA SOURCETREE_ROW=()  ## The row 'sourcetree_record' stores, filled by the collector.
+declare -ga SOURCETREE_ROWS=() ## The rows of the clone being collected, sorted before printing.
+
+# helper: sourcetree_state | the clones and worktrees below a source-work root, their state and what is not merged yet | sourcetree_state [--json] [<root>] | one line per tree, then the counts
+## The source-tree digest: one line per main checkout and worktree found below <root> (default
+## '~/hermes_src'), then '(N clones, M worktrees, U unmerged, D dirty)'.  See the module header
+## for the fields, the JSON shape, the exit codes and what the helper deliberately does not do.
+rule sourcetree_state: -
+
+function sourcetree_usage
+{
+    printf 'usage: bar sourcetree_state [--json] [<root>]\n' >&2
+}
+
+function sourcetree_json_string ## <var> <text> - put the JSON string literal of <text> into <var>
+{
+    ## The result is left in <var> instead of being printed: the object of one tree quotes a dozen
+    ## fields and a subshell per field would cost more than the git calls it describes.
+    local text="$2"
+    text="${text//\\/\\\\}"
+    text="${text//\"/\\\"}"
+    text="${text//$'\t'/\\t}"
+    printf -v "$1" '"%s"' "$text"
+}
+
+function sourcetree_json_number ## <var> <text> - put <text> as a JSON number into <var>, else 'null'
+{
+    if [[ "$2" =~ ^[0-9]+$ ]]; then
+        printf -v "$1" '%s' "$2"
+    else
+        printf -v "$1" 'null'
+    fi
+}
+
+function sourcetree_json_flag ## <var> <flags> <name> - put 'true' into <var> when the flag is set
+{
+    case " ${2:-} " in
+    *" $3 "*)
+        printf -v "$1" 'true'
+        ;;
+    *)
+        printf -v "$1" 'false'
+        ;;
+    esac
+}
+
+function sourcetree_json_array ## <var> <text> - put the '+' separated <text> into <var> as a JSON array
+{
+    ## The exclusion sources ('local', 'gitignore') arrive joined by '+'; 'none' is no source.
+    local -a values=()
+    if [[ -n "$2" && "$2" != "none" ]]; then
+        IFS='+' read -r -a values <<<"$2"
+    fi
+    local joined="" separator="" value quoted
+    for value in ${values[@]+"${values[@]}"}; do
+        sourcetree_json_string quoted "$value"
+        joined="${joined}${separator}${quoted}"
+        separator=","
+    done
+    printf -v "$1" '%s' "$joined"
+}
+
+function sourcetree_relative ## <var> <root> <path> - put <path> as printed, relative to <root>, into <var>
+{
+    ## A tree outside the root keeps its absolute path (it has no name below the root); the root
+    ## itself is '.', so a root which is a repository names its own main checkout.
+    if [[ "$3" == "$2" ]]; then
+        printf -v "$1" '.'
+        return 0
+    fi
+    case "$3" in
+    "$2"/*)
+        printf -v "$1" '%s' "${3#"$2"/}"
+        ;;
+    *)
+        printf -v "$1" '%s' "$3"
+        ;;
+    esac
+}
+
+function sourcetree_pitfall ## <root> - name the '~/src' confusion on stderr
+{
+    ## '~/src' holds every repository ever checked out on this host, variants side by side, and
+    ## is read-only by convention.  Inventorying it as if it were the working tree is the mistake
+    ## this helper exists to prevent, so the root is named when it happens.
+    local src
+    src="$(readlink -f -- "$HOME/src" 2>/dev/null)" || src="$HOME/src"
+    if [[ "$1" == "$src" ]]; then
+        warn "'$1' is the read-only ~/src discovery index; the source-work root is ~/hermes_src"
+    fi
+    return 0
+}
+
+function sourcetree_is_repo ## <dir> - it is a git repository: a '.git' entry or a bare git directory
+{
+    ## A bare repository has no '.git' of its own; HEAD, objects/ and refs/ are what makes a
+    ## directory a git directory.  Its files are checked first only when the cheap test fails.
+    if [[ -e "$1/.git" ]]; then
+        return 0
+    fi
+    if [[ -f "$1/HEAD" && -d "$1/objects" && -d "$1/refs" ]]; then
+        return 0
+    fi
+    return 1
+}
+
+function sourcetree_clones ## <root> - the clone directories below <root>, sorted
+{
+    ## A root which is itself a repository is the single clone; otherwise every direct
+    ## sub-directory of one is a clone.  A project directory without a repository, a build or
+    ## vendor directory and a file in between are passed over.
+    local root="$1" entry
+    if sourcetree_is_repo "$root"; then
+        printf '%s\n' "$root"
+        return 0
+    fi
+    for entry in "$root"/*; do
+        [[ -n "$entry" && -d "$entry" ]] || continue
+        sourcetree_is_repo "$entry" || continue
+        printf '%s\n' "$entry"
+    done | LC_ALL=C sort
+    return 0
+}
+
+function sourcetree_exclude ## <clone> - the sources keeping '.worktrees/' out: none|local|gitignore|local+gitignore
+{
+    ## The convention is a line in '.git/info/exclude': the tree is the user's business and must
+    ## never be committed.  A '.gitignore' carrying '.worktrees/' is the tracked variant the
+    ## machinery writes on first use -- reported, never repaired.
+    local clone="$1" file
+    local -a sources=()
+    file="$clone/.git/info/exclude"
+    if [[ ! -f "$file" ]]; then
+        file="$(git -C "$clone" rev-parse --git-path info/exclude 2>/dev/null)" || file=
+        if [[ -n "$file" && "$file" != /* ]]; then
+            file="$clone/$file"
+        fi
+    fi
+    if [[ -n "$file" && -f "$file" ]] &&
+        LC_ALL=C grep -qE '^[[:space:]]*/?[^[:space:]]*\.worktrees/?$' "$file"; then
+        sources+=(local)
+    fi
+    if [[ -f "$clone/.gitignore" ]] &&
+        LC_ALL=C grep -qE '^[[:space:]]*/?[^[:space:]]*\.worktrees/?$' "$clone/.gitignore"; then
+        sources+=(gitignore)
+    fi
+    if (( ${#sources[@]} == 0 )); then
+        printf 'none'
+    else
+        (IFS='+'; printf '%s' "${sources[*]}")
+    fi
+}
+
+function sourcetree_worktrees ## - 'git worktree list --porcelain' on stdin, one record per tree
+{
+    ## One pass over the porcelain listing: '<path> <HEAD> <branch> <flags> <lock reason>' per
+    ## tree, fields separated by US (0x1f).  A path is printed as git reports it (absolute) and
+    ## the branch without its 'refs/heads/' prefix; the flags are 'locked', 'prunable' and 'bare'
+    ## in that order.  'detached' is not a flag: a tree without a branch carries an empty branch
+    ## field.  US and not a tab, because a tab is IFS whitespace and 'read' would collapse the
+    ## empty fields this carries (see 'sourcetree_record').
+    LC_ALL=C awk '
+        function flag(text)
+        {
+            if (flags == "")
+                flags = text
+            else
+                flags = flags " " text
+        }
+        function flush()
+        {
+            if (path == "")
+                return
+            printf "%s\037%s\037%s\037%s\037%s\n", path, commit, branch, flags, reason
+            path = ""; commit = ""; branch = ""; flags = ""; reason = ""
+        }
+        /^worktree / { flush(); path = substr($0, 10); next }
+        /^HEAD /     { commit = substr($0, 6); next }
+        /^branch /   { branch = substr($0, 8); sub(/^refs\/heads\//, "", branch); next }
+        /^detached$/ { next }
+        /^locked$/   { flag("locked"); next }
+        /^locked /   { flag("locked"); reason = substr($0, 8); next }
+        /^prunable/  { flag("prunable"); next }
+        /^bare$/     { flag("bare"); next }
+        END          { flush() }
+    '
+    return 0
+}
+
+function sourcetree_changes ## <tree> - '<changed> <untracked>' or '? ?' when git refuses
+{
+    ## Counted from 'git status --porcelain': git quotes a path with an unusual name, so one
+    ## reported entry is one line.  Untracked entries are counted apart because a tree full of
+    ## build output reads as dirty while no tracked file was touched.
+    local tree="$1" status
+    if ! status="$(git -C "$tree" status --porcelain --untracked-files=normal 2>/dev/null)"; then
+        printf '? ?'
+        return 0
+    fi
+    printf '%s\n' "$status" | LC_ALL=C awk '
+        /^\?\? / { untracked++; next }
+        /^.. /   { changed++ }
+        END      { printf "%d %d", changed, untracked }'
+    return 0
+}
+
+function sourcetree_relation ## <clone> <main> <commit> - '<unmerged> <behind> <merge base>'
+{
+    ## 'unmerged' counts the commits of this tree which are not reachable from the main checkout:
+    ## the work a merge would bring in.  'behind' counts the commits of the main checkout which
+    ## are not in this tree: how far the trunk moved on.  Both are the two halves of the merge
+    ## base ('<main>...<commit>'), which is resolved only when neither half is empty.
+    local clone="$1" main="$2" commit="$3"
+    local counts behind unmerged base
+    if [[ -z "$commit" || -z "$main" || "$commit" == "$main" ]]; then
+        printf '0 0 %s' "$commit"
+        return 0
+    fi
+    if ! counts="$(git -C "$clone" rev-list --left-right --count "$main...$commit" 2>/dev/null)"; then
+        printf '? ? ?'
+        return 0
+    fi
+    read -r behind unmerged <<<"$counts"
+    if (( unmerged == 0 )); then
+        base="$main"
+    elif (( behind == 0 )); then
+        base="$commit"
+    else
+        base="$(git -C "$clone" merge-base "$main" "$commit" 2>/dev/null)" || base="?"
+    fi
+    printf '%s %s %s' "$unmerged" "$behind" "$base"
+    return 0
+}
+
+function sourcetree_record ## - append the row in SOURCETREE_ROW to SOURCETREE_ROWS
+{
+    ## The single record format both renderers read, fields separated by US (0x1f):
+    ##
+    ##   1 abs        2 kind       3 state      4 relation   5 flags      6 branch     7 commit
+    ##   8 changed    9 untracked 10 unmerged  11 behind    12 merge base 13 exclude  14 clone
+    ##  15 lock reason
+    ##
+    ## US and not a tab: a tab is IFS whitespace, so 'read' would collapse an empty 'flags' or
+    ## 'branch' field and shift every field after it.
+    ##
+    ## The stored row carries the sort key '<rank>:<path>' in front: 'sourcetree_clone_records'
+    ## sorts by it, so the main checkout comes first, then the clone's own worktrees and last the
+    ## trees registered elsewhere -- all by path, which keeps two digests of the same layout line
+    ## for line comparable.
+    local fields
+    printf -v fields '%s\037%s\037%s\037%s\037%s\037%s\037%s\037%s\037%s\037%s\037%s\037%s\037%s\037%s\037%s' \
+        "${SOURCETREE_ROW[abs]:-}" "${SOURCETREE_ROW[kind]:-}" "${SOURCETREE_ROW[state]:-}" \
+        "${SOURCETREE_ROW[relation]:-}" "${SOURCETREE_ROW[flags]:-}" "${SOURCETREE_ROW[branch]:-}" \
+        "${SOURCETREE_ROW[commit]:-}" "${SOURCETREE_ROW[changed]:-}" "${SOURCETREE_ROW[untracked]:-}" \
+        "${SOURCETREE_ROW[unmerged]:-}" "${SOURCETREE_ROW[behind]:-}" "${SOURCETREE_ROW[merge_base]:-}" \
+        "${SOURCETREE_ROW[exclude]:-}" "${SOURCETREE_ROW[clone]:-}" "${SOURCETREE_ROW[reason]:-}"
+    SOURCETREE_ROWS+=( "${SOURCETREE_ROW[rank]:-}${SOURCETREE_ROW[abs]:-}"$'\x1f'"$fields" )
+}
+
+function sourcetree_clone_records ## <root> <clone> - the records of one clone, its main checkout first
+{
+    local root="$1" clone="$2"
+    local exclude porcelain main_commit
+    exclude="$(sourcetree_exclude "$clone")"
+    SOURCETREE_ROWS=()
+
+    if ! porcelain="$(git -C "$clone" worktree list --porcelain 2>/dev/null)"; then
+        warn "'$clone' has no usable git repository, it is reported as 'broken'"
+        SOURCETREE_ROW=( [abs]="$clone" [kind]="broken" [state]="-" [relation]="-" [flags]="" \
+            [branch]="" [commit]="" [changed]="" [untracked]="" [unmerged]="" [behind]="" \
+            [merge_base]="" [exclude]="$exclude" [clone]="$clone" [reason]="" [rank]="2:" )
+        sourcetree_record
+        sourcetree_rows_print
+        return 0
+    fi
+
+    main_commit="$(git -C "$clone" rev-parse HEAD 2>/dev/null)" || main_commit=""
+    if [[ "$main_commit" =~ ^0+$ ]]; then
+        main_commit=""
+    fi
+
+    local path commit branch flags reason abs kind state relation rank
+    local changes changed untracked unmerged behind merge_base
+    while IFS=$'\x1f' read -r path commit branch flags reason; do
+        [[ -n "$path" ]] || continue
+        abs="$(readlink -f -- "$path" 2>/dev/null)" || abs="$path"
+        if [[ "$commit" =~ ^0+$ ]]; then
+            commit=""
+        fi
+        if [[ " $flags " == *" bare "* ]]; then
+            kind="bare"
+            rank="2:"
+        elif [[ "$abs" == "$clone" ]]; then
+            kind="main"
+            rank="0:"
+        elif [[ "$abs" != "$clone/.worktrees/"* ]]; then
+            kind="external"
+            rank="2:"
+        else
+            kind="worktree"
+            rank="1:"
+        fi
+
+        state="-"
+        relation="-"
+        changed=""
+        untracked=""
+        unmerged=""
+        behind=""
+        merge_base=""
+        if [[ "$kind" != "bare" ]]; then
+            changes="$(sourcetree_changes "$abs")"
+            if [[ "$changes" == "? ?" ]]; then
+                state="?"
+            else
+                read -r changed untracked <<<"$changes"
+                if (( changed == 0 && untracked == 0 )); then
+                    state="clean"
+                else
+                    state="dirty ${changed}/${untracked}"
+                fi
+            fi
+            if [[ "$kind" == "main" ]]; then
+                relation="wtexclude $exclude"
+                unmerged=0
+                behind=0
+                merge_base="$commit"
+            else
+                read -r unmerged behind merge_base <<<"$(sourcetree_relation "$clone" "$main_commit" "$commit")"
+                if [[ "$unmerged" == "?" ]]; then
+                    relation="?"
+                    unmerged=""
+                    behind=""
+                    merge_base=""
+                else
+                    relation="unmerged ${unmerged} behind ${behind}"
+                fi
+            fi
+        fi
+
+        SOURCETREE_ROW=( [abs]="$abs" [kind]="$kind" [state]="$state" [relation]="$relation" \
+            [flags]="$flags" [branch]="$branch" [commit]="$commit" [changed]="$changed" \
+            [untracked]="$untracked" [unmerged]="$unmerged" [behind]="$behind" \
+            [merge_base]="$merge_base" [exclude]="$exclude" [clone]="$clone" [reason]="$reason" \
+            [rank]="$rank" )
+        sourcetree_record
+    done < <(sourcetree_worktrees <<<"$porcelain")
+    sourcetree_rows_print
+    return 0
+}
+
+function sourcetree_rows_print ## - print SOURCETREE_ROWS in the order of their sort key
+{
+    ## The rows of one clone, sorted by '<rank>:<path>' with US as the field separator: the main
+    ## checkout first, then the clone's own worktrees, then the trees registered elsewhere (rank
+    ## 2), each group by path.  Nothing is sorted across clones: a clone's trees stay together.
+    if (( ${#SOURCETREE_ROWS[@]} == 0 )); then
+        return 0
+    fi
+    printf '%s\n' "${SOURCETREE_ROWS[@]}" |
+        LC_ALL=C sort -t$'\x1f' -k1,1 |
+        LC_ALL=C cut -d$'\x1f' -f2-
+    return 0
+}
+
+function sourcetree_collect ## <root> - one record per tree of every clone below <root>
+{
+    local root="$1" clone
+    while IFS= read -r clone; do
+        [[ -n "$clone" ]] || continue
+        sourcetree_clone_records "$root" "$clone"
+    done < <(sourcetree_clones "$root")
+    return 0
+}
+
+function sourcetree_counts ## <records> - '<clones> <worktrees> <unmerged> <dirty>'
+{
+    ## 'dirty' counts trees with local changes, not the changes themselves; 'unmerged' sums the
+    ## commits no main checkout has yet.
+    printf '%s\n' "$1" | LC_ALL=C awk -F'\037' '
+        NF == 0 { next }
+        {
+            if (!($14 in seen)) { seen[$14] = 1; clones++ }
+            if ($2 == "worktree" || $2 == "external") worktrees++
+            if ($10 ~ /^[0-9]+$/) unmerged += $10
+            if (($8 ~ /^[0-9]+$/ && $8 + 0 > 0) || ($9 ~ /^[0-9]+$/ && $9 + 0 > 0)) dirty++
+        }
+        END { printf "%d %d %d %d", clones, worktrees, unmerged, dirty }'
+    return 0
+}
+
+function sourcetree_state_text ## <root> <records> <counts> - the aligned digest
+{
+    printf '%s\n' "$2" | LC_ALL=C awk -F'\037' -v root="$1" -v counts="$3" '
+        function relative(path)
+        {
+            if (path == root)
+                return "."
+            if (index(path, root "/") == 1)
+                return substr(path, length(root) + 2)
+            return path
+        }
+        function tree_field(kind, branch, head)
+        {
+            if (kind == "bare" || kind == "broken")
+                return "-"
+            if (branch == "")
+                branch = (head == "") ? "(unborn)" : "(detached)"
+            if (head == "")
+                head = "-"
+            return branch "@" head
+        }
+        function flags_field(flags, reason)
+        {
+            gsub(/bare/, "", flags)
+            gsub(/ +/, " ", flags)
+            sub(/^ /, "", flags)
+            sub(/ $/, "", flags)
+            if (reason != "" && index(flags, "locked") > 0)
+                sub(/locked/, "locked(" reason ")", flags)
+            return flags
+        }
+        function counts_line()
+        {
+            split(counts, c, " ")
+            return sprintf("(%d clone%s, %d worktree%s, %d unmerged, %d dirty)",
+                c[1], (c[1] == 1 ? "" : "s"), c[2], (c[2] == 1 ? "" : "s"), c[3], c[4])
+        }
+        NF == 0 { next }
+        {
+            n++
+            path[n] = relative($1)
+            kind[n] = $2
+            state[n] = $3
+            relation[n] = $4
+            tree[n] = tree_field(kind[n], $6, substr($7, 1, 7))
+            flags[n] = flags_field($5, $15)
+            if (length(path[n]) > wpath) wpath = length(path[n])
+            if (length(kind[n]) > wkind) wkind = length(kind[n])
+            if (length(tree[n]) > wtree) wtree = length(tree[n])
+            if (length(state[n]) > wstate) wstate = length(state[n])
+        }
+        END {
+            for (i = 1; i <= n; i++) {
+                line = sprintf("%-*s  %-*s  %-*s  %-*s  %s", wpath, path[i], wkind, kind[i],
+                    wtree, tree[i], wstate, state[i], relation[i])
+                if (flags[i] != "")
+                    line = line "  " flags[i]
+                print line
+            }
+            print counts_line()
+        }'
+    return 0
+}
+
+function sourcetree_state_json ## <root> <records> <counts> - the digest as one JSON object
+{
+    ## One object per tree.  Every field goes through the helpers above which leave their result
+    ## in a variable instead of printing it: the object of one tree quotes a dozen of them and a
+    ## subshell per field would dominate the runtime of the machine form.
+    local root="$1" quoted
+    local clones worktrees unmerged dirty
+    read -r clones worktrees unmerged dirty <<<"$3"
+
+    local -a objects=()
+    local object joined="" separator=""
+    local abs kind state relation flags branch commit changed untracked um behind merge_base exclude clone reason
+    local qpath qabs qclone qclone_abs qkind qbranch qcommit qhead qstate qbase qreason qexclude
+    local jchanged juntracked junmerged jbehind jdetached jlocked jprunable jbare
+    while IFS=$'\x1f' read -r abs kind state relation flags branch commit changed untracked um behind merge_base exclude clone reason; do
+        [[ -n "$abs" ]] || continue
+        jdetached=false
+        if [[ -z "$branch" && "$kind" != "bare" && "$kind" != "broken" ]]; then
+            jdetached=true
+        fi
+        sourcetree_relative qpath "$root" "$abs"
+        sourcetree_json_string qpath "$qpath"
+        sourcetree_relative qclone "$root" "$clone"
+        sourcetree_json_string qclone "$qclone"
+        sourcetree_json_string qabs "$abs"
+        sourcetree_json_string qclone_abs "$clone"
+        sourcetree_json_string qkind "$kind"
+        sourcetree_json_string qbranch "$branch"
+        sourcetree_json_string qcommit "$commit"
+        sourcetree_json_string qhead "${commit:0:7}"
+        sourcetree_json_string qstate "$state"
+        sourcetree_json_string qbase "$merge_base"
+        sourcetree_json_string qreason "$reason"
+        sourcetree_json_array qexclude "$exclude"
+        sourcetree_json_number jchanged "$changed"
+        sourcetree_json_number juntracked "$untracked"
+        sourcetree_json_number junmerged "$um"
+        sourcetree_json_number jbehind "$behind"
+        sourcetree_json_flag jlocked "$flags" locked
+        sourcetree_json_flag jprunable "$flags" prunable
+        sourcetree_json_flag jbare "$flags" bare
+        printf -v object '{"path":%s,"abs":%s,"clone":%s,"clone_abs":%s,"kind":%s,"branch":%s,"commit":%s,"head":%s,"detached":%s,"state":%s,"changed":%s,"untracked":%s,"unmerged":%s,"behind":%s,"merge_base":%s,"locked":%s,"lock_reason":%s,"prunable":%s,"bare":%s,"exclude":[%s]}' \
+            "$qpath" "$qabs" "$qclone" "$qclone_abs" "$qkind" "$qbranch" "$qcommit" "$qhead" \
+            "$jdetached" "$qstate" "$jchanged" "$juntracked" "$junmerged" "$jbehind" "$qbase" \
+            "$jlocked" "$qreason" "$jprunable" "$jbare" "$qexclude"
+        objects+=( "$object" )
+    done <<<"$2"
+
+    for object in ${objects[@]+"${objects[@]}"}; do
+        joined="${joined}${separator}${object}"
+        separator=","
+    done
+    sourcetree_json_string quoted "$root"
+    printf '{"bar_sourcetree":1,"root":%s,"clones":%s,"worktrees":%s,"unmerged":%s,"dirty":%s,"trees":[%s]}\n' \
+        "$quoted" "$clones" "$worktrees" "$unmerged" "$dirty" "$joined"
+    return 0
+}
+
+function sourcetree_state ## [--json] [<root>] - the source-tree digest, see the module header
+{
+    ## The body of the 'sourcetree_state' rule.  The machine form is also entered with
+    ## 'bar --json sourcetree_state' (BAR_AGENT_JSON, see Bar.d/agent_rules).  An unknown argument
+    ## is a usage error, exit 2; a root which is not a directory cannot be asked, exit 3.
+    local json="" arg
+    local -a args=()
+    for arg in ${RULE_ARGS[@]+"${RULE_ARGS[@]}"}; do
+        case "$arg" in
+        --json)
+            json=1
+            ;;
+        -*)
+            sourcetree_usage
+            return 2
+            ;;
+        *)
+            args+=( "$arg" )
+            ;;
+        esac
+    done
+    if (( ${#args[@]} > 1 )); then
+        sourcetree_usage
+        return 2
+    fi
+
+    local root="${args[0]:-$HOME/hermes_src}"
+    if [[ ! -d "$root" ]]; then
+        printf 'sourcetree_state: not a directory: %s\n' "$root" >&2
+        return 3
+    fi
+    root="$(readlink -f -- "$root")"
+    if [[ -n "${BAR_AGENT_JSON:-}" ]]; then
+        json=1
+    fi
+    sourcetree_pitfall "$root"
+
+    local records counts
+    records="$(sourcetree_collect "$root")"
+    counts="$(sourcetree_counts "$records")"
+    if [[ -n "$json" ]]; then
+        sourcetree_state_json "$root" "$records" "$counts"
+    else
+        sourcetree_state_text "$root" "$records" "$counts"
+    fi
+    return 0
+}

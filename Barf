@@ -63,6 +63,7 @@ rule tests: test_prototype_parsing
 rule tests: test_prototype_scoping
 rule tests: test_public_mode
 rule tests: test_report_condense
+rule tests: test_sourcetree
 rule tests: test_toplevel
 rule tests: test_user_requirements
 rule tests: test_verbosity
@@ -85,6 +86,7 @@ rule test_prototype_parsing: -- tests/test_prototype_parsing.sh
 rule test_prototype_scoping: -- tests/test_prototype_scoping.sh
 rule test_public_mode: -- tests/test_public_mode.sh
 rule test_report_condense: -- tests/test_report_condense.sh
+rule test_sourcetree: -- tests/test_sourcetree.sh
 rule test_toplevel: -- tests/test_toplevel.sh
 rule test_user_requirements: -- tests/test_user_requirements.sh
 rule test_verbosity: -- tests/test_verbosity.sh
