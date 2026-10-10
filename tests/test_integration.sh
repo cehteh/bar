@@ -4,8 +4,6 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(dirname "$SCRIPT_DIR")"
 
-cd "$SCRIPT_DIR" || exit 1
-
 # shellcheck disable=SC1091
 source "$REPO_ROOT/contrib/bar_complete"
 
@@ -14,10 +12,20 @@ test_integration() {
     echo "===================================="
     echo
 
+    # The completion registry parses the rulefile named 'Barf' found in the
+    # current directory (__bar_scan_files), so present the fixture under that
+    # name in a scratch directory of its own.
+    local workdir
+    workdir="$(mktemp -d)" || exit 1
+    # shellcheck disable=SC2064
+    trap "rm -rf '$workdir'" EXIT
+    cp "$SCRIPT_DIR/test_barf" "$workdir/Barf" || exit 1
+    cd "$workdir" || exit 1
+
     # Test 1: Initialize and update cache
     echo "Test 1: Initializing cache..."
     __bar_init_completion_registry
-    __bar_update_cache "bar"
+    __bar_scan_files "bar"
     echo "✓ Cache initialized"
     echo
 
@@ -28,6 +36,7 @@ test_integration() {
         echo "  Parameters: ${__bar_func_params[test_completion_func]}"
     else
         echo "✗ test_completion_func not discovered"
+        exit 1
     fi
     echo
 
@@ -38,6 +47,7 @@ test_integration() {
         echo "  Parameters: ${__bar_rule_params[test_build]}"
     else
         echo "✗ test_build rule not discovered"
+        exit 1
     fi
     echo
 
@@ -83,4 +93,3 @@ test_integration() {
 }
 
 test_integration
-
