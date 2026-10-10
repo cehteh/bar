@@ -93,6 +93,7 @@ mkstub() { # <file>
 #!/bin/sh
 printf '%s\n' "$*" >>"${STUB_ARGS:-/dev/null}"
 printf '%s' "${STUB_JSON-}"
+exit "${STUB_RC:-0}"
 STUB
     chmod +x "$1"
 }
@@ -189,11 +190,21 @@ check "$RC" "0" "exit 0 at the threshold"
 contains "$(cat "$WORK/args")" "--threshold 4" "the threshold is passed to the fact tool"
 contains "$OUT" "threshold=4" "the threshold of the answer is the one asked for"
 run_bar_env "$TRUST" "RADWORK_TRIAGE_FACTS=$STUB" "STUB_ARGS=/dev/null" \
-    "STUB_JSON=$(printf '{"rid":"rad:zTEST","threshold":10,"author":null,"contributor":null,"reason":"","error":"cannot resolve author x"}')" \
+    'STUB_JSON={"rid":"rad:zTEST","threshold":10,"author":null,"contributor":null,"reason":"","error":"cannot resolve author x"}' \
     -- radwork_trust --repo rad:zTEST --author x
 check "$RC" "2" "exit 2 when the author cannot be resolved"
 contains "$OUT" "unknown author=-" "the verdict is 'unknown', never 'untrusted'"
 contains "$OUT" "cannot resolve author x" "the reason of the tool is carried"
+run_bar_env "$TRUST" "RADWORK_TRIAGE_FACTS=$STUB" "STUB_ARGS=/dev/null" "STUB_RC=2" \
+    'STUB_JSON={"rid":"rad:zTEST","threshold":10,"author":null,"contributor":null,"error":"cannot resolve author x"}' \
+    -- radwork_trust --repo rad:zTEST --author x
+check "$RC" "2" "a non-zero tool exit is exit 2, not a crash"
+contains "$OUT" "cannot resolve author x" "the reason survives a non-zero tool exit"
+run_bar_env "$TRUST" "RADWORK_TRIAGE_FACTS=$STUB" "STUB_ARGS=/dev/null" "STUB_RC=3" "STUB_JSON=" \
+    -- radwork_trust --repo rad:zTEST --author x
+check "$RC" "2" "an empty answer is exit 2"
+check "$OUT" "" "stdout stays empty"
+contains "$ERR" "gave no answer" "the empty answer is named"
 contains "$RC-$(printf '%s' "$OUT" | wc -l)" "2-0" "still one line"
 
 echo "--- AC4 usage errors and a missing tool ---"

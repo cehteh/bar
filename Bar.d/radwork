@@ -189,9 +189,13 @@ function radwork_trust ## see the module header
 
     local -a cmd=("$tool" --repo "$repo" --author "$author")
     [[ -n "$threshold" ]] && cmd+=(--threshold "$threshold")
-    local facts
-    if ! facts="$("${cmd[@]}" 2>/dev/null)"; then
-        printf 'radwork_trust: %s failed for repo %s\n' "${tool##*/}" "$repo" >&2
+    ## The tool exits non-zero when it cannot answer (an unresolvable author is one of those), and
+    ## still prints the JSON which says why -- so the exit code is reported, never interpreted: an
+    ## empty answer is 'could not answer', anything else is read and the reason travels on.
+    local facts tool_rc=0
+    facts="$("${cmd[@]}" 2>/dev/null)" || tool_rc=$?
+    if [[ -z "$facts" ]]; then
+        printf 'radwork_trust: %s gave no answer for %s (exit %s)\n' "${tool##*/}" "$repo" "$tool_rc" >&2
         return 2
     fi
 
