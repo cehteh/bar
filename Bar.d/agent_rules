@@ -53,7 +53,7 @@ declare -gx BAR_AGENT_TAIL="${BAR_AGENT_TAIL:-4}"               ## Evidence line
 declare -gx BAR_AGENT_MAX_LINE="${BAR_AGENT_MAX_LINE:-384}"     ## Maximum bytes of a single evidence line.
 declare -gx BAR_AGENT_MAX_BYTES="${BAR_AGENT_MAX_BYTES:-4096}"  ## Maximum bytes of a printed failure block.
 declare -gx BAR_AGENT_KEEP="${BAR_AGENT_KEEP:-5}"               ## Number of runs (log directories) to keep.
-declare -gx BAR_AGENT_JSON="${BAR_AGENT_JSON:-}"                ## When set, print one JSON object per run.
+declare -g  BAR_AGENT_JSON="${BAR_AGENT_JSON:-}"                ## When set, print one JSON object per run.
 
 function agent_run_dir ## - create this run's directory, prune old ones, update 'latest'
 {
@@ -256,7 +256,9 @@ function agent_run_target ## <target> <dir> - run one target, write its merged l
     ## loses that order).  The subshell also contains a target whose clause body calls 'exit' --
     ## that would otherwise take the whole report down with it -- and hands back its real rc.
     ## The verbosity of the inner run is pinned so the records bar writes into the log do not
-    ## depend on how 'bar check' itself was called.
+    ## depend on how 'bar check' itself was called, and the output format of the outer invocation
+    ## is dropped: a target that calls bar itself (a project checking its own checks) must not
+    ## suddenly print JSON just because 'bar --json check <target>' was used.
     local target="$1" dir="$2"
     local log="$dir/$target.log"
     local rc=0 id
@@ -264,6 +266,7 @@ function agent_run_target ## <target> <dir> - run one target, write its merged l
     id="$(hash_args "$PWD $target")"
     (
         unset "BAR_RULES_RESULT[#$id]"
+        unset BAR_AGENT_JSON
         # read by rule_eval(), not visible to shellcheck
         # shellcheck disable=SC2034
         BAR_VERBOSITY_LEVEL="$BAR_AGENT_INNER"
