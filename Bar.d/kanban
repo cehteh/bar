@@ -27,6 +27,10 @@
 ### 3 the board could not be read (no database, not a Kanban database, 'sqlite3' missing), 4 the
 ### card asked for ('--id', '--parent', '--runs') does not exist.
 ###
+### An option is nothing without its value: '--status' with nothing after it is a usage error like
+### any other, and so is an empty value ('--id ""'), which would otherwise name no card and quietly
+### answer as though the option had not been given at all.
+###
 ### The board is resolved the way the kernel resolves it: '--db', then '--board', else
 ### '$HERMES_KANBAN_DB', '$HERMES_KANBAN_BOARD' or '<root>/kanban/current', finally the default
 ### board.  '<root>' is '$HERMES_KANBAN_HOME' or '~/.hermes'; a named board lives in
@@ -615,7 +619,7 @@ function kanban_runs_view ## <task-id> <json> <limit> - the runs of one card, ne
     local row record
     local -i matched printed=0 limit_n=0
     local status workspace_kind workspace_path branch title file=""
-    row="$(kanban_sql "select t.status, coalesce(t.assignee, ''), coalesce(t.workspace_kind, ''), \
+    row="$(kanban_sql "select t.status, coalesce(t.workspace_kind, ''), \
                               coalesce(t.workspace_path, ''), coalesce(t.branch_name, ''), \
                               replace(replace(t.title, char(10), ' '), char(13), ' ') \
                        from tasks t where t.id = $(kanban_quote "$task_id") limit 1;")"
@@ -624,13 +628,10 @@ function kanban_runs_view ## <task-id> <json> <limit> - the runs of one card, ne
         return 4
     fi
     status="$(kanban_card_field "$row" 1)"
-    # KANBAN_ASSIGNEE is read by the header of the text form only
-    # shellcheck disable=SC2034
-    KANBAN_RUN_ASSIGNEE="$(kanban_card_field "$row" 2)"
-    workspace_kind="$(kanban_card_field "$row" 3)"
-    workspace_path="$(kanban_card_field "$row" 4)"
-    branch="$(kanban_card_field "$row" 5)"
-    title="$(kanban_card_field "$row" 6)"
+    workspace_kind="$(kanban_card_field "$row" 2)"
+    workspace_path="$(kanban_card_field "$row" 3)"
+    branch="$(kanban_card_field "$row" 4)"
+    title="$(kanban_card_field "$row" 5)"
     kanban_gather_runs "$task_id"
     kanban_runs_count_failed
     matched="${#KANBAN_ROWS[@]}"
@@ -757,7 +758,8 @@ usage: kanban_state [--json] [--board <slug>|--db <path>] [<selector>..] [--limi
   --board <slug>, --db <path>
                        read another board (default: this caller's board)
 
-exit codes: 0 answered, 2 usage error, 3 board unreadable, 4 no such card
+exit codes: 0 answered, 2 usage error (an option without a value, or with an empty one),
+            3 board unreadable, 4 no such card
 KANBAN_USAGE
 }
 
@@ -805,6 +807,10 @@ function kanban_state
         --status | --assignee | --project | --parent | --id | --runs | --limit | --db | --board)
             if (( i >= count )); then
                 kanban_usage "'$arg' needs a value"
+                return 2
+            fi
+            if [[ -z "${args[i]}" ]]; then
+                kanban_usage "'$arg' needs a non-empty value"
                 return 2
             fi
             case "$arg" in

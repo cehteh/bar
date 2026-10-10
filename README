@@ -1158,6 +1158,10 @@ MODULE API/RULES
     3 the board could not be read (no database, not a Kanban database, 'sqlite3' missing), 4 the
     card asked for ('--id', '--parent', '--runs') does not exist.
     
+    An option is nothing without its value: '--status' with nothing after it is a usage error like
+    any other, and so is an empty value ('--id ""'), which would otherwise name no card and quietly
+    answer as though the option had not been given at all.
+    
     The board is resolved the way the kernel resolves it: '--db', then '--board', else
     '$HERMES_KANBAN_DB', '$HERMES_KANBAN_BOARD' or '<root>/kanban/current', finally the default
     board.  '<root>' is '$HERMES_KANBAN_HOME' or '~/.hermes'; a named board lives in

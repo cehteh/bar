@@ -15,7 +15,8 @@
 #   AC5  the listing is limited, names the elision counts and the file holding every match
 #   AC6  a blocked card carries its reason; without one the failure excerpt, then a plain note
 #   AC7  '--runs' prints the runs of one card with the failure count and the workspace
-#   AC8  the exit codes: 0 answered (also for an empty result), 2 usage, 3 unreadable, 4 no card
+#   AC8  the exit codes: 0 answered (also for an empty result), 2 usage (a missing or empty value),
+#        3 unreadable, 4 no card
 #   AC9  the board is resolved like the kernel does (--board, HERMES_KANBAN_BOARD, kanban/current)
 #   AC10 the JSON survives quotes, pipes, backslashes and control characters
 #   AC11 the module header and the rule reach 'bar help'
@@ -449,6 +450,22 @@ check "$RC" "2" "AC8: an unknown argument exits 2"
 check "$OUT" "" "AC8: and leaves stdout alone"
 kanban --status
 check "$RC" "2" "AC8: a selector without a value exits 2"
+
+# an empty value is no value either: every option that takes one refuses it the same way.  '--id'
+# used to answer '(0 cards)' and '--parent' exit 4 on the same input, and an empty '--runs' used to
+# be dropped and answered with the whole summary -- silence is the one answer none of them may give.
+for opt in --status --assignee --project --parent --id --runs --limit --db --board; do
+    kanban "$opt" ""
+    check "$RC" "2" "AC8: '$opt' with an empty value exits 2"
+    check "$OUT" "" "AC8: '$opt' with an empty value leaves stdout alone"
+done
+kanban --id=
+check "$RC" "2" "AC8: an empty '--id=' after the '=' exits 2 as well"
+kanban_err --id ""
+contains "$OUT" "'--id' needs a non-empty value" "AC8: and the report names the option"
+kanban_err --runs ""
+contains "$OUT" "'--runs' needs a non-empty value" "AC8: '--runs' included"
+
 kanban --limit x
 check "$RC" "2" "AC8: a non numeric limit exits 2"
 kanban --board 'Not A Slug'
@@ -607,7 +624,7 @@ check "$(printf '%s\n' "$OUT" | tail -2 | head -1)" "(3 cards)" "AC14: and a fil
 run_in "$WORK" env -u HERMES_KANBAN_DB -u HERMES_KANBAN_BOARD HOME="$FAKE_HOME" \
     "$FAKE_HOME/.local/bin/please" kanban_state
 check "$RC" "3" "AC14: with no board at all it fails fast, exit 3"
-contains "$OUT" "" "AC14: and says nothing on stdout"
+check "$OUT" "" "AC14: and says nothing on stdout"
 
 echo
 if (( failures == 0 )); then
