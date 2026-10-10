@@ -29,6 +29,11 @@ function nodbg
 
 rule lints: 'is_testdir_used?' nodbg
 
+# The repertoire guard: every rule of a helper module has to be registered with a
+# '# helper: <name> | <purpose> | <invocation> | <output shape>' declaration above it
+# (see Bar.d/helpers_rules).  A helper which is added without its declaration fails 'lints'.
+rule lints: helpers_check
+
 # manually testing the staged changes
 rule test_staged: testdir_enter lints
 
@@ -49,6 +54,7 @@ rule tests: test_completion
 rule tests: test_ext_completers
 rule tests: test_extcomp
 rule tests: test_function_completion
+rule tests: test_helpers
 rule tests: test_integration
 rule tests: test_is_cargo_tool_completion
 rule tests: test_issue_fixes
@@ -68,6 +74,7 @@ rule test_completion: -- tests/test_completion.sh
 rule test_ext_completers: -- tests/test_ext_completers.sh
 rule test_extcomp: -- tests/test_extcomp.sh
 rule test_function_completion: -- tests/test_function_completion.sh
+rule test_helpers: -- tests/test_helpers.sh
 rule test_integration: -- tests/test_integration.sh
 rule test_is_cargo_tool_completion: -- tests/test_is_cargo_tool_completion.sh
 rule test_issue_fixes: -- tests/test_issue_fixes.sh
