@@ -49,9 +49,12 @@ memofn shellcheck_list_shscripts
 
 function shellcheck_lint ## Test if all shell scripts under git control pass the linter.
 {
-    trace "shellcheck --color $(shellcheck_list_shscripts)"
+    ## '--color' (without a value) forces ANSI colour even when the output is not a terminal, so
+    ## every captured log or memodb entry was full of escape sequences.  '--color=auto' is the
+    ## shellcheck default: colour for a human at a terminal, plain text for a capture.
+    trace "shellcheck --color=auto $(shellcheck_list_shscripts)"
     # shellcheck disable=SC2046
-    shellcheck --color $(shellcheck_list_shscripts)
+    shellcheck --color=auto $(shellcheck_list_shscripts)
 }
 
 # Define --bare rules for shellcheck query/predicate functions

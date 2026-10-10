@@ -96,6 +96,190 @@ INVOCATION AND SEMANTICS
 
 MODULE API/RULES
 
+  agent_rules - The agent output contract -- a run reduced 'up to the point'
+    
+    bar is written for humans: a run prints everything every tool produced.  In a terminal that is
+    right, in an agent's context window it is fatal -- a full 'bar tests' here is ~400 lines /
+    16 kB of which the actionable part is a handful of lines.
+    
+    This module turns a *run* into a small, decision shaped *answer*.  Three levels of progressive
+    disclosure, the caller picks the level:
+    
+      bar verdict <target>..         one line per target                      (polling, gating)
+      bar check   <target>..         verdict + chain + totals + bounded, line numbered evidence + log path
+      bar log     <target> [range]   the untruncated raw log, on demand
+    
+    The contract ('never lie') is:
+    
+      * the verdict line is printed always, for every target, at every verbosity -- never filtered,
+        never truncated;
+      * on failure the exact totals (lines and bytes) of the log are always printed, even when
+        there is no evidence to show at all;
+      * the raw log is written to disk before anything is printed and its absolute path is printed
+        on failure.  It is kept for successes too, so 'bar log' always works;
+      * only bar's own machine emitted records ('OK:' 'FAIL:' 'CHECK:' 'RUN:' 'EVAL:') are pattern
+        matched.  Foreign tool text is *never* filtered by keyword -- doing exactly that is how the
+        real shellcheck findings got lost once -- it is bounded *positionally* (a head and a tail
+        window) and the elision is announced with the exact log line range that was left out;
+      * every evidence line carries its line number in the log, so 'bar log <target> <n>' (or
+        'sed -n <n>p <log>') retrieves that line again, byte for byte;
+      * a failure is never masked: the exit code is the rc of the first failing target.
+    
+    Measured on bar itself: 'bar tests' 16 kB / 409 lines -> 'bar check tests' 9 B / 1 line
+    (success), and a 401 line failure of 14,6 kB -> ~1 kB carrying the verdict, the failing chain,
+    the totals and the line that holds the signal.
+    
+    Exit codes: 0 when every target passed, 2 on a usage error, otherwise the rc of the first
+    failing target propagated verbatim (3, 128+signal, ...).  'bar log' answers 3 when no log is on
+    record for the target.
+    
+    The log is a *raw* capture: when the invoking stderr was a terminal, bar's own record lines in
+    it carry that terminal's escape sequences.  The printed evidence never does (it is normalized)
+    and the totals always describe the file exactly as it is on disk.
+
+    Variables:
+
+      BAR_AGENT_DIR (gx)
+        Directory for the run logs below $BAR_TOPLEVEL.
+        Default: ${BAR_AGENT_DIR:-.bar.agent}
+
+      BAR_AGENT_INNER (gx)
+        Verbosity the measured run is forced to.
+        Default: ${BAR_AGENT_INNER:-2}
+
+      BAR_AGENT_HEAD (gx)
+        Evidence lines taken from the head of the log.
+        Default: ${BAR_AGENT_HEAD:-8}
+
+      BAR_AGENT_TAIL (gx)
+        Evidence lines taken from the tail of the log.
+        Default: ${BAR_AGENT_TAIL:-4}
+
+      BAR_AGENT_MAX_LINE (gx)
+        Maximum bytes of a single evidence line.
+        Default: ${BAR_AGENT_MAX_LINE:-384}
+
+      BAR_AGENT_MAX_BYTES (gx)
+        Maximum bytes of a printed failure block.
+        Default: ${BAR_AGENT_MAX_BYTES:-4096}
+
+      BAR_AGENT_KEEP (gx)
+        Number of runs (log directories) to keep.
+        Default: ${BAR_AGENT_KEEP:-5}
+
+      BAR_AGENT_JSON (gx)
+        When set, print one JSON object per run.
+        Default: ${BAR_AGENT_JSON:-}
+
+    Functions:
+
+      agent_run_dir - create this run's directory, prune old ones, update 'latest'
+        The directory is named after the timestamp of this invocation and the tree it runs in, the
+        same way memodb names its trees.  'latest' is a convenience symlink for humans, it is
+        explicitly *not* a way to find a log (see agent_find_log).
+
+      agent_tree_id - identifies the tree this run is made in
+
+      agent_keep - BAR_AGENT_KEEP, clamped to at least one
+
+      agent_gc - keep the newest BAR_AGENT_KEEP run directories, delete the rest
+        Only directories that look like a run directory ('<timestamp>-<tree>') are candidates, and
+        only below our own run directory, so 'latest' and anything else is never touched.  A failure
+        to prune is not a failure of the run that happens to trigger the prune.
+
+      agent_find_log <target>
+        newest log for <target>, newest run first
+
+      agent_strip_ansi <text>
+        remove terminal control sequences from a single line
+        For the few lines bar interprets itself; the bulk of the normalization happens in
+        agent_evidence.
+
+      agent_fail_chain <target> <log>
+        the failing chain, target plus bar's own records
+        bar print a ' FAIL: <rule>: <dependency>' record when a *dependency* fails, but a clause
+        *body* that fails just returns -- a target failing on its own therefore leaves no record at
+        all.  The chain always starts at the target and is extended by the records found in the log,
+        capped at four of them (the chain is part of the block budget).
+
+      agent_evidence <log> <total-lines> <budget-bytes>
+        bounded excerpt as 'E'/'X' records
+        Streams the log once and prints at most BAR_AGENT_HEAD + BAR_AGENT_TAIL evidence lines as
+        'E <log-line-number> <text>' records, preceded by one 'X <from> <to>' record when lines are
+        elided ('X 0 0' means there is no evidence at all).
+        Evidence is *selected positionally*: the first and the last lines of the log that are
+        neither bar's own records nor empty.  No keyword decides what an agent gets to see.  Lines
+        longer than BAR_AGENT_MAX_LINE are clipped at a word boundary with the number of bytes left
+        out appended in '<+NB>', so nothing is hidden.  The scan streams: memory and output stay
+        bounded for arbitrarily large logs.
+
+      agent_rc_text <rc>
+        printable rc, '?' when it is not a number
+
+      agent_run_target <target> <dir>
+        run one target, write its merged log, print its rc
+        The target runs in a subshell with stdout and stderr merged into one log, so the log keeps
+        the order in which the tool wrote it (memodb keeps the two streams in separate files and
+        loses that order).  The subshell also contains a target whose clause body calls 'exit' --
+        that would otherwise take the whole report down with it -- and hands back its real rc.
+        The verbosity of the inner run is pinned so the records bar writes into the log do not
+        depend on how 'bar check' itself was called.
+
+      agent_max_block - bytes of BAR_AGENT_MAX_BYTES that may go into evidence
+        The block carries a fixed part (verdict, chain, totals, log path) and the elision marker;
+        both are reserved before the evidence budget is handed to agent_evidence.
+
+      agent_excerpt_print <log> <total> <budget>
+        render the excerpt of agent_evidence
+
+      agent_report_failure <target> <log> <rc>
+        print the bounded failure block
+
+      agent_json_string <text>
+        a JSON string literal
+
+      agent_json_evidence <log> <total> <budget>
+        the evidence and elision members
+
+      agent_json_target <target> <log> <rc>
+        one JSON object for a measured target
+        The same fields the text block carries: rc, chain, the byte exact totals and the log path,
+        plus the bounded evidence.  Consumers that need a parser get one; the terse text stays the
+        default because an agent reads lines, not braces.
+
+      agent_json_success <target> <log>
+        one JSON object for a target that passed
+
+      agent_run_block <mode> <target>..
+        body of the 'check' and 'verdict' rules
+        <mode> is 'verdict' (one line per target, plus the log path on failure) or 'check' (the
+        full bounded failure block).  Nothing changes the verdict itself: that line is always
+        printed, at every verbosity.
+
+      agent_log_body <target> [<from>,<to>|tail:<n>]
+        print the raw log of a previous run
+
+    Rules:
+
+      check
+        Run targets and print a bounded verdict block: one 'OK <target>' line when a target passed,
+        otherwise its verdict, the failing chain, the exact totals of its raw output, a bounded and line
+        numbered excerpt of it and the path of the untruncated log.  Exits with the rc of the first
+        failing target.
+
+      verdict
+        Run targets and print one line per target only ('OK <target>' / 'FAIL <target> (rc=..)').  The
+        cheapest form, meant for polling loops and gating conditions; a failure additionally gets the
+        path of its log so it can be retrieved with 'bar log'.
+
+      log
+        Print the raw log a previous 'bar check'/'bar verdict' produced for <target>: everything, a line
+        range <from>,<to>, or 'tail:<n>'.  Byte identical to what 'sed -n'/'tail -n' print.
+
+      --json
+        Machinereadable output: emit one JSON object per run (targets, rc, totals, evidence) instead of
+        the terse text.  For wrapper scripts, not for reading.
+
   cargo - Rust/cargo support
 
     Variables:
@@ -973,6 +1157,9 @@ MODULE API/RULES
       shellcheck_list_shscripts List all shell scripts under git control
 
       shellcheck_lint Test if all shell scripts under git control pass the linter.
+        '--color' (without a value) forces ANSI colour even when the output is not a terminal, so
+        every captured log or memodb entry was full of escape sequences.  '--color=auto' is the
+        shellcheck default: colour for a human at a terminal, plain text for a capture.
 
     Rules:
 
@@ -1065,6 +1252,11 @@ MODULE API/RULES
 
       bench
         Build and run benchmarks.
+
+      agent
+        The checks an agent should run before and after it changes something.  Projects hook their
+        targets in here (the default rulefile hooks 'lints tests'), the terse output contract for a
+        human or an agent is available via 'bar check agent' / 'bar verdict agent'.
 
       fmt
         Reformat the source code in place.

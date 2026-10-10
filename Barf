@@ -14,6 +14,9 @@ SHELLCHECK_LS_FILES=":!tests"
 # We lint and build the doc here
 rule doc lints
 
+# the checks an agent runs in this repository; 'bar check agent' prints the terse contract block
+rule agent: lints tests
+
 require git
 
 function nodbg
@@ -39,6 +42,7 @@ rule pre-commit: MAIN
 
 ## Run all tests in tests/ directory
 rule tests: test_cache
+rule tests: test_agent_rules
 rule tests: test_cargo_completers
 rule tests: test_cargo_variable_expansion
 rule tests: test_completion
@@ -57,6 +61,7 @@ rule tests: test_verbosity
 
 # Individual test rules
 rule test_cache: -- tests/test_cache.sh
+rule test_agent_rules: -- tests/test_agent_rules.sh
 rule test_cargo_completers: -- tests/test_cargo_completers.sh
 rule test_cargo_variable_expansion: -- tests/test_cargo_variable_expansion.sh
 rule test_completion: -- tests/test_completion.sh

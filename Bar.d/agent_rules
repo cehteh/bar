@@ -1,0 +1,515 @@
+# -*- mode: sh; sh-shell: bash -*-
+# vim: set ft=bash:
+# shellcheck shell=bash
+# shellcheck disable=SC2016
+
+### The agent output contract -- a run reduced 'up to the point'
+###
+### bar is written for humans: a run prints everything every tool produced.  In a terminal that is
+### right, in an agent's context window it is fatal -- a full 'bar tests' here is ~400 lines /
+### 16 kB of which the actionable part is a handful of lines.
+###
+### This module turns a *run* into a small, decision shaped *answer*.  Three levels of progressive
+### disclosure, the caller picks the level:
+###
+###   bar verdict <target>..         one line per target                      (polling, gating)
+###   bar check   <target>..         verdict + chain + totals + bounded, line numbered evidence + log path
+###   bar log     <target> [range]   the untruncated raw log, on demand
+###
+### The contract ('never lie') is:
+###
+###   * the verdict line is printed always, for every target, at every verbosity -- never filtered,
+###     never truncated;
+###   * on failure the exact totals (lines and bytes) of the log are always printed, even when
+###     there is no evidence to show at all;
+###   * the raw log is written to disk before anything is printed and its absolute path is printed
+###     on failure.  It is kept for successes too, so 'bar log' always works;
+###   * only bar's own machine emitted records ('OK:' 'FAIL:' 'CHECK:' 'RUN:' 'EVAL:') are pattern
+###     matched.  Foreign tool text is *never* filtered by keyword -- doing exactly that is how the
+###     real shellcheck findings got lost once -- it is bounded *positionally* (a head and a tail
+###     window) and the elision is announced with the exact log line range that was left out;
+###   * every evidence line carries its line number in the log, so 'bar log <target> <n>' (or
+###     'sed -n <n>p <log>') retrieves that line again, byte for byte;
+###   * a failure is never masked: the exit code is the rc of the first failing target.
+###
+### Measured on bar itself: 'bar tests' 16 kB / 409 lines -> 'bar check tests' 9 B / 1 line
+### (success), and a 401 line failure of 14,6 kB -> ~1 kB carrying the verdict, the failing chain,
+### the totals and the line that holds the signal.
+###
+### Exit codes: 0 when every target passed, 2 on a usage error, otherwise the rc of the first
+### failing target propagated verbatim (3, 128+signal, ...).  'bar log' answers 3 when no log is on
+### record for the target.
+###
+### The log is a *raw* capture: when the invoking stderr was a terminal, bar's own record lines in
+### it carry that terminal's escape sequences.  The printed evidence never does (it is normalized)
+### and the totals always describe the file exactly as it is on disk.
+
+require git_lib
+
+declare -gx BAR_AGENT_DIR="${BAR_AGENT_DIR:-.bar.agent}"        ## Directory for the run logs below $BAR_TOPLEVEL.
+declare -gx BAR_AGENT_INNER="${BAR_AGENT_INNER:-2}"             ## Verbosity the measured run is forced to.
+declare -gx BAR_AGENT_HEAD="${BAR_AGENT_HEAD:-8}"               ## Evidence lines taken from the head of the log.
+declare -gx BAR_AGENT_TAIL="${BAR_AGENT_TAIL:-4}"               ## Evidence lines taken from the tail of the log.
+declare -gx BAR_AGENT_MAX_LINE="${BAR_AGENT_MAX_LINE:-384}"     ## Maximum bytes of a single evidence line.
+declare -gx BAR_AGENT_MAX_BYTES="${BAR_AGENT_MAX_BYTES:-4096}"  ## Maximum bytes of a printed failure block.
+declare -gx BAR_AGENT_KEEP="${BAR_AGENT_KEEP:-5}"               ## Number of runs (log directories) to keep.
+declare -gx BAR_AGENT_JSON="${BAR_AGENT_JSON:-}"                ## When set, print one JSON object per run.
+
+function agent_run_dir ## - create this run's directory, prune old ones, update 'latest'
+{
+    ## The directory is named after the timestamp of this invocation and the tree it runs in, the
+    ## same way memodb names its trees.  'latest' is a convenience symlink for humans, it is
+    ## explicitly *not* a way to find a log (see agent_find_log).
+    local dir tree
+    tree="$(agent_tree_id)"
+    dir="$BAR_TOPLEVEL/$BAR_AGENT_DIR/$BAR_TIMESTAMP-$tree"
+    mkdir -p "$dir"
+    ln -sfn "$dir" "$BAR_TOPLEVEL/$BAR_AGENT_DIR/latest"
+    # prune only when the run directory grew beyond the limit: a gating loop calls this often
+    local -a run_dirs=("$BAR_TOPLEVEL/$BAR_AGENT_DIR"/[0-9]*-*/)
+    local -i keep
+    keep="$(agent_keep)"
+    if [[ -d "${run_dirs[0]:-}" ]] && (( ${#run_dirs[@]} > keep )); then
+        agent_gc
+    fi
+    printf '%s\n' "$dir"
+}
+
+function agent_tree_id ## - identifies the tree this run is made in
+{
+    local id
+    id="$(git_tree_hash -c --other 2>/dev/null)" || id=
+    printf '%s\n' "${id:-notree}"
+}
+
+function agent_keep ## - BAR_AGENT_KEEP, clamped to at least one
+{
+    local -i keep="$BAR_AGENT_KEEP"
+    (( keep < 1 )) && keep=1
+    printf '%s\n' "$keep"
+}
+
+function agent_gc ## - keep the newest BAR_AGENT_KEEP run directories, delete the rest
+{
+    ## Only directories that look like a run directory ('<timestamp>-<tree>') are candidates, and
+    ## only below our own run directory, so 'latest' and anything else is never touched.  A failure
+    ## to prune is not a failure of the run that happens to trigger the prune.
+    local -i keep
+    keep="$(agent_keep)"
+    find "$BAR_TOPLEVEL/$BAR_AGENT_DIR" -mindepth 1 -maxdepth 1 -type d -name '[0-9]*-*' -print0 |
+        sort -z -n |
+        head -z -n "-$keep" |
+        xargs -0 -r rm -rf || true
+}
+
+function agent_find_log ## <target> - newest log for <target>, newest run first
+{
+    local target="$1" dir
+    local -a found=()
+    for dir in "$BAR_TOPLEVEL/$BAR_AGENT_DIR"/*/; do
+        # 'latest' is a symlink: it would shadow a real run directory (and be found twice)
+        [[ -L "${dir%/}" ]] && continue
+        [[ -f "$dir$target.log" ]] && found+=("$dir$target.log")
+    done
+    (( ${#found[@]} > 0 )) || return 1
+    printf '%s\n' "${found[@]}" | sort -r | head -1
+}
+
+function agent_strip_ansi ## <text> - remove terminal control sequences from a single line
+{
+    ## For the few lines bar interprets itself; the bulk of the normalization happens in
+    ## agent_evidence.
+    local text="$1"
+    local esc=$'\033'
+    # the regex lives in a variable: an unquoted ';' inside a [[ =~ ]] pattern would end the
+    # command for the shell parser
+    local re="^(.*)${esc}\\[[0-9;]*[a-zA-Z](.*)$"
+    while [[ "$text" =~ $re ]]; do
+        text="${BASH_REMATCH[1]}${BASH_REMATCH[2]}"
+    done
+    text="${text//[[:cntrl:]]/}"
+    printf '%s\n' "$text"
+}
+
+function agent_fail_chain ## <target> <log> - the failing chain, target plus bar's own records
+{
+    ## bar print a ' FAIL: <rule>: <dependency>' record when a *dependency* fails, but a clause
+    ## *body* that fails just returns -- a target failing on its own therefore leaves no record at
+    ## all.  The chain always starts at the target and is extended by the records found in the log,
+    ## capped at four of them (the chain is part of the block budget).
+    local target="$1" log="$2"
+    local chain="$target" line
+    local -i depth=0
+    while IFS= read -r line; do
+        line="$(agent_strip_ansi "$line")"
+        line="${line#"${line%%[![:space:]]*}"}"
+        [[ "$line" == FAIL:* ]] || continue
+        line="${line#FAIL:}"
+        line="${line#"${line%%[![:space:]]*}"}"
+        line="${line%"${line##*[![:space:]]}"}"
+        [[ -z "$line" || "$line" == "$target" ]] && continue
+        if (( depth >= 4 )); then
+            break
+        fi
+        chain="$chain <- $line"
+        depth=$((depth + 1))
+    done < <(grep -a 'FAIL:' "$log" || true)
+    printf '%s\n' "$chain"
+}
+
+function agent_evidence ## <log> <total-lines> <budget-bytes> - bounded excerpt as 'E'/'X' records
+{
+    ## Streams the log once and prints at most BAR_AGENT_HEAD + BAR_AGENT_TAIL evidence lines as
+    ## 'E <log-line-number> <text>' records, preceded by one 'X <from> <to>' record when lines are
+    ## elided ('X 0 0' means there is no evidence at all).
+    ##
+    ## Evidence is *selected positionally*: the first and the last lines of the log that are
+    ## neither bar's own records nor empty.  No keyword decides what an agent gets to see.  Lines
+    ## longer than BAR_AGENT_MAX_LINE are clipped at a word boundary with the number of bytes left
+    ## out appended in '<+NB>', so nothing is hidden.  The scan streams: memory and output stay
+    ## bounded for arbitrarily large logs.
+    local log="$1" total="$2" budget="$3"
+    LC_ALL=C awk -v head="$BAR_AGENT_HEAD" -v tail="$BAR_AGENT_TAIL" \
+        -v maxline="$BAR_AGENT_MAX_LINE" -v budget="$budget" -v total="$total" '
+BEGIN {
+    esc = sprintf("%c", 27)
+    seq = esc "\\[[0-9;]*[a-zA-Z]"
+    ctl = "[\001-\010\013-\037]"
+    reserve = tail * (maxline + 24)
+    used = 0; nhead = 0; ntail = 0; ncand = 0; ti = 0
+    first = 0; last = 0; head_end = 0
+}
+{
+    line = $0
+    gsub(seq, "", line)
+    gsub(ctl, "", line)
+    if (line ~ /^[ \t]*$/) next
+    if (line ~ /^[ \t]*(OK|FAIL|CHECK|RUN|EVAL):[ \t]/) next
+    ncand++
+    nr = NR
+    if (total > 0 && nr > total) nr = total
+    if (first == 0) first = nr
+    last = nr
+    if (length(line) > maxline) {
+        orig = line
+        cut = substr(line, 1, maxline)
+        pos = 0
+        for (i = length(cut); i > 0; i--) if (substr(cut, i, 1) == " ") { pos = i; break }
+        if (pos > maxline * 6 / 10) cut = substr(cut, 1, pos - 1)
+        line = cut "<+" (length(orig) - length(cut)) "B>"
+    }
+    cost = length(line) + 14
+    if (nhead < head && used + cost <= budget - reserve) {
+        used += cost
+        nhead++
+        head_end = nr
+        print "E", nr, line
+    } else if (tail > 0) {
+        idx = ti % tail
+        tnr[idx] = nr
+        tline[idx] = line
+        tcost[idx] = cost
+        ti++
+        ntail++
+    }
+}
+END {
+    keep = 0
+    for (k = 0; k < ntail && k < tail; k++) {
+        idx = ti - 1 - k
+        idx = idx % tail
+        if (idx < 0) idx += tail
+        if (used + tcost[idx] > budget) break
+        used += tcost[idx]
+        keep++
+        onr[keep] = tnr[idx]
+        oline[keep] = tline[idx]
+    }
+    printed = nhead + keep
+    if (ncand == 0) {
+        print "X", 0, 0
+    } else if (printed < ncand) {
+        from = first; to = last
+        if (nhead > 0) from = head_end + 1
+        if (keep > 0) to = onr[keep] - 1
+        if (from > to) from = to
+        print "X", from, to
+    }
+    for (k = keep; k >= 1; k--) print "E", onr[k], oline[k]
+}
+' "$log"
+}
+
+function agent_rc_text ## <rc> - printable rc, '?' when it is not a number
+{
+    if [[ "${1:-}" =~ ^[0-9]+$ ]]; then
+        printf '%s\n' "$1"
+    else
+        printf '?\n'
+    fi
+}
+
+function agent_run_target ## <target> <dir> - run one target, write its merged log, print its rc
+{
+    ## The target runs in a subshell with stdout and stderr merged into one log, so the log keeps
+    ## the order in which the tool wrote it (memodb keeps the two streams in separate files and
+    ## loses that order).  The subshell also contains a target whose clause body calls 'exit' --
+    ## that would otherwise take the whole report down with it -- and hands back its real rc.
+    ## The verbosity of the inner run is pinned so the records bar writes into the log do not
+    ## depend on how 'bar check' itself was called.
+    local target="$1" dir="$2"
+    local log="$dir/$target.log"
+    local rc=0 id
+    # a capture has to capture a run: drop a result that was memoized earlier in this process
+    id="$(hash_args "$PWD $target")"
+    (
+        unset "BAR_RULES_RESULT[#$id]"
+        # read by rule_eval(), not visible to shellcheck
+        # shellcheck disable=SC2034
+        BAR_VERBOSITY_LEVEL="$BAR_AGENT_INNER"
+        # shellcheck disable=SC2034
+        BAR_CHECK_LEVEL=0
+        rule_eval "$target"
+    ) >"$log" 2>&1 || rc=$?
+    printf '%s\n' "$rc"
+}
+
+function agent_max_block ## - bytes of BAR_AGENT_MAX_BYTES that may go into evidence
+{
+    ## The block carries a fixed part (verdict, chain, totals, log path) and the elision marker;
+    ## both are reserved before the evidence budget is handed to agent_evidence.
+    local -i reserved="$1"
+    local -i budget=$(( BAR_AGENT_MAX_BYTES - reserved - 128 ))
+    if (( budget < 0 )); then
+        budget=0
+    fi
+    printf '%s\n' "$budget"
+}
+
+function agent_excerpt_print ## <log> <total> <budget> - render the excerpt of agent_evidence
+{
+    local log="$1" total="$2" budget="$3"
+    local rec from to
+    while IFS= read -r rec; do
+        case "$rec" in
+            "E "*)
+                local nr="${rec#E }"
+                nr="${nr%% *}"
+                printf '  %4d| %s\n' "$nr" "${rec#E "$nr" }"
+                ;;
+            "X 0 0")
+                printf '  ....| no evidence lines (all %s log lines are bar records or empty)\n' \
+                    "$total"
+                ;;
+            "X "*)
+                from="${rec#X }"
+                to="${from##* }"
+                from="${from%% *}"
+                printf '  ....| %d log lines not shown (L%s-L%s of %s)\n' \
+                    "$((to - from + 1))" "$from" "$to" "$total"
+                ;;
+            *)
+                printf '  ....| unreadable evidence record\n'
+                ;;
+        esac
+    done < <(agent_evidence "$log" "$total" "$budget")
+}
+
+function agent_report_failure ## <target> <log> <rc> - print the bounded failure block
+{
+    local target="$1" log="$2" rc="$3"
+    local chain verdict line_chain line_raw line_log
+    local -i total bytes budget
+    read -r total bytes < <(wc -l -c <"$log")
+    chain="$(agent_fail_chain "$target" "$log")"
+
+    verdict="FAIL $target (rc=$(agent_rc_text "$rc"))"
+    line_chain="  chain: $chain"
+    line_raw="  raw: $total lines / $bytes B"
+    line_log="log: $log"
+    budget="$(agent_max_block $(( ${#verdict} + ${#line_chain} + ${#line_raw} + ${#line_log} )))"
+
+    printf '%s\n' "$verdict"
+    printf '%s\n' "$line_chain"
+    printf '%s\n' "$line_raw"
+    agent_excerpt_print "$log" "$total" "$budget"
+    printf '%s\n' "$line_log"
+}
+
+function agent_json_string ## <text> - a JSON string literal
+{
+    local text="$1"
+    text="${text//\\/\\\\}"
+    text="${text//\"/\\\"}"
+    text="${text//$'\t'/\\t}"
+    printf '"%s"' "$text"
+}
+
+function agent_json_evidence ## <log> <total> <budget> - the evidence and elision members
+{
+    local log="$1" total="$2" budget="$3"
+    local rec out="" elided=',"elided":null' no_evidence="" from to
+    while IFS= read -r rec; do
+        case "$rec" in
+            "E "*)
+                local nr="${rec#E }"
+                nr="${nr%% *}"
+                out+="${out:+,}$(printf '{"line":%s,"text":%s}' \
+                    "$nr" "$(agent_json_string "${rec#E "$nr" }")")"
+                ;;
+            "X 0 0")
+                no_evidence=',"no_evidence":true'
+                ;;
+            "X "*)
+                from="${rec#X }"
+                to="${from##* }"
+                from="${from%% *}"
+                elided="$(printf ',"elided":{"from":%s,"to":%s,"lines":%s}' \
+                    "$from" "$to" "$((to - from + 1))")"
+                ;;
+        esac
+    done < <(agent_evidence "$log" "$total" "$budget")
+    printf '"evidence":[%s]%s%s' "$out" "$elided" "$no_evidence"
+}
+
+function agent_json_target ## <target> <log> <rc> - one JSON object for a measured target
+{
+    ## The same fields the text block carries: rc, chain, the byte exact totals and the log path,
+    ## plus the bounded evidence.  Consumers that need a parser get one; the terse text stays the
+    ## default because an agent reads lines, not braces.
+    local target="$1" log="$2" rc="$3"
+    local -i total bytes jrc=70
+    [[ "$rc" =~ ^[0-9]+$ ]] && jrc="$rc"
+    read -r total bytes < <(wc -l -c <"$log")
+    printf '{"target":%s,"ok":false,"rc":%s,"chain":%s,"lines":%s,"bytes":%s,"log":%s,%s}' \
+        "$(agent_json_string "$target")" "$jrc" \
+        "$(agent_json_string "$(agent_fail_chain "$target" "$log")")" \
+        "$total" "$bytes" "$(agent_json_string "$log")" \
+        "$(agent_json_evidence "$log" "$total" "$(agent_max_block 0)")"
+}
+
+function agent_json_success ## <target> <log> - one JSON object for a target that passed
+{
+    local target="$1" log="$2"
+    local -i total bytes
+    read -r total bytes < <(wc -l -c <"$log")
+    printf '{"target":%s,"ok":true,"rc":0,"lines":%s,"bytes":%s,"log":%s,"evidence":[]}' \
+        "$(agent_json_string "$target")" "$total" "$bytes" "$(agent_json_string "$log")"
+}
+
+function agent_run_block ## <mode> <target>.. - body of the 'check' and 'verdict' rules
+{
+    ## <mode> is 'verdict' (one line per target, plus the log path on failure) or 'check' (the
+    ## full bounded failure block).  Nothing changes the verdict itself: that line is always
+    ## printed, at every verbosity.
+    local mode="$1"
+    shift
+    if (( $# == 0 )); then
+        printf 'usage: bar %s <target> [target..]\n' "$mode" >&2
+        return 2
+    fi
+    local target dir rc
+    for target in "$@"; do
+        if [[ -z "$target" || "$target" == */* ]]; then
+            printf 'usage: bar %s <target> [target..] (a target name has no directory part)\n' \
+                "$mode" >&2
+            return 2
+        fi
+    done
+
+    local -i rc_all=0
+    local -a objects=()
+    dir="$(agent_run_dir)"
+    for target in "$@"; do
+        rc="$(agent_run_target "$target" "$dir")"
+        if [[ "$rc" == 0 ]]; then
+            if [[ -n "$BAR_AGENT_JSON" ]]; then
+                objects+=("$(agent_json_success "$target" "$dir/$target.log")")
+            else
+                printf 'OK %s\n' "$target"
+            fi
+            continue
+        fi
+        if (( rc_all == 0 )); then
+            rc_all="$rc"
+        fi
+        if [[ -n "$BAR_AGENT_JSON" ]]; then
+            objects+=("$(agent_json_target "$target" "$dir/$target.log" "$rc")")
+        elif [[ "$mode" == verdict ]]; then
+            printf 'FAIL %s (rc=%s)\n' "$target" "$(agent_rc_text "$rc")"
+            printf 'log: %s\n' "$dir/$target.log"
+        else
+            agent_report_failure "$target" "$dir/$target.log" "$rc"
+        fi
+    done
+    if [[ -n "$BAR_AGENT_JSON" ]]; then
+        local joined="" object ok=false
+        for object in "${objects[@]}"; do
+            joined+="${joined:+,}$object"
+        done
+        (( rc_all == 0 )) && ok=true
+        printf '{"bar_agent":1,"ok":%s,"rc":%s,"targets":[%s]}\n' "$ok" "$rc_all" "$joined"
+    fi
+    return "$rc_all"
+}
+
+function agent_log_body ## <target> [<from>,<to>|tail:<n>] - print the raw log of a previous run
+{
+    local target="${1:-}" range="${2:-}"
+    if [[ -z "$target" ]]; then
+        printf 'usage: bar log <target> [<from>,<to>|tail:<n>]\n' >&2
+        return 2
+    fi
+    local log
+    if ! log="$(agent_find_log "$target")"; then
+        printf 'no log for target %s under %s\n' "$target" "$BAR_TOPLEVEL/$BAR_AGENT_DIR" >&2
+        return 3
+    fi
+    case "$range" in
+        "")
+            cat -- "$log"
+            ;;
+        tail:*)
+            local count="${range#tail:}"
+            if [[ ! "$count" =~ ^[0-9]+$ ]]; then
+                printf 'usage: bar log <target> [<from>,<to>|tail:<n>]\n' >&2
+                return 2
+            fi
+            tail -n "$count" -- "$log"
+            ;;
+        *[0-9],[0-9]*)
+            local first="${range%%,*}" last="${range##*,}"
+            if [[ ! "$first" =~ ^[0-9]+$ || ! "$last" =~ ^[0-9]+$ ]]; then
+                printf 'usage: bar log <target> [<from>,<to>|tail:<n>]\n' >&2
+                return 2
+            fi
+            sed -n "${first},${last}p" "$log"
+            ;;
+        *)
+            printf 'usage: bar log <target> [<from>,<to>|tail:<n>]\n' >&2
+            return 2
+            ;;
+    esac
+}
+
+## Run targets and print a bounded verdict block: one 'OK <target>' line when a target passed,
+## otherwise its verdict, the failing chain, the exact totals of its raw output, a bounded and line
+## numbered excerpt of it and the path of the untruncated log.  Exits with the rc of the first
+## failing target.
+rule check: -- agent_run_block check '"${RULE_ARGS[@]}"'
+
+## Run targets and print one line per target only ('OK <target>' / 'FAIL <target> (rc=..)').  The
+## cheapest form, meant for polling loops and gating conditions; a failure additionally gets the
+## path of its log so it can be retrieved with 'bar log'.
+rule verdict: -- agent_run_block verdict '"${RULE_ARGS[@]}"'
+
+## Print the raw log a previous 'bar check'/'bar verdict' produced for <target>: everything, a line
+## range <from>,<to>, or 'tail:<n>'.  Byte identical to what 'sed -n'/'tail -n' print.
+rule log: -- agent_log_body '"${RULE_ARGS[0]:-}"' '"${RULE_ARGS[1]:-}"'
+
+## Machinereadable output: emit one JSON object per run (targets, rc, totals, evidence) instead of
+## the terse text.  For wrapper scripts, not for reading.
+rule --always --json: --conclusive -- '
+    BAR_AGENT_JSON=1
+    rule_eval "${RULE_ARGS[@]:-MAIN}"
+'
