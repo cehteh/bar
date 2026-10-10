@@ -849,10 +849,18 @@ MODULE API/RULES
           <file> <line> M <word>                                       a '# helper-module:' header
           <file> <line> D <name> <purpose> <usage> <output> <n> <word> a '# helper:' declaration
           <file> <line> R <rule>                                       a rule of a helper module
-          <file> <line> O                                              other code of a helper module
+          <file> <line> S                                              the code line separating a
+                                                                       declaration from its rule
         'D' records are emitted for every file -- a declaration outside a helper module is a
-        violation and has to be seen -- while 'R' and 'O' are only emitted after the module
-        header, so a module without helpers costs nothing.
+        violation and has to be seen -- while 'R' and 'S' are only emitted for a file which names a
+        helper module, so a module without helpers costs nothing.  'S' is the one code line that
+        separates a declaration from its rule; it is decided here and not by the walk, so the walk
+        costs one iteration per declaration and rule instead of one per line of a helper module.
+        A file which neither names a helper module nor declares a helper contributes no record at all
+        and is dropped before the walk, with one 'grep -l' that stops at the first matching line: the
+        index stays cheap while the module sources grow (a byte of a module nobody declares a helper
+        in costs a 'grep' byte, not an 'awk' line), and the records are the ones the walk would have
+        produced from the whole directory.
         Fields are separated by US (0x1f) and not by a tab: a declaration may have empty fields
         (that is one of the violations) and a tab is IFS whitespace, which 'read' would collapse.
 
@@ -900,6 +908,196 @@ MODULE API/RULES
         Verify that every helper module registers its rules ('bar helpers --check'): the guard is a
         check target, so 'bar check helpers_check' reports it with the agent contract (verdict, chain,
         totals, log path) and 'rule lints: helpers_check' can hook it into the lint target.
+
+  hermes - Retrieval over the Hermes log corpus -- what the logs of this host say about <X>, in one call
+    
+    Hermes writes a corpus of text on this host: the agent and gateway logs, one worker transcript
+    per kanban task, one output document per cron run, and the session store.  The corpus is large
+    (megabytes, millions of lines) and reading it with ad hoc pipelines -- 'grep' here, 'sed' there,
+    a 'sqlite3' query next -- costs several turns and floods an agent's context with raw
+    transcripts.  'hermes_logs' is the one deterministic answer instead: it streams the corpus once,
+    prints a bounded digest of the matching lines and keeps the complete match list on disk.
+    
+      please hermes_logs --grep <ere> --since 1d      # a bounded digest and the exact total
+      please hermes_logs --grep <ere> --count         # only the number
+      please hermes_logs --grep <ere> --json | jq .   # one object for a wrapper
+    
+    THE CORPUS (explicit, never guessed)
+    
+    One *corpus root* is a Hermes home directory; the default is '$HERMES_HOME' and falls back to
+    '~/.hermes'.  A root contributes the sources below, and only these -- nothing is searched
+    implicitly, no directory is discovered by walking:
+    
+      logs       <root>/logs/*.log, *.log.gz             the agent/gateway/gui logs
+      workers    <root>/kanban/logs/*.log, *.log.gz      one worker transcript per kanban task
+      cron       any file below <root>/cron/output/      'cron/output/<job>/<stamp>.md' and the
+                                                          flat legacy 'cron/output/<job>_*.txt'
+      sessions   <root>/sessions/*.jsonl, *.jsonl.gz     diverted (transcript) session records
+      store      <root>/state.db                         the SQLite session store, read only
+    
+    The root is overridable with '--root <dir>' (repeatable) or with the environment variable
+    BAR_HERMES_LOGS_ROOT (':' separated); '--root' wins.  Other Hermes profiles are addressed with
+    '--root ~/.hermes/profiles/<name>', never by guessing: a path that differs between the gateway,
+    the TUI and a worker is exactly what an agent must not hardcode.  With more than one root every
+    locator carries the index of its root ('#2/logs/agent.log:88') and one 'corpus:' line names each.
+    
+    THE ANSWER (one record per matching line)
+    
+      <locator> <TAB> <timestamp> <TAB> <snippet>
+    
+      locator       '<source path>:<line>' relative to its root ('logs/agent.log:1234'), so
+                    'sed -n 1234p <root>/logs/agent.log' retrieves the line byte for byte.  A store
+                    record has no file line and reads 'state.db:<session>/<message>/<line>', which
+                    'sqlite3 -readonly <root>/state.db' resolves with 'where id=<message>'.
+      timestamp     'YYYY-MM-DD HH:MM:SS' local time -- the stamp on the line when it has one (at the
+                    line start for a log line, anywhere on a JSON record), otherwise the stamp of the
+                    newest line above it that had one, otherwise the file's modification time.  A
+                    leading '~' marks those two derived cases, an exact stamp carries no marker.  A
+                    store record carries the message's own timestamp.
+      snippet       the line with its control characters removed, clipped at
+                    BAR_HERMES_LOGS_SNIPPET characters (default 160) with the number of characters
+                    left out appended as '<+N>'.  Tabs separate the fields; a snippet never holds one.
+    
+    Then the totals, as lines of their own and never implied:
+    
+      corpus: <root> [<sources scanned>]   matches: <n>   shown: <s> of <n> (limit <l> lines, <c> chars)
+      clipped: <k> snippet(s) at <c> chars   unreadable: <u> source(s) not scanned: <name>..
+      max: <path>
+    
+    'matches' is the exact number of matching lines, a hard assertion: it is the count the scan
+    produced over exactly the sources the 'corpus:' lines name, and it is qualified by 'unreadable'
+    when a source could not be read.  The digest prints at most '--limit' match lines (default 20,
+    BAR_HERMES_LOGS_LIMIT) and at most BAR_HERMES_LOGS_BYTES characters of them (default 1200), so
+    the answer stays around a kilobyte however busy the corpus is.  Whenever anything stays unshown
+    the complete match list is on disk before anything is printed and its absolute path is printed as
+    'max:'.  That file holds every match ('<locator> <TAB> <timestamp> <TAB> the whole line'), up to
+    BAR_HERMES_LOGS_MAX records (default 20000) -- beyond that the file is capped and 'max:' says so.
+    It is written below BAR_HERMES_LOGS_DIR (default $TMPDIR) and named after the query, so the same
+    question reuses one file and the answer stays retrievable.
+    
+    FILTERS
+    
+      --grep <ere>     an extended regular expression, matched against every line of every scanned
+                       source with 'grep -E' semantics.  Without it every line matches (the digest is
+                       still bounded, the count still exact).  It is the only thing that decides what
+                       counts: no keyword prefilter, no sampling, no ranking.
+      --since <when>   '<n>[smhdw]' (ago) or anything GNU 'date -d' accepts ('2026-10-10',
+                       '2026-10-10 08:00:00'); records before the cutoff are dropped.  In the store
+                       the range is pushed into SQL, which makes a bounded session query cheap.
+      --source <kind>  restrict to a source kind, repeatable.
+      --task <sel>     keep only the sources whose path contains <sel>: '--task t_9dd10ce5' keeps a
+                       worker transcript, '--run 2026-10-10' the cron run of that day.  Applied to
+                       the source path, so the store never matches a task selector.
+      --session <id>   keep only the records of that session: store rows whose session id contains it
+                       (in SQL), 'sessions/<id>.jsonl' files by name, and the lines of every other
+                       source by their text (the agent logs carry '[<session-id>]').
+      --count          the number alone -- it wins over '--json', because one number is already the
+                       machine form.  Nothing is elided here, so no 'max:' line is printed.
+    
+    EXIT CODES: 0 answered, matches found.  3 answered, no match ('grep' semantics: an answer, not a
+    failure -- the count is printed).  2 usage error.  1 could not answer: a root is not a directory,
+    or a source could not be read -- the digest is still printed, marked with 'unreadable:' and with
+    the reason on stderr, and the count then covers only what was readable.
+    
+    NON GOALS: no summarisation, no judgement, no LLM, no ranking -- it is a filter.  It does not
+    replace the 'session_search' tool for fuzzy recall, and it does not read what Hermes stores
+    outside the paths above (the kanban board as a database, cron job definitions, the vault).  It
+    never pages, never colours, and prints no progress on stdout.
+
+    Variables:
+
+      BAR_HERMES_LOGS_ROOT (gx)
+        ':' separated corpus roots, '--root' wins
+        Default: ${BAR_HERMES_LOGS_ROOT:-}
+
+      BAR_HERMES_LOGS_LIMIT (gx)
+        match lines the digest prints
+        Default: ${BAR_HERMES_LOGS_LIMIT:-20}
+
+      BAR_HERMES_LOGS_SNIPPET (gx)
+        characters kept of a matching line
+        Default: ${BAR_HERMES_LOGS_SNIPPET:-160}
+
+      BAR_HERMES_LOGS_MAX (gx)
+        records kept in the full match list
+        Default: ${BAR_HERMES_LOGS_MAX:-20000}
+
+      BAR_HERMES_LOGS_BYTES (gx)
+        characters of match records the digest prints
+        Default: ${BAR_HERMES_LOGS_BYTES:-1200}
+
+      BAR_HERMES_LOGS_DIR (gx)
+        where the full match list is written
+        Default: ${BAR_HERMES_LOGS_DIR:-}
+
+    Functions:
+
+      hermes_logs_json_string <text>
+        a JSON string literal
+
+      hermes_logs_json_array <literal..>
+        the literals as one JSON array
+
+      hermes_logs_selector <option> <value>
+        reject a selector neither SQL nor the shell can carry
+
+      hermes_logs_since <when>
+        resolve '--since' into HERMES_LOGS_Q_CUTOFF and Q_EPOCH
+        The cutoff is the local 'YYYY-MM-DD HH:MM:SS' the line timestamps are compared against (for
+        that shape a lexicographic comparison is a chronological one), the epoch is the same instant
+        for the SQL range.  Both are set here, or the call fails.
+
+      hermes_logs_wanted <kind> [kind..]
+        is this source kind wanted? (no kind: all)
+
+      hermes_logs_emit_files <root> <index> <kind> [file..]
+        source records, sorted by path
+        One record per file: '<kind>\t<index>\t<relpath>\t<mtime>', the mtime in the shape of a line
+        timestamp, so a source without timestamps is still dated.
+
+      hermes_logs_files <root> <index> [kind..]
+        the corpus of one root as source records
+
+      hermes_logs_program - the awk filter, one program for a text source and for the store
+        It reads its query from the environment ('HL_*') and not from 'awk -v': '-v' would interpret
+        backslash escapes in the pattern and silently search for a different expression.  It streams:
+        one line in, at most two records out (the full match list and the digest), never a buffer of
+        matches.  A store row is '<session> 0x1f <message> 0x1f <timestamp> 0x1f <content>', the
+        content's newlines encoded as 0x01.
+
+      hermes_logs_scan_file <file> <locator> <mtime> <session-filter>
+        scan one text source
+
+      hermes_logs_scan_store <db> <locator> <mtime>
+        scan the session store, read only
+        The store is read with 'sqlite3 -readonly': it never creates a journal and never touches the
+        live writer's WAL.  '--since' is pushed into SQL and the session selector becomes
+        'instr(session_id, ..)' so that it stays a substring match and no LIKE wildcard changes its
+        meaning.  The content is deliberately *not* prefetched by keyword: the pattern decides what
+        counts, in awk, exactly as it does for a file.  A newline inside a message is encoded as 0x01
+        and a stray 0x1f as 0x1e, so one row is one input line; both are control characters and are
+        removed from the snippet anyway.
+
+      hermes_logs_used <kind> <root-index>
+        remember which sources one root contributed
+        The digest: the bounded match lines, then the totals as lines of their own.
+        The same numbers and the same records as one object, for a wrapper.
+
+      hermes_logs_scan - scan the corpus of HERMES_LOGS_Q_ROOTS and print the answer
+        Streams every source once, appends every match to the full match list (bounded by
+        HERMES_LOGS_Q_MAX), keeps the digest records (bounded by HERMES_LOGS_Q_LIMIT) and prints one
+        of the three answers.  Returns the exit code of the module's contract.
+        Body of the 'hermes_logs' rule: parse the options into the query context, resolve the corpus
+        roots and hand over to 'hermes_logs_scan'.  See the module header for the contract.
+
+    Rules:
+
+      hermes_logs
+        The one deterministic answer to 'what do the logs of this host say about <X>'.  Streams the
+        corpus once (agent/gateway logs, kanban worker transcripts, cron run outputs, the session store),
+        prints a bounded digest and the exact match count, and keeps the complete match list on disk.
+        Exit 0 answered, 3 for no match, 2 usage error, 1 a source could not be read.  See the module
+        header for the corpus, the locator format, the filters and the non goals.
 
   init - Module to install, initialize and update bar itself
 
@@ -1188,6 +1386,139 @@ MODULE API/RULES
 
       update_radicle_desktop [HEAD|TAG]
         Build radicle-desktop, [HEAD|TAG] or the latest stable
+
+  radstate - Radicle repository state: what this checkout is, what it carries and what is still local.
+    
+    One invocation answers the questions an agent asks before it touches a radicle repository:
+    which repository is this (RID, name, path), which identity does 'rad' use here, how the
+    patches stand (how many, by state, ours against others), how the issues stand (state, labels,
+    when something happened last) and which local branches still carry commits no patch exposes.
+    
+      bar radstate [--json] [--max <n>]                     the whole state, one screen
+      bar radstate_patches [--state <s>] [--author <a>] [--json] [--max <n>]
+                                                            only the patches, filtered
+    
+    Nothing here goes to the network: 'rad patch/issue list' answer from the local node storage
+    and the divergence is measured against 'rad/main' as the last 'git fetch rad' left it, which
+    the 'head' line names.  Syncing is the caller's business ('rad sync', 'git fetch rad'): this
+    helper reports what is there and says how old it is.
+    
+    SOURCES
+    
+      rad inspect --rid         the repository identity, 'git rev-parse' the toplevel
+      rad self                  alias and DID of the identity 'rad' uses here
+      rad patch list --all      patch id, title, author and head (the state is not in the list)
+      rad issue list --all      issue id, title, author, labels and assignees
+      rad patch/issue list --authored/--draft/--merged/--archived/--closed/--solved
+                                rad prints one state per call, so the states are subtracted as
+                                sets: 'open' is what is in '--all' and in none of the others, and
+                                'ours' is what '--authored' (patches) or '(you)' (issues) says
+      the node storage          time and kind of the last event of every patch and issue, read
+                                from 'refs/namespaces/*/refs/cobs/xyz.radicle.<type>' below
+                                '$(rad path)/storage/<RID>' with 'git for-each-ref'
+      git for-each-ref/rev-list the current branch, the local branches and their distance from
+                                'refs/remotes/rad/main' or 'refs/remotes/rad/master'
+    
+    OUTPUT
+    
+      Text: one header line per section -- '<section>  <counts>' -- then one line per item, the
+      free text last so that nothing has to be padded.  Ages are short ('6m', '2h', '1y') and are
+      those of the last event.  '--json': one object with 'bar_radstate': 1, the complete data,
+      never elided.
+      At most '--max' items per section (default 10, '--max 0' lists all).  A section which is
+      cut states exactly how much ('n of N elided'), and when anything was cut the complete text
+      is written to a file whose path the last line prints, so the elision loses nothing.
+    
+      'ours' is what 'rad' itself calls ours, everything else is 'other' (whose author is then
+      named behind the title); a patch which rad lists in more than one state is named by the
+      first of 'draft', 'merged', 'archived'.
+    
+    EXIT CODES
+    
+      0  answered (an empty repository -- no patch, no issue -- is an answer, not a failure)
+      2  usage error
+      3  no data: not a git repository, or no radicle repository here
+      1  could not answer: 'rad' is missing or failed, or its output was not understood
+    
+    'RADSTATE_RAD' names the command to run instead of 'rad' (the tests point it at a fake),
+    'RADSTATE_MAX' is the default of '--max'.  Reading rad's tables back needs a character aware
+    shell; bar exports a UTF-8 'LC_ALL' whenever the system has one.
+    
+    The rules below are about 'rad', the radicle frontend and the repository it is used in.
+    Building a radicle installation itself is Bar.d/radicle.
+
+    Variables:
+
+      RADSTATE_RAD (gx)
+        the command to use instead of 'rad'
+        Default: ${RADSTATE_RAD:-rad}
+
+      RADSTATE_MAX (gx)
+        default of '--max': items printed per section
+        Default: ${RADSTATE_MAX:-10}
+
+      RADSTATE_PATCHES (ga)
+        one record per patch, see 'radstate_collect'
+        Default: ()
+
+      RADSTATE_ISSUES (ga)
+        one record per issue, see 'radstate_collect'
+        Default: ()
+
+      RADSTATE_BRANCHES (ga)
+        one record per local branch, see 'radstate_collect'
+        Default: ()
+
+      RADSTATE_COB_TIME (gA)
+        '<type>:<id>' -> '<updated> <created> <kind>'
+        Default: ()
+
+      RADSTATE_CUT (gi)
+        items the last text rendering elided
+        Default: 0
+
+      RADSTATE_NOW (gi)
+        the timestamp the ages are relative to
+        Default: 0
+
+    Functions:
+        'rad' pads the cells of its tables by character, so the columns can only be cut at the same
+        offsets when the shell measures the same way.  That is the case in a UTF-8 locale, which bar
+        exports whenever the system has one; in a byte locale a cell holding a non ASCII character
+        shifts everything behind it and 'radstate' says so instead of reporting it wrongly.
+        (A double width character -- CJK, emoji -- is one column to a character wise shell and two
+        to rad: such a title would shift the columns of its row too.)
+        '│ ●  a1bd13a  title  ...  │' -> 'a1bd13a  title  ...'.  The marker cell is a single token
+        ('●' or '✓', whatever rad prints there) and is dropped: the columns behind it then start at
+        the same offset in the header line and in every row, which is what 'radstate_table' cuts by.
+        A column starts where a run of two or more spaces ends and content follows (plus the first
+        one): the two spaces are the separator between two cells, the padding of a cell is never
+        part of its neighbour.  Neither a name nor a value is needed for this, the header line
+        carries the layout itself.
+        The columns are located by name in the header line (see 'radstate_columns' for where a
+        column starts), then every row is cut at the same offsets -- up to where the next column
+        begins, so that a requested cell never carries the ones behind it.  Cut and not split: a
+        cell may itself contain two spaces (a truncated author reads 'ct_vibes  (you)'), which
+        splitting on whitespace would tear apart.  Every requested name has to exist in the table,
+        otherwise this returns 1 and the caller reports that rad's output could not be understood.
+        A state filter is answered with a table of the same shape and only the ids are taken from
+        it.  An empty result is 'Nothing to show.' or nothing at all -- that is no id, not an
+        error; box drawing characters without a header to cut by are an error (return 1).
+        'Nothing to show.' and nothing at all are no rows, not an error; box drawing characters
+        without a header to cut by are.
+        Fails with 1 and a diagnostic on stderr when rad failed, with 3 when the failure was that
+        there is no radicle repository: stderr is folded into the output so both can be told apart.
+        The kind and the time of the last event of every patch and issue, into 'RADSTATE_COB_TIME'.
+        Every namespace of the node storage keeps a copy of a COB, so the newest commit over all of
+        them is the last event and its subject names its kind ('Comment', 'Merge revision', ...).
+        A storage which is not there is not an error, the times stay empty then.
+          patch  id state own author head title updated created kind
+          issue  id state own author labels assignees title updated created kind
+          branch name commit ahead patch
+        Returns 3 when there is no repository to report on (a radicle repository is a git
+        repository with a radicle identity), 1 when rad failed or its output was not understood.
+        the author of a patch of ours is us, naming it again would only repeat the identity
+        line; for the others it says who to talk to
 
   release - Rules for software releases
     

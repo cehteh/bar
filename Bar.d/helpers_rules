@@ -104,11 +104,20 @@ function helpers_records ## - scan '$BAR_DIR' for the repertoire, as US (0x1f) s
     ##   <file> <line> M <word>                                       a '# helper-module:' header
     ##   <file> <line> D <name> <purpose> <usage> <output> <n> <word> a '# helper:' declaration
     ##   <file> <line> R <rule>                                       a rule of a helper module
-    ##   <file> <line> O                                              other code of a helper module
+    ##   <file> <line> S                                              the code line separating a
+    ##                                                                declaration from its rule
     ##
     ## 'D' records are emitted for every file -- a declaration outside a helper module is a
-    ## violation and has to be seen -- while 'R' and 'O' are only emitted after the module
-    ## header, so a module without helpers costs nothing.
+    ## violation and has to be seen -- while 'R' and 'S' are only emitted for a file which names a
+    ## helper module, so a module without helpers costs nothing.  'S' is the one code line that
+    ## separates a declaration from its rule; it is decided here and not by the walk, so the walk
+    ## costs one iteration per declaration and rule instead of one per line of a helper module.
+    ##
+    ## A file which neither names a helper module nor declares a helper contributes no record at all
+    ## and is dropped before the walk, with one 'grep -l' that stops at the first matching line: the
+    ## index stays cheap while the module sources grow (a byte of a module nobody declares a helper
+    ## in costs a 'grep' byte, not an 'awk' line), and the records are the ones the walk would have
+    ## produced from the whole directory.
     ##
     ## Fields are separated by US (0x1f) and not by a tab: a declaration may have empty fields
     ## (that is one of the violations) and a tab is IFS whitespace, which 'read' would collapse.
@@ -120,6 +129,13 @@ function helpers_records ## - scan '$BAR_DIR' for the repertoire, as US (0x1f) s
         fi
     done
     if (( ${#files[@]} == 0 )); then
+        return 0
+    fi
+    local -a helper_files=()
+    while IFS= read -r file; do
+        helper_files+=( "$file" )
+    done < <(LC_ALL=C grep -l -e '^# helper-module:' -e '^# helper:' "${files[@]}" || true)
+    if (( ${#helper_files[@]} == 0 )); then
         return 0
     fi
     awk '
@@ -140,7 +156,10 @@ function helpers_records ## - scan '$BAR_DIR' for the repertoire, as US (0x1f) s
             return text
         }
         BEGIN { OFS = sprintf("%c", 31) }
-        FNR == 1 { module = "" }
+        FNR == 1 {
+            module = ""
+            pending = 0
+        }
         /^# helper-module:/ {
             text = $0
             sub(/^# helper-module:[ \t]*/, "", text)
@@ -154,14 +173,22 @@ function helpers_records ## - scan '$BAR_DIR' for the repertoire, as US (0x1f) s
             count = split(text, field, "|")
             print FILENAME, FNR, "D", trim(field[1]), trim(field[2]), trim(field[3]), \
                 trim(field[4]), count, module
+            pending = 1
             next
         }
         module == "" { next }
-        /^(new)?rule[ \t]/ { print FILENAME, FNR, "R", rule_name($0); next }
+        /^(new)?rule[ \t]/ {
+            print FILENAME, FNR, "R", rule_name($0)
+            pending = 0
+            next
+        }
         /^[ \t]*$/ { next }
         /^[ \t]*#/ { next }
-        { print FILENAME, FNR, "O" }
-    ' "${files[@]}"
+        pending {
+            print FILENAME, FNR, "S"
+            pending = 0
+        }
+    ' "${helper_files[@]}"
 }
 
 function helpers_declaration_error ## <name> <purpose> <usage> <output> <fields> <word> - why is a declaration unusable?
@@ -282,7 +309,7 @@ function helpers_walk ## - the one validation pass behind the index and the guar
             declared_reported=0
             separated=0
             ;;
-        O)
+        S)
             if [[ -n "$declared" && "$separated" == 0 ]]; then
                 printf "!%s:%s: the declaration of '%s' is separated from its rule by other code\n" \
                     "$file" "$line" "$declared"

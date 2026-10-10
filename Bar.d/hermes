@@ -1,0 +1,744 @@
+# -*- mode: sh; sh-shell: bash -*-
+# vim: set ft=bash:
+# shellcheck shell=bash
+# shellcheck disable=SC2016
+
+### Retrieval over the Hermes log corpus -- what the logs of this host say about <X>, in one call
+###
+### Hermes writes a corpus of text on this host: the agent and gateway logs, one worker transcript
+### per kanban task, one output document per cron run, and the session store.  The corpus is large
+### (megabytes, millions of lines) and reading it with ad hoc pipelines -- 'grep' here, 'sed' there,
+### a 'sqlite3' query next -- costs several turns and floods an agent's context with raw
+### transcripts.  'hermes_logs' is the one deterministic answer instead: it streams the corpus once,
+### prints a bounded digest of the matching lines and keeps the complete match list on disk.
+###
+###   please hermes_logs --grep <ere> --since 1d      # a bounded digest and the exact total
+###   please hermes_logs --grep <ere> --count         # only the number
+###   please hermes_logs --grep <ere> --json | jq .   # one object for a wrapper
+###
+### THE CORPUS (explicit, never guessed)
+###
+### One *corpus root* is a Hermes home directory; the default is '$HERMES_HOME' and falls back to
+### '~/.hermes'.  A root contributes the sources below, and only these -- nothing is searched
+### implicitly, no directory is discovered by walking:
+###
+###   logs       <root>/logs/*.log, *.log.gz             the agent/gateway/gui logs
+###   workers    <root>/kanban/logs/*.log, *.log.gz      one worker transcript per kanban task
+###   cron       any file below <root>/cron/output/      'cron/output/<job>/<stamp>.md' and the
+###                                                       flat legacy 'cron/output/<job>_*.txt'
+###   sessions   <root>/sessions/*.jsonl, *.jsonl.gz     diverted (transcript) session records
+###   store      <root>/state.db                         the SQLite session store, read only
+###
+### The root is overridable with '--root <dir>' (repeatable) or with the environment variable
+### BAR_HERMES_LOGS_ROOT (':' separated); '--root' wins.  Other Hermes profiles are addressed with
+### '--root ~/.hermes/profiles/<name>', never by guessing: a path that differs between the gateway,
+### the TUI and a worker is exactly what an agent must not hardcode.  With more than one root every
+### locator carries the index of its root ('#2/logs/agent.log:88') and one 'corpus:' line names each.
+###
+### THE ANSWER (one record per matching line)
+###
+###   <locator> <TAB> <timestamp> <TAB> <snippet>
+###
+###   locator       '<source path>:<line>' relative to its root ('logs/agent.log:1234'), so
+###                 'sed -n 1234p <root>/logs/agent.log' retrieves the line byte for byte.  A store
+###                 record has no file line and reads 'state.db:<session>/<message>/<line>', which
+###                 'sqlite3 -readonly <root>/state.db' resolves with 'where id=<message>'.
+###   timestamp     'YYYY-MM-DD HH:MM:SS' local time -- the stamp on the line when it has one (at the
+###                 line start for a log line, anywhere on a JSON record), otherwise the stamp of the
+###                 newest line above it that had one, otherwise the file's modification time.  A
+###                 leading '~' marks those two derived cases, an exact stamp carries no marker.  A
+###                 store record carries the message's own timestamp.
+###   snippet       the line with its control characters removed, clipped at
+###                 BAR_HERMES_LOGS_SNIPPET characters (default 160) with the number of characters
+###                 left out appended as '<+N>'.  Tabs separate the fields; a snippet never holds one.
+###
+### Then the totals, as lines of their own and never implied:
+###
+###   corpus: <root> [<sources scanned>]   matches: <n>   shown: <s> of <n> (limit <l> lines, <c> chars)
+###   clipped: <k> snippet(s) at <c> chars   unreadable: <u> source(s) not scanned: <name>..
+###   max: <path>
+###
+### 'matches' is the exact number of matching lines, a hard assertion: it is the count the scan
+### produced over exactly the sources the 'corpus:' lines name, and it is qualified by 'unreadable'
+### when a source could not be read.  The digest prints at most '--limit' match lines (default 20,
+### BAR_HERMES_LOGS_LIMIT) and at most BAR_HERMES_LOGS_BYTES characters of them (default 1200), so
+### the answer stays around a kilobyte however busy the corpus is.  Whenever anything stays unshown
+### the complete match list is on disk before anything is printed and its absolute path is printed as
+### 'max:'.  That file holds every match ('<locator> <TAB> <timestamp> <TAB> the whole line'), up to
+### BAR_HERMES_LOGS_MAX records (default 20000) -- beyond that the file is capped and 'max:' says so.
+### It is written below BAR_HERMES_LOGS_DIR (default $TMPDIR) and named after the query, so the same
+### question reuses one file and the answer stays retrievable.
+###
+### FILTERS
+###
+###   --grep <ere>     an extended regular expression, matched against every line of every scanned
+###                    source with 'grep -E' semantics.  Without it every line matches (the digest is
+###                    still bounded, the count still exact).  It is the only thing that decides what
+###                    counts: no keyword prefilter, no sampling, no ranking.
+###   --since <when>   '<n>[smhdw]' (ago) or anything GNU 'date -d' accepts ('2026-10-10',
+###                    '2026-10-10 08:00:00'); records before the cutoff are dropped.  In the store
+###                    the range is pushed into SQL, which makes a bounded session query cheap.
+###   --source <kind>  restrict to a source kind, repeatable.
+###   --task <sel>     keep only the sources whose path contains <sel>: '--task t_9dd10ce5' keeps a
+###                    worker transcript, '--run 2026-10-10' the cron run of that day.  Applied to
+###                    the source path, so the store never matches a task selector.
+###   --session <id>   keep only the records of that session: store rows whose session id contains it
+###                    (in SQL), 'sessions/<id>.jsonl' files by name, and the lines of every other
+###                    source by their text (the agent logs carry '[<session-id>]').
+###   --count          the number alone -- it wins over '--json', because one number is already the
+###                    machine form.  Nothing is elided here, so no 'max:' line is printed.
+###
+### EXIT CODES: 0 answered, matches found.  3 answered, no match ('grep' semantics: an answer, not a
+### failure -- the count is printed).  2 usage error.  1 could not answer: a root is not a directory,
+### or a source could not be read -- the digest is still printed, marked with 'unreadable:' and with
+### the reason on stderr, and the count then covers only what was readable.
+###
+### NON GOALS: no summarisation, no judgement, no LLM, no ranking -- it is a filter.  It does not
+### replace the 'session_search' tool for fuzzy recall, and it does not read what Hermes stores
+### outside the paths above (the kanban board as a database, cron job definitions, the vault).  It
+### never pages, never colours, and prints no progress on stdout.
+
+# helper-module: hermes
+
+declare -gx BAR_HERMES_LOGS_ROOT="${BAR_HERMES_LOGS_ROOT:-}"            ## ':' separated corpus roots, '--root' wins
+declare -gx BAR_HERMES_LOGS_LIMIT="${BAR_HERMES_LOGS_LIMIT:-20}"        ## match lines the digest prints
+declare -gx BAR_HERMES_LOGS_SNIPPET="${BAR_HERMES_LOGS_SNIPPET:-160}"   ## characters kept of a matching line
+declare -gx BAR_HERMES_LOGS_MAX="${BAR_HERMES_LOGS_MAX:-20000}"         ## records kept in the full match list
+declare -gx BAR_HERMES_LOGS_BYTES="${BAR_HERMES_LOGS_BYTES:-1200}"      ## characters of match records the digest prints
+declare -gx BAR_HERMES_LOGS_DIR="${BAR_HERMES_LOGS_DIR:-}"              ## where the full match list is written
+
+# The query context of a running call ('Q_') and its result ('R_', plus the run state 'HERMES_LOGS_*'
+# below).  One call runs in one shell; the rule body is the only writer of 'Q_', 'hermes_logs_scan'
+# the only writer of 'R_'.
+declare -g  HERMES_LOGS_Q_PAT="" HERMES_LOGS_Q_ICASE="" HERMES_LOGS_Q_CUTOFF="" HERMES_LOGS_Q_EPOCH=""
+declare -g  HERMES_LOGS_Q_TASK="" HERMES_LOGS_Q_SESSION="" HERMES_LOGS_Q_LIMIT=0 HERMES_LOGS_Q_SNIP=0
+declare -g  HERMES_LOGS_Q_MAX=0 HERMES_LOGS_Q_COUNT="" HERMES_LOGS_Q_JSON="" HERMES_LOGS_Q_TAG=""
+declare -g  HERMES_LOGS_Q_BYTES=0
+declare -ga HERMES_LOGS_Q_KINDS=() HERMES_LOGS_Q_ROOTS=()
+declare -g  HERMES_LOGS_R_TOTAL=0 HERMES_LOGS_R_CLIPPED=0 HERMES_LOGS_R_KEPT=0 HERMES_LOGS_R_SHOWN=0
+declare -g  HERMES_LOGS_R_BYTES=0 HERMES_LOGS_R_UNREADABLE=0
+declare -g  HERMES_LOGS_R_HITS="" HERMES_LOGS_R_CLIP="" HERMES_LOGS_R_STAT=""
+declare -ga HERMES_LOGS_R_LOST=() HERMES_LOGS_ENV=()
+declare -gA HERMES_LOGS_R_USED=()
+declare -g  HERMES_LOGS_PROGRAM=""
+
+function hermes_logs_usage
+{
+    cat >&2 <<'USAGE'
+usage: bar hermes_logs [--grep <ere>] [-i] [--since <when>] [--source <kind>].. [--task <sel>]
+                       [--session <id>] [--limit <n>] [--count] [--json] [--root <dir>]..
+
+  --grep <ere>       keep only lines matching the extended regular expression
+  -i, --ignore-case  match the pattern case insensitively
+  --since <when>     keep records at or after <when>: '<n>[smhdw]' ago ('90m', '1d') or an
+                     absolute time ('2026-10-10', '2026-10-10 08:00:00')
+  --source <kind>    scan only this source kind, repeatable: logs workers cron sessions store
+  --task <sel>       keep only sources whose path contains <sel> ('--task t_9dd10ce5')
+  --session <id>     keep only the records of that session
+  --limit <n>        at most <n> match lines in the digest
+  --count            print the exact number of matching lines and nothing else
+  --json             print one JSON object instead of lines
+  --root <dir>       corpus root, repeatable; overrides BAR_HERMES_LOGS_ROOT;
+                     default $HERMES_HOME or ~/.hermes
+USAGE
+    return 2
+}
+
+function hermes_logs_json_string ## <text> - a JSON string literal
+{
+    local text="$1"
+    text="${text//\\/\\\\}"
+    text="${text//\"/\\\"}"
+    text="${text//$'\t'/\\t}"
+    printf '"%s"' "$text"
+}
+
+function hermes_logs_json_array ## <literal..> - the literals as one JSON array
+{
+    local item joined="" separator=""
+    for item in "$@"; do
+        joined="${joined}${separator}${item}"
+        separator=","
+    done
+    printf '[%s]' "$joined"
+}
+
+function hermes_logs_selector ## <option> <value> - reject a selector neither SQL nor the shell can carry
+{
+    if [[ "$2" == *[[:cntrl:]]* ]]; then
+        printf 'hermes_logs: %s may not contain control characters\n' "$1" >&2
+        return 1
+    fi
+    return 0
+}
+
+function hermes_logs_since ## <when> - resolve '--since' into HERMES_LOGS_Q_CUTOFF and Q_EPOCH
+{
+    ## The cutoff is the local 'YYYY-MM-DD HH:MM:SS' the line timestamps are compared against (for
+    ## that shape a lexicographic comparison is a chronological one), the epoch is the same instant
+    ## for the SQL range.  Both are set here, or the call fails.
+    local when="$1" n unit secs epoch
+    case "$when" in
+    *[0-9][smhdw])
+        n="${when%?}"
+        [[ "$n" =~ ^[0-9]+$ ]] || return 1
+        unit="${when: -1}"
+        case "$unit" in
+        s) secs=1 ;;
+        m) secs=60 ;;
+        h) secs=3600 ;;
+        d) secs=86400 ;;
+        w) secs=604800 ;;
+        esac
+        epoch="$(( $(date +%s) - n * secs ))"
+        ;;
+    *)
+        epoch="$(date -d "$when" +%s 2>/dev/null)" || return 1
+        [[ -n "$epoch" ]] || return 1
+        ;;
+    esac
+    HERMES_LOGS_Q_CUTOFF="$(date -d "@$epoch" '+%Y-%m-%d %H:%M:%S')" || return 1
+    HERMES_LOGS_Q_EPOCH="$epoch"
+    return 0
+}
+
+function hermes_logs_wanted ## <kind> [kind..] - is this source kind wanted? (no kind: all)
+{
+    (( $# == 1 )) && return 0
+    local kind
+    for kind in "${@:2}"; do
+        [[ "$kind" == "$1" ]] && return 0
+    done
+    return 1
+}
+
+function hermes_logs_emit_files ## <root> <index> <kind> [file..] - source records, sorted by path
+{
+    ## One record per file: '<kind>\t<index>\t<relpath>\t<mtime>', the mtime in the shape of a line
+    ## timestamp, so a source without timestamps is still dated.
+    local root="$1" index="$2" kind="$3"
+    shift 3
+    (( $# )) || return 0
+    local file
+    printf '%s\n' "$@" | LC_ALL=C sort -u | while IFS= read -r file; do
+        printf '%s\t%s\t%s\t%s\n' "$kind" "$index" "${file#"$root"/}" \
+            "$(date -r "$file" '+%Y-%m-%d %H:%M:%S')"
+    done
+}
+
+function hermes_logs_files ## <root> <index> [kind..] - the corpus of one root as source records
+{
+    local root="$1" index="$2"
+    shift 2
+    local file
+    local -a files=()
+    if hermes_logs_wanted logs "$@"; then
+        for file in "$root"/logs/*.log "$root"/logs/*.log.gz; do
+            if [[ -f "$file" ]]; then files+=( "$file" ); fi
+        done
+        hermes_logs_emit_files "$root" "$index" logs ${files[@]+"${files[@]}"}
+        files=()
+    fi
+    if hermes_logs_wanted workers "$@"; then
+        for file in "$root"/kanban/logs/*.log "$root"/kanban/logs/*.log.gz; do
+            if [[ -f "$file" ]]; then files+=( "$file" ); fi
+        done
+        hermes_logs_emit_files "$root" "$index" workers ${files[@]+"${files[@]}"}
+        files=()
+    fi
+    if hermes_logs_wanted cron "$@"; then
+        if [[ -d "$root/cron/output" ]]; then
+            while IFS= read -r file; do files+=( "$file" ); done \
+                < <(find "$root/cron/output" -type f 2>/dev/null)
+        fi
+        hermes_logs_emit_files "$root" "$index" cron ${files[@]+"${files[@]}"}
+        files=()
+    fi
+    if hermes_logs_wanted sessions "$@"; then
+        for file in "$root"/sessions/*.jsonl "$root"/sessions/*.jsonl.gz; do
+            if [[ -f "$file" ]]; then files+=( "$file" ); fi
+        done
+        hermes_logs_emit_files "$root" "$index" sessions ${files[@]+"${files[@]}"}
+        files=()
+    fi
+    if hermes_logs_wanted store "$@" && [[ -f "$root/state.db" ]]; then
+        printf '%s\t%s\t%s\t%s\n' store "$index" state.db \
+            "$(date -r "$root/state.db" '+%Y-%m-%d %H:%M:%S')"
+    fi
+    return 0
+}
+
+function hermes_logs_program ## - the awk filter, one program for a text source and for the store
+{
+    ## It reads its query from the environment ('HL_*') and not from 'awk -v': '-v' would interpret
+    ## backslash escapes in the pattern and silently search for a different expression.  It streams:
+    ## one line in, at most two records out (the full match list and the digest), never a buffer of
+    ## matches.  A store row is '<session> 0x1f <message> 0x1f <timestamp> 0x1f <content>', the
+    ## content's newlines encoded as 0x01.
+    cat <<'AWK'
+BEGIN {
+    OFS = "\t"
+    US = sprintf("%c", 31)
+    NL = sprintf("%c", 1)
+    mode = ENVIRON["HL_MODE"]
+    pat = ENVIRON["HL_PAT"]
+    ses = ENVIRON["HL_SES"]
+    icase = ENVIRON["HL_ICASE"] + 0
+    cutoff = ENVIRON["HL_CUTOFF"]
+    loc = ENVIRON["HL_LOC"]
+    mtime = ENVIRON["HL_MTIME"]
+    snip = ENVIRON["HL_SNIP"] + 0
+    limit = ENVIRON["HL_LIMIT"] + 0
+    budget = ENVIRON["HL_BYTES"] + 0
+    max = ENVIRON["HL_MAX"] + 0
+    hits = ENVIRON["HL_HITS"]
+    clip = ENVIRON["HL_CLIP"]
+    if (icase)
+        pat = tolower(pat)
+    total = 0
+    clipped = 0
+    kept = 0
+    shown = 0
+    used = 0
+    last = ""
+}
+
+function text(line,   s) {
+    s = line
+    gsub(/\t/, " ", s)
+    gsub(/[[:cntrl:]]/, "", s)
+    gsub(/  +/, " ", s)
+    sub(/^ /, "", s)
+    sub(/ $/, "", s)
+    return s
+}
+
+function stamp(line,   t) {
+    exact = 1
+    if (match(line, /^[ \t]*[[]?[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9][ T][0-9][0-9]:[0-9][0-9]:[0-9][0-9]/)) {
+        t = substr(line, RSTART, RLENGTH)
+        sub(/^[ \t[]+/, "", t)
+    } else if (substr(line, 1, 1) == "{" && match(line, /[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9][ T][0-9][0-9]:[0-9][0-9]:[0-9][0-9]/)) {
+        t = substr(line, RSTART, RLENGTH)
+    } else {
+        exact = 0
+        if (last != "")
+            return last
+        return mtime
+    }
+    gsub(/T/, " ", t)
+    last = t
+    return t
+}
+
+function emit(line, at, ts, isexact,   full, brief, n, record) {
+    if (pat != "" && (icase ? tolower(line) : line) !~ pat)
+        return
+    if (cutoff != "" && ts < cutoff)
+        return
+    total++
+    if (kept < max) {
+        full = text(line)
+        print at, (isexact ? ts : "~" ts), full >> hits
+        kept++
+    }
+    if (shown < limit) {
+        brief = text(line)
+        n = length(brief) - snip
+        if (n > 0) {
+            clipped++
+            brief = substr(brief, 1, snip) " <+" n ">"
+        }
+        record = at "\t" (isexact ? ts : "~" ts) "\t" brief
+        if (used + length(record) + 1 <= budget) {
+            print record >> clip
+            used += length(record) + 1
+            shown++
+        }
+    }
+}
+
+mode == "file" {
+    if (ses != "" && index($0, ses) == 0)
+        next
+    t = stamp($0)
+    e = exact
+    emit($0, loc ":" FNR, t, e)
+    next
+}
+
+mode == "store" {
+    nf = split($0, f, US)
+    if (nf < 4)
+        next
+    session = f[1]
+    mid = f[2]
+    ts = f[3]
+    content = f[4]
+    for (i = 5; i <= nf; i++)
+        content = content US f[i]
+    nf = split(content, part, NL)
+    for (i = 1; i <= nf; i++)
+        emit(part[i], "state.db:" session "/" mid "/" i, ts, 1)
+    next
+}
+
+END {
+    print total, clipped, kept, shown, used
+}
+AWK
+}
+
+function hermes_logs_scan_file ## <file> <locator> <mtime> <session-filter> - scan one text source
+{
+    local file="$1" loc="$2" mtime="$3" ses="$4" rc=0
+    : >"$HERMES_LOGS_R_STAT"
+    if [[ "$file" == *.gz ]]; then
+        if ! command -v gzip >/dev/null; then
+            printf 'hermes_logs: gzip is not installed, %s is not scanned\n' "$file" >&2
+            return 1
+        fi
+        gzip -dc "$file" | env "${HERMES_LOGS_ENV[@]}" HL_MODE=file HL_LOC="$loc" HL_MTIME="$mtime" \
+            HL_SES="$ses" awk "$HERMES_LOGS_PROGRAM" >"$HERMES_LOGS_R_STAT" || rc=$?
+    else
+        env "${HERMES_LOGS_ENV[@]}" HL_MODE=file HL_LOC="$loc" HL_MTIME="$mtime" HL_SES="$ses" \
+            awk "$HERMES_LOGS_PROGRAM" "$file" >"$HERMES_LOGS_R_STAT" || rc=$?
+    fi
+    return "$rc"
+}
+
+function hermes_logs_scan_store ## <db> <locator> <mtime> - scan the session store, read only
+{
+    ## The store is read with 'sqlite3 -readonly': it never creates a journal and never touches the
+    ## live writer's WAL.  '--since' is pushed into SQL and the session selector becomes
+    ## 'instr(session_id, ..)' so that it stays a substring match and no LIKE wildcard changes its
+    ## meaning.  The content is deliberately *not* prefetched by keyword: the pattern decides what
+    ## counts, in awk, exactly as it does for a file.  A newline inside a message is encoded as 0x01
+    ## and a stray 0x1f as 0x1e, so one row is one input line; both are control characters and are
+    ## removed from the snippet anyway.
+    local db="$1" loc="$2" mtime="$3" rc=0 selector
+    : >"$HERMES_LOGS_R_STAT"
+    if ! command -v sqlite3 >/dev/null; then
+        printf 'hermes_logs: sqlite3 is not installed, %s is not scanned\n' "$db" >&2
+        return 1
+    fi
+    local sql="select session_id, id, datetime(timestamp,'unixepoch','localtime'),"
+    sql="$sql replace(replace(coalesce(content,''), char(10), char(1)), char(31), char(30))"
+    sql="$sql from messages"
+    if [[ -n "$HERMES_LOGS_Q_EPOCH" ]]; then
+        sql="$sql where timestamp >= $HERMES_LOGS_Q_EPOCH"
+    fi
+    if [[ -n "$HERMES_LOGS_Q_SESSION" ]]; then
+        selector="${HERMES_LOGS_Q_SESSION//\'/\'\'}"
+        if [[ -n "$HERMES_LOGS_Q_EPOCH" ]]; then
+            sql="$sql and"
+        else
+            sql="$sql where"
+        fi
+        sql="$sql instr(session_id, '$selector') > 0"
+    fi
+    sqlite3 -readonly -separator $'\037' "$db" "$sql" |
+        env "${HERMES_LOGS_ENV[@]}" HL_MODE=store HL_LOC="$loc" HL_MTIME="$mtime" \
+            awk "$HERMES_LOGS_PROGRAM" >"$HERMES_LOGS_R_STAT" || rc=$?
+    return "$rc"
+}
+
+function hermes_logs_used ## <kind> <root-index> - remember which sources one root contributed
+{
+    local kinds="${HERMES_LOGS_R_USED[$2]:-}"
+    if [[ " $kinds " != *" $1 "* ]]; then
+        HERMES_LOGS_R_USED[$2]="${kinds:+$kinds }$1"
+    fi
+    return 0
+}
+
+function hermes_logs_report_text
+{
+    ## The digest: the bounded match lines, then the totals as lines of their own.
+    local index
+    local -i shown="$HERMES_LOGS_R_SHOWN"
+    if [[ -s "$HERMES_LOGS_R_CLIP" ]]; then
+        cat "$HERMES_LOGS_R_CLIP"
+    fi
+    for index in "${!HERMES_LOGS_Q_ROOTS[@]}"; do
+        printf 'corpus: %s [%s]\n' "${HERMES_LOGS_Q_ROOTS[$index]}" "${HERMES_LOGS_R_USED[$index]:-nothing}"
+    done
+    printf 'matches: %s\n' "$HERMES_LOGS_R_TOTAL"
+    if (( shown < HERMES_LOGS_R_TOTAL )); then
+        printf 'shown: %s of %s (limit %s lines, %s chars)\n' "$shown" "$HERMES_LOGS_R_TOTAL" \
+            "$HERMES_LOGS_Q_LIMIT" "$HERMES_LOGS_Q_BYTES"
+    fi
+    if (( HERMES_LOGS_R_CLIPPED )); then
+        printf 'clipped: %s snippet(s) at %s chars\n' "$HERMES_LOGS_R_CLIPPED" "$HERMES_LOGS_Q_SNIP"
+    fi
+    if (( HERMES_LOGS_R_UNREADABLE )); then
+        printf 'unreadable: %s source(s) not scanned: %s\n' "$HERMES_LOGS_R_UNREADABLE" \
+            "${HERMES_LOGS_R_LOST[*]}"
+    fi
+    if (( shown < HERMES_LOGS_R_TOTAL || HERMES_LOGS_R_KEPT < HERMES_LOGS_R_TOTAL )); then
+        if (( HERMES_LOGS_R_KEPT < HERMES_LOGS_R_TOTAL )); then
+            printf 'max: %s (the first %s of %s matches)\n' "$HERMES_LOGS_R_HITS" \
+                "$HERMES_LOGS_R_KEPT" "$HERMES_LOGS_R_TOTAL"
+        else
+            printf 'max: %s\n' "$HERMES_LOGS_R_HITS"
+        fi
+    fi
+    return 0
+}
+
+function hermes_logs_report_json
+{
+    ## The same numbers and the same records as one object, for a wrapper.
+    local locator stamp text exact kind index canon
+    local -a roots=() sources=() hits=()
+    local -A seen=()
+    while IFS=$'\t' read -r locator stamp text; do
+        exact="true"
+        if [[ "$stamp" == "~"* ]]; then
+            exact="false"
+            stamp="${stamp#\~}"
+        fi
+        hits+=( "$(printf '{"locator":%s,"timestamp":%s,"exact":%s,"text":%s}' \
+            "$(hermes_logs_json_string "$locator")" "$(hermes_logs_json_string "$stamp")" \
+            "$exact" "$(hermes_logs_json_string "$text")")" )
+    done <"$HERMES_LOGS_R_CLIP"
+    for index in "${!HERMES_LOGS_Q_ROOTS[@]}"; do
+        roots+=( "$(hermes_logs_json_string "${HERMES_LOGS_Q_ROOTS[$index]}")" )
+    done
+    for index in "${!HERMES_LOGS_R_USED[@]}"; do
+        for kind in ${HERMES_LOGS_R_USED[$index]}; do
+            seen[$kind]=1
+        done
+    done
+    for canon in logs workers cron sessions store; do
+        if [[ -n "${seen[$canon]:-}" ]]; then
+            sources+=( "$(hermes_logs_json_string "$canon")" )
+        fi
+    done
+    local since="null" ica="false"
+    if [[ -n "$HERMES_LOGS_Q_CUTOFF" ]]; then
+        since="$(hermes_logs_json_string "$HERMES_LOGS_Q_CUTOFF")"
+    fi
+    if [[ -n "$HERMES_LOGS_Q_ICASE" ]]; then
+        ica="true"
+    fi
+    printf '{"bar_hermes_logs":1,"pattern":%s,"ignore_case":%s,"since":%s,"roots":%s,"sources":%s,' \
+        "$(hermes_logs_json_string "$HERMES_LOGS_Q_PAT")" "$ica" "$since" \
+        "$(hermes_logs_json_array ${roots[@]+"${roots[@]}"})" \
+        "$(hermes_logs_json_array ${sources[@]+"${sources[@]}"})"
+    printf '"matches":%s,"shown":%s,"kept":%s,"limit":%s,"max_records":%s,"bytes_budget":%s,"clipped":%s,"unreadable":%s,"max":%s,' \
+        "$HERMES_LOGS_R_TOTAL" "$HERMES_LOGS_R_SHOWN" "$HERMES_LOGS_R_KEPT" "$HERMES_LOGS_Q_LIMIT" \
+        "$HERMES_LOGS_Q_MAX" "$HERMES_LOGS_Q_BYTES" "$HERMES_LOGS_R_CLIPPED" "$HERMES_LOGS_R_UNREADABLE" \
+        "$(hermes_logs_json_string "$HERMES_LOGS_R_HITS")"
+    printf '"hits":%s}\n' "$(hermes_logs_json_array ${hits[@]+"${hits[@]}"})"
+    return 0
+}
+
+function hermes_logs_scan ## - scan the corpus of HERMES_LOGS_Q_ROOTS and print the answer
+{
+    ## Streams every source once, appends every match to the full match list (bounded by
+    ## HERMES_LOGS_Q_MAX), keeps the digest records (bounded by HERMES_LOGS_Q_LIMIT) and prints one
+    ## of the three answers.  Returns the exit code of the module's contract.
+    local kind idx rel mtime root locator ses
+    local -i index rc=0 matches=0 snippets=0 records=0 drawn=0 drawnbytes=0 kept_budget=0 show_budget=0
+    local -i byte_budget=0
+    local dir="${BAR_HERMES_LOGS_DIR:-${TMPDIR:-/tmp}}"
+
+    if [[ ! -d "$dir" ]]; then
+        mkdir -p "$dir" || return 1
+    fi
+    HERMES_LOGS_R_HITS="$dir/hermes_logs-$HERMES_LOGS_Q_TAG.matches"
+    HERMES_LOGS_R_CLIP="$dir/hermes_logs-$HERMES_LOGS_Q_TAG.digest"
+    HERMES_LOGS_R_STAT="$dir/hermes_logs-$HERMES_LOGS_Q_TAG.stat"
+    if ! : >"$HERMES_LOGS_R_HITS"; then
+        printf 'hermes_logs: cannot write the full match list to %s\n' "$HERMES_LOGS_R_HITS" >&2
+        return 1
+    fi
+    : >"$HERMES_LOGS_R_CLIP"
+
+    HERMES_LOGS_PROGRAM="$(hermes_logs_program)"
+
+    while IFS=$'\t' read -r kind idx rel mtime; do
+        [[ -n "$kind" ]] || continue
+        if [[ -n "$HERMES_LOGS_Q_TASK" && "$kind/$rel" != *"$HERMES_LOGS_Q_TASK"* ]]; then
+            continue
+        fi
+        if [[ "$kind" == sessions && -n "$HERMES_LOGS_Q_SESSION" \
+            && "$rel" != *"$HERMES_LOGS_Q_SESSION"* ]]; then
+            continue
+        fi
+        root="${HERMES_LOGS_Q_ROOTS[idx]}"
+        locator="$rel"
+        if (( ${#HERMES_LOGS_Q_ROOTS[@]} > 1 )); then
+            locator="#$(( idx + 1 ))/$rel"
+        fi
+        ses=""
+        case "$kind" in
+        sessions|store) ;;
+        *) ses="$HERMES_LOGS_Q_SESSION" ;;
+        esac
+        hermes_logs_used "$kind" "$idx"
+        # The budgets are global, not per source: every source contributes what is left of the
+        # '--limit' digest records and of the 'max' full-list records.
+        kept_budget=$(( HERMES_LOGS_Q_MAX - HERMES_LOGS_R_KEPT ))
+        (( kept_budget < 0 )) && kept_budget=0
+        show_budget=$(( HERMES_LOGS_Q_LIMIT - HERMES_LOGS_R_SHOWN ))
+        (( show_budget < 0 )) && show_budget=0
+        byte_budget=$(( HERMES_LOGS_Q_BYTES - HERMES_LOGS_R_BYTES ))
+        (( byte_budget < 0 )) && byte_budget=0
+        HERMES_LOGS_ENV=(
+            "HL_PAT=$HERMES_LOGS_Q_PAT"
+            "HL_ICASE=$HERMES_LOGS_Q_ICASE"
+            "HL_CUTOFF=$HERMES_LOGS_Q_CUTOFF"
+            "HL_SNIP=$HERMES_LOGS_Q_SNIP"
+            "HL_LIMIT=$show_budget"
+            "HL_BYTES=$byte_budget"
+            "HL_MAX=$kept_budget"
+            "HL_HITS=$HERMES_LOGS_R_HITS"
+            "HL_CLIP=$HERMES_LOGS_R_CLIP"
+        )
+        rc=0
+        if [[ "$kind" == store ]]; then
+            hermes_logs_scan_store "$root/$rel" "$locator" "$mtime" || rc=$?
+        else
+            hermes_logs_scan_file "$root/$rel" "$locator" "$mtime" "$ses" || rc=$?
+        fi
+        if (( rc )); then
+            HERMES_LOGS_R_UNREADABLE=$(( HERMES_LOGS_R_UNREADABLE + 1 ))
+            HERMES_LOGS_R_LOST+=( "$kind/$rel" )
+            printf 'hermes_logs: could not read %s, it is not part of the count\n' "$root/$rel" >&2
+        fi
+        if [[ -s "$HERMES_LOGS_R_STAT" ]]; then
+            read -r matches snippets records drawn drawnbytes <"$HERMES_LOGS_R_STAT" || true
+            HERMES_LOGS_R_TOTAL=$(( HERMES_LOGS_R_TOTAL + ${matches:-0} ))
+            HERMES_LOGS_R_CLIPPED=$(( HERMES_LOGS_R_CLIPPED + ${snippets:-0} ))
+            HERMES_LOGS_R_KEPT=$(( HERMES_LOGS_R_KEPT + ${records:-0} ))
+            HERMES_LOGS_R_SHOWN=$(( HERMES_LOGS_R_SHOWN + ${drawn:-0} ))
+            HERMES_LOGS_R_BYTES=$(( HERMES_LOGS_R_BYTES + ${drawnbytes:-0} ))
+        fi
+    done < <(for index in "${!HERMES_LOGS_Q_ROOTS[@]}"; do
+                 hermes_logs_files "${HERMES_LOGS_Q_ROOTS[index]}" "$index" \
+                     ${HERMES_LOGS_Q_KINDS[@]+"${HERMES_LOGS_Q_KINDS[@]}"}
+             done)
+
+    rc=0
+    if (( HERMES_LOGS_R_UNREADABLE )); then
+        rc=1
+    elif (( HERMES_LOGS_R_TOTAL == 0 )); then
+        rc=3
+    fi
+    if [[ -n "$HERMES_LOGS_Q_COUNT" ]]; then
+        printf '%s\n' "$HERMES_LOGS_R_TOTAL"
+    elif [[ -n "$HERMES_LOGS_Q_JSON" ]]; then
+        hermes_logs_report_json
+    else
+        hermes_logs_report_text
+    fi
+    rm -f "$HERMES_LOGS_R_STAT" "$HERMES_LOGS_R_CLIP"
+    return "$rc"
+}
+
+function hermes_logs
+{
+    ## Body of the 'hermes_logs' rule: parse the options into the query context, resolve the corpus
+    ## roots and hand over to 'hermes_logs_scan'.  See the module header for the contract.
+    local pat="" when="" json="" count="" arg
+    local limit="$BAR_HERMES_LOGS_LIMIT"
+    local -a kinds=() roots=()
+    HERMES_LOGS_Q_TAG="$(hash_args "$*")"
+    while (( $# )); do
+        arg="$1"
+        shift
+        case "$arg" in
+        --grep)
+            if (( $# )); then pat="$1"; shift; else hermes_logs_usage; return 2; fi ;;
+        -i|--ignore-case)
+            HERMES_LOGS_Q_ICASE=1 ;;
+        --since)
+            if (( $# )); then when="$1"; shift; else hermes_logs_usage; return 2; fi ;;
+        --source)
+            if (( $# )); then kinds+=( "$1" ); shift; else hermes_logs_usage; return 2; fi ;;
+        --task|--run)
+            if (( $# )); then HERMES_LOGS_Q_TASK="$1"; shift; else hermes_logs_usage; return 2; fi ;;
+        --session)
+            if (( $# )); then HERMES_LOGS_Q_SESSION="$1"; shift; else hermes_logs_usage; return 2; fi ;;
+        --limit)
+            if (( $# )); then limit="$1"; shift; else hermes_logs_usage; return 2; fi ;;
+        --root)
+            if (( $# )); then roots+=( "$1" ); shift; else hermes_logs_usage; return 2; fi ;;
+        --count)
+            count=1 ;;
+        --json)
+            json=1 ;;
+        *)
+            printf 'hermes_logs: unknown argument: %s\n' "$arg" >&2
+            hermes_logs_usage
+            return 2
+            ;;
+        esac
+    done
+    HERMES_LOGS_Q_PAT="$pat"
+    HERMES_LOGS_Q_LIMIT="$limit"
+    if [[ -n "$json" || -n "${BAR_AGENT_JSON:-}" ]]; then
+        HERMES_LOGS_Q_JSON=1
+    fi
+    if [[ -n "$count" ]]; then
+        HERMES_LOGS_Q_COUNT=1
+        HERMES_LOGS_Q_LIMIT=0
+    fi
+    if [[ ! "$HERMES_LOGS_Q_LIMIT" =~ ^[0-9]+$ ]]; then
+        printf 'hermes_logs: --limit needs a number, got %s\n' "$HERMES_LOGS_Q_LIMIT" >&2
+        return 2
+    fi
+    HERMES_LOGS_Q_SNIP="$BAR_HERMES_LOGS_SNIPPET"
+    [[ "$HERMES_LOGS_Q_SNIP" =~ ^[0-9]+$ ]] || HERMES_LOGS_Q_SNIP=160
+    HERMES_LOGS_Q_MAX="$BAR_HERMES_LOGS_MAX"
+    [[ "$HERMES_LOGS_Q_MAX" =~ ^[0-9]+$ ]] || HERMES_LOGS_Q_MAX=20000
+    HERMES_LOGS_Q_BYTES="$BAR_HERMES_LOGS_BYTES"
+    [[ "$HERMES_LOGS_Q_BYTES" =~ ^[0-9]+$ ]] || HERMES_LOGS_Q_BYTES=1200
+    local kind
+    for kind in ${kinds[@]+"${kinds[@]}"}; do
+        case "$kind" in
+        logs|workers|cron|sessions|store)
+            HERMES_LOGS_Q_KINDS+=( "$kind" ) ;;
+        *)
+            printf 'hermes_logs: unknown --source %s (logs workers cron sessions store)\n' "$kind" >&2
+            return 2
+            ;;
+        esac
+    done
+    hermes_logs_selector --task "$HERMES_LOGS_Q_TASK" || return 2
+    hermes_logs_selector --session "$HERMES_LOGS_Q_SESSION" || return 2
+    if (( ${#roots[@]} )); then
+        HERMES_LOGS_Q_ROOTS=( "${roots[@]}" )
+    elif [[ -n "$BAR_HERMES_LOGS_ROOT" ]]; then
+        local r
+        while IFS= read -r r; do
+            if [[ -n "$r" ]]; then HERMES_LOGS_Q_ROOTS+=( "$r" ); fi
+        done < <(printf '%s\n' "$BAR_HERMES_LOGS_ROOT" | tr ':' '\n')
+    else
+        HERMES_LOGS_Q_ROOTS=( "${HERMES_HOME:-$HOME/.hermes}" )
+    fi
+    local root
+    for root in "${HERMES_LOGS_Q_ROOTS[@]}"; do
+        if [[ ! -d "$root" ]]; then
+            printf 'hermes_logs: not a corpus root: %s\n' "$root" >&2
+            return 1
+        fi
+    done
+    if [[ -n "$when" ]]; then
+        if ! hermes_logs_since "$when"; then
+            printf 'hermes_logs: cannot read --since %s\n' "$when" >&2
+            return 2
+        fi
+    fi
+    hermes_logs_scan
+}
+
+# helper: hermes_logs | exact match, range and count questions over the Hermes log corpus | hermes_logs [--grep <ere>] [--since <when>] [--source <kind>].. [--task <sel>] [--session <id>] [--limit <n>] [--count] [--json] [--root <dir>].. | one line per match '<locator> <timestamp> <snippet>', then 'matches: <n>', the 'corpus:' line and, when elided, 'max: <path>'
+## The one deterministic answer to 'what do the logs of this host say about <X>'.  Streams the
+## corpus once (agent/gateway logs, kanban worker transcripts, cron run outputs, the session store),
+## prints a bounded digest and the exact match count, and keeps the complete match list on disk.
+## Exit 0 answered, 3 for no match, 2 usage error, 1 a source could not be read.  See the module
+## header for the corpus, the locator format, the filters and the non goals.
+rule hermes_logs: -
