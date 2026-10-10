@@ -15,6 +15,9 @@
 # default/MAIN
 rule lints tests doc build
 
+# the checks an agent runs; 'bar check agent' prints the terse contract block for them
+rule agent: lints tests
+
 # faster checking, can be used standalone or with 'watch'
 rule fastchk: --conclusive is_git_release_branch? lints tests doc
 rule fastchk: --conclusive is_git_main_branch? lints tests doc

@@ -37,6 +37,11 @@ rule doc: lint_docs build_docs
 ## Build and run benchmarks.
 rule bench: build_benches benchmark
 
+## The checks an agent should run before and after it changes something.  Projects hook their
+## targets in here (the default rulefile hooks 'lints tests'), the terse output contract for a
+## human or an agent is available via 'bar check agent' / 'bar verdict agent'.
+rule agent: 'debug "Running agent checks..."'
+
 ## Reformat the source code in place.
 rule fmt: 'debug "Running source formatting tools..."'
 ## Apply trivial fixes, should be non breaking changes.
