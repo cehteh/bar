@@ -253,8 +253,9 @@ function cargo_audit
 
 ## Run 'cargo audit' when it is available.
 ## When 'cargo-audit' is not installed a warning is printed.
-rule cargo_audit: --conclusive 'is_cargo_tool_installed? audit' -
+rule cargo_audit: --conclusive 'is_cargo_tool_installed? audit' 'test -f Cargo.lock' -
 rule cargo_audit: --conclusive '!is_cargo_tool_installed audit' -- warn "cargo audit is not installed"
+rule cargo_audit: --conclusive '!test -f Cargo.lock' -- warn "No 'Cargo.lock' file"
 
 function cargo_semver_checks
 {
