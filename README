@@ -1874,16 +1874,36 @@ MAIN API
         [modules..] - List of module names to be loaded. Modules are loaded only once, further
                       attempts to load it will be a no-op.
 
+      bar_report_condense - True when the source location should be condensed on the console.
+        The verbose 'file:line:func:' location is only condensed when the output goes to the
+        console. Redirected output keeps the full, easily filterable format.
+
+      bar_report_loc [N]
+        Sets BAR_REPORT_LOC for a report N frames up the stack.
+        Like 'source_info N' but condenses the source location of consecutive reports from the
+        same file and function: the location is printed once and then replaced by blanks of the
+        same width. Sets 'BAR_REPORT_REPEATED' when this report continued such a block.
+
+      bar_report_condensed - True when the repeated location is to be blanked down to a ':'.
+        'BAR_REPORT_STYLE=tag' (default) keeps the message tag in front of the blanked location,
+        'colon' blanks the tag as well so that only the ':' of the location remains.
+
       DBG [message..]
         For print-style debugging, should not be present in production code.
 
       die [message..]
         Prints 'message' to stderr and exits with failure
         Unexpected fatal problem. Will terminate execution, CLEANUP rules will be called.
+        The source location is condensed like 'error' does, see there for 'BAR_REPORT_CONDENSE' and
+        'BAR_REPORT_STYLE'.
 
       error [message..]
         Print a error message to stderr.
         Unexpected but not fatal.
+        The source location is printed for the first report of a function and condensed to blanks
+        for the following ones, so a multi line report stays readable. 'BAR_REPORT_CONDENSE' is
+        'always', 'never' or 'auto' (default: only on a console, redirected output keeps the full
+        format) and 'BAR_REPORT_STYLE' is 'tag' (default) or 'colon'.
 
       warn [message..]
         Print an warning to stderr.

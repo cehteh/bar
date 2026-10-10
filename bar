@@ -236,6 +236,58 @@ function source_info # [N] - returns file:line N (or 0) up the bash call stack
     echo "${BASH_SOURCE[$((${1:-0}+1))]}:${BASH_LINENO[$((${1:-0}))]}:${FUNCNAME[$((${1:-0}+1))]:+${FUNCNAME[$((${1:-0}+1))]}:}"
 }
 
+## Source site (file and function) of the last report, and the location prefix of the current
+## one. Used to condense the repeated 'file:line:func:' prefix of a multi line report.
+declare -gx BAR_LAST_SITE=""
+declare -gx BAR_REPORT_LOC=""
+declare -gx BAR_REPORT_REPEATED=false
+
+function bar_report_condense ## - True when the source location should be condensed on the console.
+{
+    ## The verbose 'file:line:func:' location is only condensed when the output goes to the
+    ## console. Redirected output keeps the full, easily filterable format.
+    case "${BAR_REPORT_CONDENSE:-auto}" in
+        always) return 0 ;;
+        never)  return 1 ;;
+        auto|*) [[ -t 2 ]] ;;
+    esac
+}
+
+function bar_report_loc ## [N] - Sets BAR_REPORT_LOC for a report N frames up the stack.
+{
+    ## Like 'source_info N' but condenses the source location of consecutive reports from the
+    ## same file and function: the location is printed once and then replaced by blanks of the
+    ## same width. Sets 'BAR_REPORT_REPEATED' when this report continued such a block.
+    local loc
+    loc="$(source_info "$((${1:-0}+1))")"
+
+    if ! bar_report_condense; then
+        BAR_REPORT_LOC="$loc"
+        BAR_REPORT_REPEATED=false
+        return 0
+    fi
+
+    local rest="${loc#*:}"                  # strip '<file>:'
+    local func="${rest#*:}"                 # strip '<line>:'
+    local site="${loc%%:*}:${func%:*}"      # '<file>:<func>' without the line number
+    if [[ -n "$BAR_LAST_SITE" && "$site" = "$BAR_LAST_SITE" ]]; then
+        BAR_REPORT_LOC="${loc//?/ }"
+        BAR_REPORT_REPEATED=true
+    else
+        BAR_REPORT_LOC="$loc"
+        BAR_REPORT_REPEATED=false
+        BAR_LAST_SITE="$site"
+    fi
+    return 0
+}
+
+function bar_report_condensed ## - True when the repeated location is to be blanked down to a ':'.
+{
+    ## 'BAR_REPORT_STYLE=tag' (default) keeps the message tag in front of the blanked location,
+    ## 'colon' blanks the tag as well so that only the ':' of the location remains.
+    [[ "$BAR_REPORT_REPEATED" = true && "${BAR_REPORT_STYLE:-tag}" = colon ]]
+}
+
 function DBG ## [message..] - For print-style debugging, should not be present in production code.
 {
     {
@@ -247,9 +299,16 @@ function DBG ## [message..] - For print-style debugging, should not be present i
 function die ## [message..] - Prints 'message' to stderr and exits with failure
 {
     ## Unexpected fatal problem. Will terminate execution, CLEANUP rules will be called.
+    ## The source location is condensed like 'error' does, see there for 'BAR_REPORT_CONDENSE' and
+    ## 'BAR_REPORT_STYLE'.
     if (( BAR_VERBOSITY_LEVEL > 0 )); then
         tty_newline
-        echo "${TTYERR[R_B]:-}PANIC:${TTYERR[n]:-} $(source_info 1) $*"
+        bar_report_loc 1
+        if bar_report_condensed; then
+            echo "${TTYERR[R_B]:-}$(printf '%*s' "$(( ${#BAR_REPORT_LOC} + 6 ))" '')${TTYERR[n]:-}: $*"
+        else
+            echo "${TTYERR[R_B]:-}PANIC:${TTYERR[n]:-} ${BAR_REPORT_LOC} $*"
+        fi
     fi >&2
     exit 1
 }
@@ -257,15 +316,25 @@ function die ## [message..] - Prints 'message' to stderr and exits with failure
 function error ## [message..] - Print a error message to stderr.
 {
     ## Unexpected but not fatal.
+    ## The source location is printed for the first report of a function and condensed to blanks
+    ## for the following ones, so a multi line report stays readable. 'BAR_REPORT_CONDENSE' is
+    ## 'always', 'never' or 'auto' (default: only on a console, redirected output keeps the full
+    ## format) and 'BAR_REPORT_STYLE' is 'tag' (default) or 'colon'.
     if (( BAR_VERBOSITY_LEVEL > 0 )); then
         tty_newline
-        echo "${TTYERR[r_B]:-}ERROR:${TTYERR[n]:-} $(source_info 1) $*"
+        bar_report_loc 1
+        if bar_report_condensed; then
+            echo "${TTYERR[r_B]:-}$(printf '%*s' "$(( ${#BAR_REPORT_LOC} + 6 ))" '')${TTYERR[n]:-}: $*"
+        else
+            echo "${TTYERR[r_B]:-}ERROR:${TTYERR[n]:-} ${BAR_REPORT_LOC} $*"
+        fi
     fi >&2
 }
 
 function warn ## [message..] - Print an warning to stderr.
 {
     ## Expected, non fatal problem.
+    BAR_LAST_SITE=""
     if (( BAR_VERBOSITY_LEVEL > 1 )); then
         tty_newline
         echo "${TTYERR[m_B]:-} WARN:${TTYERR[n]:-} $*" >&2
@@ -275,6 +344,7 @@ function warn ## [message..] - Print an warning to stderr.
 function note ## [message..] - Print an important notice to stderr.
 {
     ## Important message the user should be notified about.
+    BAR_LAST_SITE=""
     if (( BAR_VERBOSITY_LEVEL > 2 )); then
         tty_newline
         echo "${TTYERR[m_B]:-} NOTE:${TTYERR[n]:-} $*"
@@ -284,6 +354,7 @@ function note ## [message..] - Print an important notice to stderr.
 function info ## [message..] - Print an informal message to stderr.
 {
     ## Broader message about non rule related progress.
+    BAR_LAST_SITE=""
     if (( BAR_VERBOSITY_LEVEL > 3 )); then
         tty_newline
         echo "${TTYERR[b_B]:-} INFO:${TTYERR[n]:-} $*"
