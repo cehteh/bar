@@ -31,9 +31,6 @@ BAR="$REPO_ROOT/bar"
 # the modules a throw-away project needs to run bar and the repertoire (agent_rules supplies the
 # '--json' rule of 'bar --json <rule>')
 FIXTURE_MODULES="std_lib rule_lib tty_lib std_rules git_lib agent_rules helpers_rules"
-# the modules a throw-away installation needs: the fixture set plus 'init', which provides the
-# 'init_install' rule the installation is created with
-INSTALL_MODULES="$FIXTURE_MODULES init"
 
 failures=0
 pass() { echo "  ✓ $*"; }
@@ -139,11 +136,7 @@ fi
 MODULE
 }
 
-# <dir> - a throw-away bar checkout to install from: bar plus the modules the installation needs
-#
-# It links the same module set 'mkproject' does, not every module of this repository: a helper
-# module added to the repository later must not move the counts this test asserts (it did, for the
-# first helper added after this file was written -- the installation is a fixture, not a mirror).
+# <dir> - a throw-away bar checkout to install from: bar plus every module of this repository
 mkinstall() {
     mkdir -p "$1/Bar.d" "$1/contrib"
     cp "$BAR" "$1/bar"
@@ -151,8 +144,8 @@ mkinstall() {
     cp "$REPO_ROOT/Pleasef.default" "$1/"
     cp "$REPO_ROOT/contrib/bar_complete" "$1/contrib/"
     local module
-    for module in $INSTALL_MODULES; do
-        ln -s "$REPO_ROOT/Bar.d/$module" "$1/Bar.d/$module"
+    for module in "$REPO_ROOT/Bar.d/"*; do
+        ln -s "$module" "$1/Bar.d/${module##*/}"
     done
 }
 
