@@ -1,0 +1,423 @@
+# -*- mode: sh; sh-shell: bash -*-
+# vim: set ft=bash:
+# shellcheck shell=bash
+# shellcheck disable=SC2016
+
+### The helper repertoire: deterministic answers to recurring retrieval questions.
+###
+### A *helper* is a bar rule which answers one recurring, semi deterministic question -- a filter,
+### a retrieval, a listing, a count, a state snapshot -- in a single invocation, with a bounded
+### and stable output.  Its consumer is an agent: with a helper the question costs one command and
+### a few lines of context, without it several turns of ad hoc pipelines.  Helpers filter, count
+### and quote, they never summarise and never judge.  Where a question is naturally a *check*
+### (pass or fail), it is written as a check target and reported by 'bar check'
+### (Bar.d/agent_rules) instead of being squeezed into a helper.
+###
+###   bar helpers              the repertoire: one line per helper, then the total count
+###   bar helpers --json       the same repertoire as one JSON object (same count)
+###   bar helpers --check      verify that every helper module is registered (see below)
+###
+### The repertoire is read out of the module sources: nothing is loaded and no helper is executed
+### to list it, and 'please helpers' works from any directory.
+###
+### HELPER MODULES AND RULE NAMES
+###
+### The helpers of one domain live together in one *helper module*, 'Bar.d/<word>', which names
+### itself in its file header:
+###
+###   # helper-module: <word>
+###
+### Every rule of a helper module is named '<word>' or '<word>_<rest>', because bar derives the
+### module to autoload from the word before the first underscore of a rule name ('always_',
+### 'is_', 'has_' and 'try_' are stripped first, see 'rule_autoload' in Bar.d/std_lib).  A helper
+### rule therefore loads exactly its own module: invoking one helper never loads another helper
+### module, and listing the repertoire loads none at all.  '<word>' must be a word no other module
+### claims -- bar ships 'git', 'rad', 'radicle', 'cargo', 'net', 'ssh', 'testdir', ... -- because a
+### rule named 'rad_state' would autoload 'Bar.d/rad' and then fail to exist.  Pick a free word.
+###
+### Everything in a helper module that is not an entry point is a *function*: functions are not
+### rules, the autoloader never looks for them and the repertoire never lists them.
+###
+### REGISTRATION
+###
+### A helper registers itself with one declaration line at column 0, directly above its rule
+### definition (only comments and blank lines in between, in the same file):
+###
+###   # helper: <name> | <purpose> | <invocation> | <output shape>
+###
+###   <name>        the rule name: '<word>' or '<word>_<rest>' of that module
+###   <purpose>     one line, the question it answers -- this is how an agent picks a helper
+###   <invocation>  how to call it, its options included ('kanban_state [--json] <selector>')
+###   <output>      one line, the shape of the answer
+###
+### Neither field may contain a '|' and a declaration is one line.  There is no index file: the
+### repertoire is *generated* by scanning the modules, so a new helper is one rule plus one
+### declaration and nothing else has to be kept in sync.  'bar helpers --check' (hooked into
+### 'lints' of bar's own Barf) fails when a rule of a helper module is not declared, when a
+### declaration does not resolve to the rule below it, when a helper is declared twice, when its
+### name would autoload another module, when the module header names another file, when a
+### declaration sits in a file that is no helper module or when a declaration is separated from
+### its rule by other code.
+###
+### The index lists exactly the declarations the guard accepts and rejects nothing the index
+### shows: both are views of the same single validation pass, so a helper which is not listed is
+### always a reported violation and a listed helper always resolves.  A rejected declaration is
+### counted on stderr and named by 'bar helpers --check'.
+###
+### OUTPUT CONVENTIONS (requirements, not style)
+###
+###   * print what the consumer needs for the next step: output << input;
+###   * the shape is the helper's choice (lines, table, JSON) but stable and documented, counts
+###     are an explicit line of their own and never implied;
+###   * print less than everything only together with the exact elision counts ('n of N') and the
+###     path of a file holding the complete, untruncated data, so nothing is lost;
+###   * exit codes: 0 answered, non-zero could not answer, and a distinct code where the caller
+###     has to tell 'no data' from 'error'; an empty result is an answer, not a failure;
+###   * stdout carries only the result -- no progress chatter and no ANSI sequences -- stderr may
+###     carry diagnostics, and a helper never pages interactively ('less' blocks an agent turn,
+###     see Bar.d/search for that anti-pattern);
+###   * read the data directly (file, CLI, sqlite, git) instead of going through an interface
+###     which refuses to run outside its own context;
+###   * '--json' stays opt-in: text for reading, one object for a wrapper.
+###
+### A helper module needs no edit anywhere else: it becomes reachable for 'please' with
+### 'bar init_install <prefix>' (which links every module that is not linked yet into
+### '~/.config/please', see Bar.d/init) and for a project with 'bar init --update' (which copies
+### new modules into the project's 'Bar.d/').
+
+function helpers_module_of ## <rule> - the module 'rule_autoload' loads for <rule>
+{
+    ## Mirrors 'rule_autoload' in Bar.d/std_lib: the prefixes are stripped, then everything from
+    ## the first underscore on.  'rad_state' -> 'rad', 'has_kanban_state' -> 'kanban'.
+    local name="${1#always_}"
+    name="${name#is_}"
+    name="${name#has_}"
+    name="${name#try_}"
+    printf '%s' "${name%%_*}"
+}
+
+function helpers_records ## - scan '$BAR_DIR' for the repertoire, as US (0x1f) separated records
+{
+    ## One awk pass over the module files of '$BAR_DIR', nothing is loaded and no helper is run.
+    ## The records feed the single validation pass below:
+    ##
+    ##   <file> <line> M <word>                                       a '# helper-module:' header
+    ##   <file> <line> D <name> <purpose> <usage> <output> <n> <word> a '# helper:' declaration
+    ##   <file> <line> R <rule>                                       a rule of a helper module
+    ##   <file> <line> O                                              other code of a helper module
+    ##
+    ## 'D' records are emitted for every file -- a declaration outside a helper module is a
+    ## violation and has to be seen -- while 'R' and 'O' are only emitted after the module
+    ## header, so a module without helpers costs nothing.
+    ##
+    ## Fields are separated by US (0x1f) and not by a tab: a declaration may have empty fields
+    ## (that is one of the violations) and a tab is IFS whitespace, which 'read' would collapse.
+    local -a files=()
+    local file
+    for file in "$BAR_DIR"/*; do
+        if [[ -f "$file" ]]; then
+            files+=( "$file" )
+        fi
+    done
+    if (( ${#files[@]} == 0 )); then
+        return 0
+    fi
+    awk '
+        function trim(text)
+        {
+            sub(/^[ \t]+/, "", text)
+            sub(/[ \t]+$/, "", text)
+            return text
+        }
+        function rule_name(text)
+        {
+            sub(/^(new)?rule[ \t]+/, "", text)
+            while (text ~ /^--[A-Za-z_-]+[ \t]+/)
+                sub(/^--[A-Za-z_-]+[ \t]+/, "", text)
+            text = trim(text)
+            sub(/[ \t].*$/, "", text)
+            sub(/:$/, "", text)
+            return text
+        }
+        BEGIN { OFS = sprintf("%c", 31) }
+        FNR == 1 { module = "" }
+        /^# helper-module:/ {
+            text = $0
+            sub(/^# helper-module:[ \t]*/, "", text)
+            module = trim(text)
+            print FILENAME, FNR, "M", module
+            next
+        }
+        /^# helper:/ {
+            text = $0
+            sub(/^# helper:[ \t]*/, "", text)
+            count = split(text, field, "|")
+            print FILENAME, FNR, "D", trim(field[1]), trim(field[2]), trim(field[3]), \
+                trim(field[4]), count, module
+            next
+        }
+        module == "" { next }
+        /^(new)?rule[ \t]/ { print FILENAME, FNR, "R", rule_name($0); next }
+        /^[ \t]*$/ { next }
+        /^[ \t]*#/ { next }
+        { print FILENAME, FNR, "O" }
+    ' "${files[@]}"
+}
+
+function helpers_declaration_error ## <name> <purpose> <usage> <output> <fields> <word> - why is a declaration unusable?
+{
+    ## Prints the reason, and nothing when the declaration is usable.  One implementation for the
+    ## whole module.
+    local name="$1" purpose="$2" usage="$3" output="$4" fields="$5" word="$6"
+    local autoloaded
+    if [[ -z "$word" ]]; then
+        printf "it is not below a '# helper-module:' header"
+    elif [[ "$fields" != 4 ]]; then
+        printf "it needs 4 fields separated by '|', found %s" "$fields"
+    elif [[ -z "$name" || -z "$purpose" || -z "$usage" || -z "$output" ]]; then
+        printf "none of its name, purpose, invocation and output fields may be empty"
+    else
+        autoloaded="$(helpers_module_of "$name")"
+        if [[ "$autoloaded" != "$word" ]]; then
+            printf "its name would autoload module '%s', not '%s'" "$autoloaded" "$word"
+        fi
+    fi
+}
+
+function helpers_walk ## - the one validation pass behind the index and the guard
+{
+    ## Walks the records of 'helpers_records' and prints, in file and line order:
+    ##
+    ##   !<file>:<line>: <problem>                        every violation
+    ##   +<name> <purpose> <usage> <output> <word> <file>  a declaration which resolves
+    ##
+    ## A declaration is only accepted once the rule directly below it has been seen, so this
+    ## single pass covers registration, resolution, adjacency and naming at once.  The index shows
+    ## the '+<...>' lines and the guard reports the '!<...>' lines, which is what keeps the two
+    ## from drifting apart.
+    local file line kind name purpose usage output fields word
+    local current_file="" current_base="" current_word="" headers=0 declared_in_file=0
+    local declared="" declared_line=0 declared_usable=0 declared_reported=0 separated=0
+    local declared_purpose="" declared_usage="" declared_output="" declared_word=""
+    local reason
+    local -A seen=()
+
+    while IFS=$'\037' read -r file line kind name purpose usage output fields word; do
+        if [[ "$file" != "$current_file" ]]; then
+            ## leaving a file: an open declaration and a module without helpers are violations
+            ## there.  The sentinel record below leaves the last file through this same branch.
+            if [[ -n "$declared" && "$declared_reported" == 0 ]]; then
+                printf "!%s:%s: the declaration of '%s' has no rule below it\n" \
+                    "$current_file" "$declared_line" "$declared"
+            fi
+            if (( headers > 0 && declared_in_file == 0 )); then
+                printf "!%s: helper module '%s' declares no helper\n" "$current_file" "$current_word"
+            fi
+            current_file="$file"
+            current_base="${file##*/}"
+            current_word=""
+            headers=0
+            declared_in_file=0
+            declared=""
+            declared_line=0
+            declared_usable=0
+            declared_reported=0
+            separated=0
+        fi
+        case "$kind" in
+        M)
+            if (( headers > 0 )); then
+                printf "!%s:%s: second '# helper-module:' header, the first names '%s'\n" \
+                    "$file" "$line" "$current_word"
+            fi
+            headers=$(( headers + 1 ))
+            if [[ "$name" != "$current_base" ]]; then
+                printf "!%s:%s: helper module '%s' is not the file '%s' it is declared in\n" \
+                    "$file" "$line" "$name" "$current_base"
+            fi
+            current_word="$name"
+            ;;
+        D)
+            declared_in_file=$(( declared_in_file + 1 ))
+            if [[ -n "$declared" && "$declared_reported" == 0 ]]; then
+                printf "!%s:%s: second declaration, the rule declared in line %s of '%s' is missing\n" \
+                    "$file" "$line" "$declared_line" "$declared"
+            fi
+            declared="$name"
+            declared_line="$line"
+            declared_usable=1
+            declared_reported=0
+            separated=0
+            declared_purpose="$purpose"
+            declared_usage="$usage"
+            declared_output="$output"
+            declared_word="$word"
+            if [[ -n "${seen[$name]:-}" ]]; then
+                printf "!%s:%s: '%s' is already declared in %s\n" "$file" "$line" "$name" "${seen[$name]}"
+                declared_usable=0
+            else
+                seen["$name"]="$file:$line"
+            fi
+            reason="$(helpers_declaration_error "$name" "$purpose" "$usage" "$output" "$fields" "$word")"
+            if [[ -n "$reason" ]]; then
+                printf "!%s:%s: unusable declaration of '%s': %s\n" "$file" "$line" "$name" "$reason"
+                declared_usable=0
+                declared_reported=1
+            fi
+            ;;
+        R)
+            if [[ -z "$declared" ]]; then
+                printf "!%s:%s: rule '%s' is not declared, add '# helper: %s | ...' above it\n" \
+                    "$file" "$line" "$name" "$name"
+            elif [[ "$declared" != "$name" ]]; then
+                printf "!%s:%s: rule '%s' does not match the declaration of '%s' in line %s\n" \
+                    "$file" "$line" "$name" "$declared" "$declared_line"
+            elif (( declared_usable )); then
+                printf '+%s\t%s\t%s\t%s\t%s\t%s\n' "$declared" "$declared_purpose" \
+                    "$declared_usage" "$declared_output" "$declared_word" "$file"
+            fi
+            declared=""
+            declared_line=0
+            declared_usable=0
+            declared_reported=0
+            separated=0
+            ;;
+        O)
+            if [[ -n "$declared" && "$separated" == 0 ]]; then
+                printf "!%s:%s: the declaration of '%s' is separated from its rule by other code\n" \
+                    "$file" "$line" "$declared"
+                separated=1
+            fi
+            ;;
+        esac
+    done < <(helpers_records; printf 'helpers-walk\0370\037Z\n')
+}
+
+function helpers_declarations ## - the registered helpers as '<name> <purpose> <usage> <output> <word> <file>'
+{
+    ## Sorted by name; the file is the module file as it was found in '$BAR_DIR'.  The violations
+    ## 'helpers_walk' reports are counted on stderr, the guard names each one.
+    local walk skipped
+    walk="$(helpers_walk)"
+    skipped="$(printf '%s\n' "$walk" | LC_ALL=C grep -c '^!')" || true
+    if (( skipped )); then
+        warn "$skipped helper declaration(s) are unusable, 'bar helpers --check' names them"
+    fi
+    printf '%s\n' "$walk" | LC_ALL=C sed -n 's/^+//p' | LC_ALL=C sort -t$'\t' -k1,1
+}
+
+function helpers_index_text
+{
+    local declarations
+    declarations="$(helpers_declarations)"
+    if [[ -z "$declarations" ]]; then
+        printf '(0 helpers)\n'
+        return 0
+    fi
+    printf '%s\n' "$declarations" | awk -F'\t' '
+        {
+            name[NR] = $1
+            purpose[NR] = $2
+            usage[NR] = $3
+            output[NR] = $4
+            if (length($1) > width)
+                width = length($1)
+        }
+        END {
+            blanks = "                                                                                "
+            for (i = 1; i <= NR; i++)
+                printf "%s%s  %s  | %s  | %s\n", name[i], \
+                    substr(blanks, 1, width - length(name[i])), purpose[i], usage[i], output[i]
+            printf "(%d helper%s)\n", NR, NR == 1 ? "" : "s"
+        }'
+}
+
+function helpers_json_string ## <text> - a JSON string literal
+{
+    local text="$1"
+    text="${text//\\/\\\\}"
+    text="${text//\"/\\\"}"
+    text="${text//$'\t'/\\t}"
+    text="$(printf '%s' "$text" | LC_ALL=C tr -d '[:cntrl:]')"
+    printf '"%s"' "$text"
+}
+
+function helpers_index_json
+{
+    local -a objects=()
+    local name purpose usage output word file
+    local object joined="" separator=""
+    while IFS=$'\t' read -r name purpose usage output word file; do
+        objects+=( "$(printf '{"name":%s,"purpose":%s,"invocation":%s,"output":%s,"module":%s,"file":%s}' \
+            "$(helpers_json_string "$name")" \
+            "$(helpers_json_string "$purpose")" \
+            "$(helpers_json_string "$usage")" \
+            "$(helpers_json_string "$output")" \
+            "$(helpers_json_string "$word")" \
+            "$(helpers_json_string "$file")")" )
+    done < <(helpers_declarations)
+    for object in "${objects[@]}"; do
+        joined="${joined}${separator}${object}"
+        separator=","
+    done
+    printf '{"bar_helpers":1,"count":%d,"helpers":[%s]}\n' "${#objects[@]}" "$joined"
+}
+
+function helpers_check_body ## - the registration guard for every helper module
+{
+    ## Prints every violation 'helpers_walk' reports, one line each, and returns 1; prints nothing
+    ## and returns 0 when the repertoire is complete.
+    local violations
+    violations="$(helpers_walk | LC_ALL=C sed -n 's/^!//p')"
+    if [[ -z "$violations" ]]; then
+        return 0
+    fi
+    printf '%s\n' "$violations"
+    return 1
+}
+
+function helpers ## [--json|--check] - the repertoire, see the module header
+{
+    ## Body of the 'helpers' rule: the index (text or JSON) or the registration guard.  The
+    ## machine form is also entered with 'bar --json helpers' (BAR_AGENT_JSON, see
+    ## Bar.d/agent_rules).  An unknown argument is a usage error, exit 2.
+    local json=""
+    local check=""
+    local arg
+    for arg in ${RULE_ARGS[@]+"${RULE_ARGS[@]}"}; do
+        case "$arg" in
+        --json)
+            json=1
+            ;;
+        --check)
+            check=1
+            ;;
+        *)
+            printf 'usage: bar helpers [--json|--check]\n' >&2
+            return 2
+            ;;
+        esac
+    done
+    if [[ -n "${BAR_AGENT_JSON:-}" ]]; then
+        json=1
+    fi
+    if [[ -n "$check" ]]; then
+        helpers_check_body
+        return $?
+    fi
+    if [[ -n "$json" ]]; then
+        helpers_index_json
+    else
+        helpers_index_text
+    fi
+}
+
+## The repertoire index: one line per registered helper ('<name>  <purpose>  | <invocation>  |
+## <output shape>') sorted by name, then the total count as the last line.  '--json' prints one
+## object with the same count, '--check' verifies the registration of every helper module.
+rule helpers: -
+
+## Verify that every helper module registers its rules ('bar helpers --check'): the guard is a
+## check target, so 'bar check helpers_check' reports it with the agent contract (verdict, chain,
+## totals, log path) and 'rule lints: helpers_check' can hook it into the lint target.
+rule helpers_check: -- helpers_check_body

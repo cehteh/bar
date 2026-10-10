@@ -754,6 +754,153 @@ MODULE API/RULES
         - topic|rule|function|variable: Navigate to or show only specified topics
         - text:                         Search the specified text in the documentation
 
+  helpers_rules - The helper repertoire: deterministic answers to recurring retrieval questions.
+    
+    A *helper* is a bar rule which answers one recurring, semi deterministic question -- a filter,
+    a retrieval, a listing, a count, a state snapshot -- in a single invocation, with a bounded
+    and stable output.  Its consumer is an agent: with a helper the question costs one command and
+    a few lines of context, without it several turns of ad hoc pipelines.  Helpers filter, count
+    and quote, they never summarise and never judge.  Where a question is naturally a *check*
+    (pass or fail), it is written as a check target and reported by 'bar check'
+    (Bar.d/agent_rules) instead of being squeezed into a helper.
+    
+      bar helpers              the repertoire: one line per helper, then the total count
+      bar helpers --json       the same repertoire as one JSON object (same count)
+      bar helpers --check      verify that every helper module is registered (see below)
+    
+    The repertoire is read out of the module sources: nothing is loaded and no helper is executed
+    to list it, and 'please helpers' works from any directory.
+    
+    HELPER MODULES AND RULE NAMES
+    
+    The helpers of one domain live together in one *helper module*, 'Bar.d/<word>', which names
+    itself in its file header:
+    
+      # helper-module: <word>
+    
+    Every rule of a helper module is named '<word>' or '<word>_<rest>', because bar derives the
+    module to autoload from the word before the first underscore of a rule name ('always_',
+    'is_', 'has_' and 'try_' are stripped first, see 'rule_autoload' in Bar.d/std_lib).  A helper
+    rule therefore loads exactly its own module: invoking one helper never loads another helper
+    module, and listing the repertoire loads none at all.  '<word>' must be a word no other module
+    claims -- bar ships 'git', 'rad', 'radicle', 'cargo', 'net', 'ssh', 'testdir', ... -- because a
+    rule named 'rad_state' would autoload 'Bar.d/rad' and then fail to exist.  Pick a free word.
+    
+    Everything in a helper module that is not an entry point is a *function*: functions are not
+    rules, the autoloader never looks for them and the repertoire never lists them.
+    
+    REGISTRATION
+    
+    A helper registers itself with one declaration line at column 0, directly above its rule
+    definition (only comments and blank lines in between, in the same file):
+    
+      # helper: <name> | <purpose> | <invocation> | <output shape>
+    
+      <name>        the rule name: '<word>' or '<word>_<rest>' of that module
+      <purpose>     one line, the question it answers -- this is how an agent picks a helper
+      <invocation>  how to call it, its options included ('kanban_state [--json] <selector>')
+      <output>      one line, the shape of the answer
+    
+    Neither field may contain a '|' and a declaration is one line.  There is no index file: the
+    repertoire is *generated* by scanning the modules, so a new helper is one rule plus one
+    declaration and nothing else has to be kept in sync.  'bar helpers --check' (hooked into
+    'lints' of bar's own Barf) fails when a rule of a helper module is not declared, when a
+    declaration does not resolve to the rule below it, when a helper is declared twice, when its
+    name would autoload another module, when the module header names another file, when a
+    declaration sits in a file that is no helper module or when a declaration is separated from
+    its rule by other code.
+    
+    The index lists exactly the declarations the guard accepts and rejects nothing the index
+    shows: both are views of the same single validation pass, so a helper which is not listed is
+    always a reported violation and a listed helper always resolves.  A rejected declaration is
+    counted on stderr and named by 'bar helpers --check'.
+    
+    OUTPUT CONVENTIONS (requirements, not style)
+    
+      * print what the consumer needs for the next step: output << input;
+      * the shape is the helper's choice (lines, table, JSON) but stable and documented, counts
+        are an explicit line of their own and never implied;
+      * print less than everything only together with the exact elision counts ('n of N') and the
+        path of a file holding the complete, untruncated data, so nothing is lost;
+      * exit codes: 0 answered, non-zero could not answer, and a distinct code where the caller
+        has to tell 'no data' from 'error'; an empty result is an answer, not a failure;
+      * stdout carries only the result -- no progress chatter and no ANSI sequences -- stderr may
+        carry diagnostics, and a helper never pages interactively ('less' blocks an agent turn,
+        see Bar.d/search for that anti-pattern);
+      * read the data directly (file, CLI, sqlite, git) instead of going through an interface
+        which refuses to run outside its own context;
+      * '--json' stays opt-in: text for reading, one object for a wrapper.
+    
+    A helper module needs no edit anywhere else: it becomes reachable for 'please' with
+    'bar init_install <prefix>' (which links every module that is not linked yet into
+    '~/.config/please', see Bar.d/init) and for a project with 'bar init --update' (which copies
+    new modules into the project's 'Bar.d/').
+
+    Functions:
+
+      helpers_module_of <rule>
+        the module 'rule_autoload' loads for <rule>
+        Mirrors 'rule_autoload' in Bar.d/std_lib: the prefixes are stripped, then everything from
+        the first underscore on.  'rad_state' -> 'rad', 'has_kanban_state' -> 'kanban'.
+
+      helpers_records - scan '$BAR_DIR' for the repertoire, as US (0x1f) separated records
+        One awk pass over the module files of '$BAR_DIR', nothing is loaded and no helper is run.
+        The records feed the single validation pass below:
+          <file> <line> M <word>                                       a '# helper-module:' header
+          <file> <line> D <name> <purpose> <usage> <output> <n> <word> a '# helper:' declaration
+          <file> <line> R <rule>                                       a rule of a helper module
+          <file> <line> O                                              other code of a helper module
+        'D' records are emitted for every file -- a declaration outside a helper module is a
+        violation and has to be seen -- while 'R' and 'O' are only emitted after the module
+        header, so a module without helpers costs nothing.
+        Fields are separated by US (0x1f) and not by a tab: a declaration may have empty fields
+        (that is one of the violations) and a tab is IFS whitespace, which 'read' would collapse.
+
+      helpers_declaration_error <name> <purpose> <usage> <output> <fields> <word>
+        why is a declaration unusable?
+        Prints the reason, and nothing when the declaration is usable.  One implementation for the
+        whole module.
+
+      helpers_walk - the one validation pass behind the index and the guard
+        Walks the records of 'helpers_records' and prints, in file and line order:
+          !<file>:<line>: <problem>                        every violation
+          +<name> <purpose> <usage> <output> <word> <file>  a declaration which resolves
+        A declaration is only accepted once the rule directly below it has been seen, so this
+        single pass covers registration, resolution, adjacency and naming at once.  The index shows
+        the '+<...>' lines and the guard reports the '!<...>' lines, which is what keeps the two
+        from drifting apart.
+        leaving a file: an open declaration and a module without helpers are violations
+        there.  The sentinel record below leaves the last file through this same branch.
+
+      helpers_declarations - the registered helpers as '<name> <purpose> <usage> <output> <word> <file>'
+        Sorted by name; the file is the module file as it was found in '$BAR_DIR'.  The violations
+        'helpers_walk' reports are counted on stderr, the guard names each one.
+
+      helpers_json_string <text>
+        a JSON string literal
+
+      helpers_check_body - the registration guard for every helper module
+        Prints every violation 'helpers_walk' reports, one line each, and returns 1; prints nothing
+        and returns 0 when the repertoire is complete.
+
+      helpers [--json|--check]
+        the repertoire, see the module header
+        Body of the 'helpers' rule: the index (text or JSON) or the registration guard.  The
+        machine form is also entered with 'bar --json helpers' (BAR_AGENT_JSON, see
+        Bar.d/agent_rules).  An unknown argument is a usage error, exit 2.
+
+    Rules:
+
+      helpers
+        The repertoire index: one line per registered helper ('<name>  <purpose>  | <invocation>  |
+        <output shape>') sorted by name, then the total count as the last line.  '--json' prints one
+        object with the same count, '--check' verifies the registration of every helper module.
+
+      helpers_check
+        Verify that every helper module registers its rules ('bar helpers --check'): the guard is a
+        check target, so 'bar check helpers_check' reports it with the agent contract (verdict, chain,
+        totals, log path) and 'rule lints: helpers_check' can hook it into the lint target.
+
   init - Module to install, initialize and update bar itself
 
     Functions:
@@ -764,6 +911,10 @@ MODULE API/RULES
         out. Bar does rolling releases, it is continuously improved. To make this checked out
         version available for use this 'init_install' will create symlinks at the given
         [prefix] directory or in '~/.local' by default.
+        For 'please' every module of 'Bar.d/' is symlinked into '~/.config/please'.  Running
+        'init_install' again adds the symlinks of modules which are not linked yet and leaves the
+        existing ones untouched, so a module which was added to 'Bar.d/' later becomes reachable
+        without a manual symlink.
 
     Rules:
 
@@ -1519,7 +1670,9 @@ INITIAL INSTALLATION
        ./bar init_install ~/.local/
 
       This creates symlinks to 'bar', 'please', 'Bar.d', 'Barf.default', 'Please.default' in ~/.local
-      and symlinks 'Bar.d/*' to '~/.config/please/'.
+      and symlinks 'Bar.d/*' to '~/.config/please/'.  Existing symlinks are left untouched and only
+      the ones for modules which are not linked yet are added, so a module which was added to
+      'Bar.d/' later becomes reachable by running 'init_install' again (no manual symlink needed).
 
       Now 'bar' is installed, check it with 'bar help'
 
@@ -1855,6 +2008,24 @@ STANDARD RULES
   The 'clause_local [var[=value]]' is for defining variables that are local to a clause.  Only
   scalars can be clause local. Ideally this should be used as dependency and setting a a
   variable to a value. It can be used in a function as well esp when creating other metarules.
+
+
+HELPER REPERTOIRE
+
+  Many recurring questions -- a filter, a retrieval, a listing, a count, a state snapshot -- have
+  one deterministic answer which would otherwise be re-derived with several commands and a lot of
+  context.  Such an answer is a 'helper': a rule of a 'helper module' which names itself with a
+  '# helper-module:' header in its first lines and registers each of its rules with a
+  '# helper: <name> | <purpose> | <invocation> | <output shape>' declaration above it.
+
+   bar helpers          # the repertoire of this installation, one line per helper plus its count
+   bar helpers --json   # the same repertoire as one JSON object, for a wrapper
+   bar helpers --check  # verify that every helper module is registered (also run by 'lints')
+
+  The repertoire is generated by reading the module sources: listing it loads no module and runs
+  no helper, and 'please helpers' works from any directory.  See 'Bar.d/helpers_rules' for the
+  naming rules (a helper rule loads its module by its own first word), the registration format,
+  the output conventions and the elision and exit code requirements every helper has to follow.
 
 
 MAIN API
