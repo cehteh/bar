@@ -16,9 +16,11 @@
 ###   bar helpers              the repertoire: one line per helper, then the total count
 ###   bar helpers --json       the same repertoire as one JSON object (same count)
 ###   bar helpers --check      verify that every helper module is registered (see below)
+###   please helpers           as 'bar', plus the repertoire of the current directory
 ###
 ### The repertoire is read out of the module sources: nothing is loaded and no helper is executed
-### to list it, and 'please helpers' works from any directory.
+### to list it, and 'please helpers' works from any directory.  Which helpers are listed depends
+### on the *personality* bar was called by -- 'bar' or 'please' (see REGISTRATION below).
 ###
 ### HELPER MODULES AND RULE NAMES
 ###
@@ -43,12 +45,32 @@
 ### A helper registers itself with one declaration line at column 0, directly above its rule
 ### definition (only comments and blank lines in between, in the same file):
 ###
-###   # helper: <name> | <purpose> | <invocation> | <output shape>
+###   # helper:        <name> | <purpose> | <invocation> | <output shape>
+###   # helper-bar:    <name> | <purpose> | <invocation> | <output shape>
+###   # helper-please: <name> | <purpose> | <invocation> | <output shape>
 ###
 ###   <name>        the rule name: '<word>' or '<word>_<rest>' of that module
 ###   <purpose>     one line, the question it answers -- this is how an agent picks a helper
 ###   <invocation>  how to call it, its options included ('kanban_state [--json] <selector>')
 ###   <output>      one line, the shape of the answer
+###
+### The three forms share the four fields and the adjacency rule and differ only in *which
+### personality* lists the helper.  A plain '# helper:' is generic and is listed by both; a
+### '# helper-bar:' is listed only when bar was called as 'bar', a '# helper-please:' only when
+### it was called as 'please'.  Every listed row carries the personality: the invocation field is
+### prefixed with it, so 'bar helpers' prints 'bar kanban_state [--json]' and 'please helpers'
+### prints the same 'please kanban_state [--json]', and each JSON object carries that name in a
+### 'command' field.  The kind never weakens the guard: an adjacency, naming, unusable-field or
+### duplicate violation is reported for every declaration no matter which personality it addresses.
+###
+### 'please helpers' also runs 'bar helpers' in the current working directory and appends those
+### rows, each labelled with the 'bar' personality -- the vendored or project repertoire of the
+### place it is run in.  There is no dedup: a generic '# helper:' is then listed twice, once as
+### the site's 'please' helper and once as the directory's 'bar' helper, and the two may even run
+### different code.  The count line still counts every listed row.  The child is invoked directly,
+### not resolved through '$PATH', and can not recurse (a child is called as 'bar'); when it lists
+### nothing -- no 'Bar.d' here and none installed -- the union is simply empty.  '--check' is not
+### affected: it validates the personality's own module directory (the site directory for 'please').
 ###
 ### Neither field may contain a '|' and a declaration is one line.  There is no index file: the
 ### repertoire is *generated* by scanning the modules, so a new helper is one rule plus one
@@ -56,8 +78,9 @@
 ### 'lints' of bar's own Barf) fails when a rule of a helper module is not declared, when a
 ### declaration does not resolve to the rule below it, when a helper is declared twice, when its
 ### name would autoload another module, when the module header names another file, when a
-### declaration sits in a file that is no helper module or when a declaration is separated from
-### its rule by other code.
+### declaration sits in a file that is no helper module, when a declaration is separated from its
+### rule by other code or when it uses an unknown kind ('# helper-foo:' where one of the three
+### forms above was expected).
 ###
 ### The index lists exactly the declarations the guard accepts and rejects nothing the index
 ### shows: both are views of the same single validation pass, so a helper which is not listed is
@@ -98,22 +121,58 @@ function helpers_module_of ## <rule> - the module 'rule_autoload' loads for <rul
     printf '%s' "${name%%_*}"
 }
 
+function helpers_personality ## - 'bar' or 'please', the personality this invocation lists for
+{
+    ## Bar has two personalities (see the module header and Bar.d/init): 'bar' is the project and
+    ## installation one, 'please' the private one of the single site directory '~/.config/please'.
+    ## The name bar was called by is in 'BAR_CALLED_AS' (set in the bar script from '$0'), anything
+    ## but 'please' is treated as 'bar' so a direct 'bar', './bar' or an odd symlink still lists
+    ## the repertoire a project expects.
+    if [[ "${BAR_CALLED_AS:-bar}" == please ]]; then
+        printf 'please'
+    else
+        printf 'bar'
+    fi
+}
+
+function helpers_union_child ## [args..] - 'bar helpers' in the cwd for the 'please' union
+{
+    ## 'please helpers' lists the repertoire of the place it is run in as well: 'bar helpers' in
+    ## the current working directory, which is the vendored or project repertoire there.  The child
+    ## is invoked directly through '$BAR_SELF' and never through a '$PATH' lookup, so a 'please'
+    ## can not pick a foreign 'bar'; it is called as 'bar', so it can not recurse into a union of
+    ## its own.  A 'bar' which can not list a repertoire here -- no 'Bar.d' in sight and none
+    ## installed -- contributes nothing and its diagnostics are swallowed: an empty half is not an
+    ## error of 'please helpers'.
+    [[ -n "${BAR_SELF:-}" ]] || return 0
+    [[ "$(helpers_personality)" == please ]] || return 0
+    "$BAR_SELF" helpers "$@" 2>/dev/null || true
+}
+
+function helpers_union_rows ## - the 'bar' rows the 'please' union appends, without their count
+{
+    helpers_union_child | LC_ALL=C sed '/^([0-9][0-9]* helper/d'
+}
+
 function helpers_records ## - scan '$BAR_DIR' for the repertoire, as US (0x1f) separated records
 {
     ## One awk pass over the module files of '$BAR_DIR', nothing is loaded and no helper is run.
     ## The records feed the single validation pass below:
     ##
     ##   <file> <line> M <word>                                       a '# helper-module:' header
-    ##   <file> <line> D <name> <purpose> <usage> <output> <n> <word> a '# helper:' declaration
+    ##   <file> <line> D <name> <purpose> <usage> <output> <n> <word> <kind> a declaration
+    ##   <file> <line> U <kind>                                       an unknown '# helper-<kind>:' line
     ##   <file> <line> R <rule>                                       a rule of a helper module
     ##   <file> <line> S                                              the code line separating a
     ##                                                                declaration from its rule
     ##
-    ## 'D' records are emitted for every file -- a declaration outside a helper module is a
-    ## violation and has to be seen -- while 'R' and 'S' are only emitted for a file which names a
-    ## helper module, so a module without helpers costs nothing.  'S' is the one code line that
-    ## separates a declaration from its rule; it is decided here and not by the walk, so the walk
-    ## costs one iteration per declaration and rule instead of one per line of a helper module.
+    ## 'D' and 'U' records are emitted for every file -- a declaration outside a helper module is a
+    ## violation and has to be seen, and so is an unknown kind -- while 'R' and 'S' are only emitted
+    ## for a file which names a helper module, so a module without helpers costs nothing.  'S' is
+    ## the one code line that separates a declaration from its rule; it is decided here and not by
+    ## the walk, so the walk costs one iteration per declaration and rule instead of one per line of
+    ## a helper module.  The kind of a 'D' record is 'generic' for a plain '# helper:', 'bar' for
+    ## '# helper-bar:' and 'please' for '# helper-please:' and decides which personality lists it.
     ##
     ## A file which neither names a helper module nor declares a helper contributes no record at all
     ## and is dropped before the walk, with one 'grep -l' that stops at the first matching line: the
@@ -169,13 +228,38 @@ function helpers_records ## - scan '$BAR_DIR' for the repertoire, as US (0x1f) s
             print FILENAME, FNR, "M", module
             next
         }
-        /^# helper:/ {
+        /^# helper-bar:[ \t]*/ {
+            text = $0
+            sub(/^# helper-bar:[ \t]*/, "", text)
+            count = split(text, field, "|")
+            print FILENAME, FNR, "D", trim(field[1]), trim(field[2]), trim(field[3]), \
+                trim(field[4]), count, module, "bar"
+            pending = 1
+            next
+        }
+        /^# helper-please:[ \t]*/ {
+            text = $0
+            sub(/^# helper-please:[ \t]*/, "", text)
+            count = split(text, field, "|")
+            print FILENAME, FNR, "D", trim(field[1]), trim(field[2]), trim(field[3]), \
+                trim(field[4]), count, module, "please"
+            pending = 1
+            next
+        }
+        /^# helper:[ \t]*/ {
             text = $0
             sub(/^# helper:[ \t]*/, "", text)
             count = split(text, field, "|")
             print FILENAME, FNR, "D", trim(field[1]), trim(field[2]), trim(field[3]), \
-                trim(field[4]), count, module
+                trim(field[4]), count, module, "generic"
             pending = 1
+            next
+        }
+        /^# helper-[A-Za-z0-9_-]+:/ {
+            text = $0
+            sub(/^# helper-/, "", text)
+            sub(/:.*$/, "", text)
+            print FILENAME, FNR, "U", trim(text)
             next
         }
         module == "" { next }
@@ -223,15 +307,18 @@ function helpers_walk ## - the one validation pass behind the index and the guar
     ## A declaration is only accepted once the rule directly below it has been seen, so this
     ## single pass covers registration, resolution, adjacency and naming at once.  The index shows
     ## the '+<...>' lines and the guard reports the '!<...>' lines, which is what keeps the two
-    ## from drifting apart.
-    local file line kind name purpose usage output fields word
+    ## from drifting apart.  A declaration is listed only when its kind addresses the personality
+    ## of this invocation ('generic' always, 'bar' only for 'bar', 'please' only for 'please'),
+    ## while every violation is reported no matter which kind it belongs to.
+    local file line kind name purpose usage output fields word dkind
     local current_file="" current_base="" current_word="" headers=0 declared_in_file=0
     local declared="" declared_line=0 declared_usable=0 declared_reported=0 separated=0
-    local declared_purpose="" declared_usage="" declared_output="" declared_word=""
-    local reason
+    local declared_purpose="" declared_usage="" declared_output="" declared_word="" declared_dkind=""
+    local personality reason
+    personality="$(helpers_personality)"
     local -A seen=()
 
-    while IFS=$'\037' read -r file line kind name purpose usage output fields word; do
+    while IFS=$'\037' read -r file line kind name purpose usage output fields word dkind; do
         if [[ "$file" != "$current_file" ]]; then
             ## leaving a file: an open declaration and a module without helpers are violations
             ## there.  The sentinel record below leaves the last file through this same branch.
@@ -281,6 +368,7 @@ function helpers_walk ## - the one validation pass behind the index and the guar
             declared_usage="$usage"
             declared_output="$output"
             declared_word="$word"
+            declared_dkind="$dkind"
             if [[ -n "${seen[$name]:-}" ]]; then
                 printf "!%s:%s: '%s' is already declared in %s\n" "$file" "$line" "$name" "${seen[$name]}"
                 declared_usable=0
@@ -301,7 +389,7 @@ function helpers_walk ## - the one validation pass behind the index and the guar
             elif [[ "$declared" != "$name" ]]; then
                 printf "!%s:%s: rule '%s' does not match the declaration of '%s' in line %s\n" \
                     "$file" "$line" "$name" "$declared" "$declared_line"
-            elif (( declared_usable )); then
+            elif (( declared_usable )) && [[ "$declared_dkind" == generic || "$declared_dkind" == "$personality" ]]; then
                 printf '+%s\t%s\t%s\t%s\t%s\t%s\n' "$declared" "$declared_purpose" \
                     "$declared_usage" "$declared_output" "$declared_word" "$file"
             fi
@@ -310,6 +398,10 @@ function helpers_walk ## - the one validation pass behind the index and the guar
             declared_usable=0
             declared_reported=0
             separated=0
+            ;;
+        U)
+            printf "!%s:%s: '# helper-%s:' is not a helper declaration, expected '# helper:', '# helper-bar:' or '# helper-please:'\n" \
+                "$file" "$line" "$name"
             ;;
         S)
             if [[ -n "$declared" && "$separated" == 0 ]]; then
@@ -320,6 +412,7 @@ function helpers_walk ## - the one validation pass behind the index and the guar
             ;;
         esac
     done < <(helpers_records; printf 'helpers-walk\0370\037Z\n')
+    return 0
 }
 
 function helpers_declarations ## - the registered helpers as '<name> <purpose> <usage> <output> <word> <file>'
@@ -335,51 +428,87 @@ function helpers_declarations ## - the registered helpers as '<name> <purpose> <
     printf '%s\n' "$walk" | LC_ALL=C sed -n 's/^+//p' | LC_ALL=C sort -t$'\t' -k1,1
 }
 
-function helpers_index_text
+function helpers_index_text ## - the text index: one row per helper, then the count line
 {
-    local declarations
+    ## The rows of this personality, then ('please' only) the rows of the union, then a split line
+    ## and the count line.  The invocation of every row is prefixed with the personality it belongs
+    ## to, and the count is the number of listed rows -- the same total the JSON form reports.
+    local personality declarations union_rows own_count union_count total plural
+    personality="$(helpers_personality)"
     declarations="$(helpers_declarations)"
-    if [[ -z "$declarations" ]]; then
-        printf '(0 helpers)\n'
-        return 0
+    union_rows=""
+    if [[ "$personality" == please ]]; then
+        union_rows="$(helpers_union_rows)"
     fi
-    printf '%s\n' "$declarations" | awk -F'\t' '
-        {
-            name[NR] = $1
-            purpose[NR] = $2
-            usage[NR] = $3
-            output[NR] = $4
-            if (length($1) > width)
-                width = length($1)
-        }
-        END {
-            blanks = "                                                                                "
-            for (i = 1; i <= NR; i++)
-                printf "%s%s  %s  | %s  | %s\n", name[i], \
-                    substr(blanks, 1, width - length(name[i])), purpose[i], usage[i], output[i]
-            printf "(%d helper%s)\n", NR, NR == 1 ? "" : "s"
-        }'
+
+    own_count=0
+    if [[ -n "$declarations" ]]; then
+        own_count="$(printf '%s\n' "$declarations" | LC_ALL=C grep -c .)"
+        printf '%s\n' "$declarations" | awk -F'\t' -v personality="$personality" '
+            {
+                name[NR] = $1
+                purpose[NR] = $2
+                usage[NR] = $3
+                output[NR] = $4
+                if (length($1) > width)
+                    width = length($1)
+            }
+            END {
+                blanks = "                                                                "
+                for (i = 1; i <= NR; i++)
+                    printf "%s%s  %s  | %s %s  | %s\n", name[i], \
+                        substr(blanks, 1, width - length(name[i])), purpose[i], \
+                        personality, usage[i], output[i]
+            }'
+    fi
+
+    union_count=0
+    if [[ -n "$union_rows" ]]; then
+        union_count="$(printf '%s\n' "$union_rows" | LC_ALL=C grep -c .)"
+        printf '%s\n' "$union_rows"
+        printf '(%d please, %d bar)\n' "$own_count" "$union_count"
+    fi
+
+    total=$(( own_count + union_count ))
+    plural=""
+    (( total == 1 )) || plural="s"
+    printf '(%d helper%s)\n' "$total" "$plural"
 }
 
-function helpers_index_json
+function helpers_index_json ## - the JSON index: one object per helper, count and both halves of a union
 {
-    local -a objects=()
-    local name purpose usage output word file
-    local object joined="" separator=""
+    ## One object: 'bar_helpers':1, the count and one object per listed helper.  Every object
+    ## carries the personality in 'command' and has it prefixed on 'invocation' (a wrapper can tell
+    ## a 'please' helper from a 'bar' one).  For 'please' the 'bar' repertoire of the current
+    ## directory is merged in as well -- summed count, both halves' objects, again without dedup.
+    local personality name purpose usage output word file object
+    local joined="" separator="" own_count=0 child="" child_count=0 child_objects=""
+    personality="$(helpers_personality)"
     while IFS=$'\t' read -r name purpose usage output word file; do
-        objects+=( "$(printf '{"name":%s,"purpose":%s,"invocation":%s,"output":%s,"module":%s,"file":%s}' \
+        object="$(printf '{"name":%s,"command":%s,"purpose":%s,"invocation":%s,"output":%s,"module":%s,"file":%s}' \
             "$(json_string "$name")" \
+            "$(json_string "$personality")" \
             "$(json_string "$purpose")" \
-            "$(json_string "$usage")" \
+            "$(json_string "$personality $usage")" \
             "$(json_string "$output")" \
             "$(json_string "$word")" \
-            "$(json_string "$file")")" )
-    done < <(helpers_declarations)
-    for object in "${objects[@]}"; do
+            "$(json_string "$file")")"
         joined="${joined}${separator}${object}"
         separator=","
-    done
-    printf '{"bar_helpers":1,"count":%d,"helpers":[%s]}\n' "${#objects[@]}" "$joined"
+        own_count=$(( own_count + 1 ))
+    done < <(helpers_declarations)
+    if [[ "$personality" == please ]]; then
+        child="$(helpers_union_child --json)"
+        if [[ -n "$child" ]]; then
+            child_count="$(printf '%s' "$child" | LC_ALL=C sed -n 's/.*"count":\([0-9][0-9]*\).*/\1/p')"
+            child_objects="$(printf '%s' "$child" | LC_ALL=C sed -n 's/.*"helpers":\[\(.*\)\]}$/\1/p')"
+            [[ -n "$child_count" ]] || child_count=0
+        fi
+    fi
+    if [[ -n "$child_objects" ]]; then
+        joined="${joined}${separator}${child_objects}"
+    fi
+    printf '{"bar_helpers":1,"count":%d,"helpers":[%s]}\n' "$(( own_count + child_count ))" "$joined"
 }
 
 function helpers_check_body ## - the registration guard for every helper module

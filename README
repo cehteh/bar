@@ -764,9 +764,11 @@ MODULE API/RULES
       bar helpers              the repertoire: one line per helper, then the total count
       bar helpers --json       the same repertoire as one JSON object (same count)
       bar helpers --check      verify that every helper module is registered (see below)
+      please helpers           as 'bar', plus the repertoire of the current directory
     
     The repertoire is read out of the module sources: nothing is loaded and no helper is executed
-    to list it, and 'please helpers' works from any directory.
+    to list it, and 'please helpers' works from any directory.  Which helpers are listed depends
+    on the *personality* bar was called by -- 'bar' or 'please' (see REGISTRATION below).
     
     HELPER MODULES AND RULE NAMES
     
@@ -791,12 +793,32 @@ MODULE API/RULES
     A helper registers itself with one declaration line at column 0, directly above its rule
     definition (only comments and blank lines in between, in the same file):
     
-      # helper: <name> | <purpose> | <invocation> | <output shape>
+      # helper:        <name> | <purpose> | <invocation> | <output shape>
+      # helper-bar:    <name> | <purpose> | <invocation> | <output shape>
+      # helper-please: <name> | <purpose> | <invocation> | <output shape>
     
       <name>        the rule name: '<word>' or '<word>_<rest>' of that module
       <purpose>     one line, the question it answers -- this is how an agent picks a helper
       <invocation>  how to call it, its options included ('kanban_state [--json] <selector>')
       <output>      one line, the shape of the answer
+    
+    The three forms share the four fields and the adjacency rule and differ only in *which
+    personality* lists the helper.  A plain '# helper:' is generic and is listed by both; a
+    '# helper-bar:' is listed only when bar was called as 'bar', a '# helper-please:' only when
+    it was called as 'please'.  Every listed row carries the personality: the invocation field is
+    prefixed with it, so 'bar helpers' prints 'bar kanban_state [--json]' and 'please helpers'
+    prints the same 'please kanban_state [--json]', and each JSON object carries that name in a
+    'command' field.  The kind never weakens the guard: an adjacency, naming, unusable-field or
+    duplicate violation is reported for every declaration no matter which personality it addresses.
+    
+    'please helpers' also runs 'bar helpers' in the current working directory and appends those
+    rows, each labelled with the 'bar' personality -- the vendored or project repertoire of the
+    place it is run in.  There is no dedup: a generic '# helper:' is then listed twice, once as
+    the site's 'please' helper and once as the directory's 'bar' helper, and the two may even run
+    different code.  The count line still counts every listed row.  The child is invoked directly,
+    not resolved through '$PATH', and can not recurse (a child is called as 'bar'); when it lists
+    nothing -- no 'Bar.d' here and none installed -- the union is simply empty.  '--check' is not
+    affected: it validates the personality's own module directory (the site directory for 'please').
     
     Neither field may contain a '|' and a declaration is one line.  There is no index file: the
     repertoire is *generated* by scanning the modules, so a new helper is one rule plus one
@@ -804,8 +826,9 @@ MODULE API/RULES
     'lints' of bar's own Barf) fails when a rule of a helper module is not declared, when a
     declaration does not resolve to the rule below it, when a helper is declared twice, when its
     name would autoload another module, when the module header names another file, when a
-    declaration sits in a file that is no helper module or when a declaration is separated from
-    its rule by other code.
+    declaration sits in a file that is no helper module, when a declaration is separated from its
+    rule by other code or when it uses an unknown kind ('# helper-foo:' where one of the three
+    forms above was expected).
     
     The index lists exactly the declarations the guard accepts and rejects nothing the index
     shows: both are views of the same single validation pass, so a helper which is not listed is
@@ -840,19 +863,41 @@ MODULE API/RULES
         Mirrors 'rule_autoload' in Bar.d/std_lib: the prefixes are stripped, then everything from
         the first underscore on.  'rad_state' -> 'rad', 'has_kanban_state' -> 'kanban'.
 
+      helpers_personality - 'bar' or 'please', the personality this invocation lists for
+        Bar has two personalities (see the module header and Bar.d/init): 'bar' is the project and
+        installation one, 'please' the private one of the single site directory '~/.config/please'.
+        The name bar was called by is in 'BAR_CALLED_AS' (set in the bar script from '$0'), anything
+        but 'please' is treated as 'bar' so a direct 'bar', './bar' or an odd symlink still lists
+        the repertoire a project expects.
+
+      helpers_union_child [args..]
+        'bar helpers' in the cwd for the 'please' union
+        'please helpers' lists the repertoire of the place it is run in as well: 'bar helpers' in
+        the current working directory, which is the vendored or project repertoire there.  The child
+        is invoked directly through '$BAR_SELF' and never through a '$PATH' lookup, so a 'please'
+        can not pick a foreign 'bar'; it is called as 'bar', so it can not recurse into a union of
+        its own.  A 'bar' which can not list a repertoire here -- no 'Bar.d' in sight and none
+        installed -- contributes nothing and its diagnostics are swallowed: an empty half is not an
+        error of 'please helpers'.
+
+      helpers_union_rows - the 'bar' rows the 'please' union appends, without their count
+
       helpers_records - scan '$BAR_DIR' for the repertoire, as US (0x1f) separated records
         One awk pass over the module files of '$BAR_DIR', nothing is loaded and no helper is run.
         The records feed the single validation pass below:
           <file> <line> M <word>                                       a '# helper-module:' header
-          <file> <line> D <name> <purpose> <usage> <output> <n> <word> a '# helper:' declaration
+          <file> <line> D <name> <purpose> <usage> <output> <n> <word> <kind> a declaration
+          <file> <line> U <kind>                                       an unknown '# helper-<kind>:' line
           <file> <line> R <rule>                                       a rule of a helper module
           <file> <line> S                                              the code line separating a
                                                                        declaration from its rule
-        'D' records are emitted for every file -- a declaration outside a helper module is a
-        violation and has to be seen -- while 'R' and 'S' are only emitted for a file which names a
-        helper module, so a module without helpers costs nothing.  'S' is the one code line that
-        separates a declaration from its rule; it is decided here and not by the walk, so the walk
-        costs one iteration per declaration and rule instead of one per line of a helper module.
+        'D' and 'U' records are emitted for every file -- a declaration outside a helper module is a
+        violation and has to be seen, and so is an unknown kind -- while 'R' and 'S' are only emitted
+        for a file which names a helper module, so a module without helpers costs nothing.  'S' is
+        the one code line that separates a declaration from its rule; it is decided here and not by
+        the walk, so the walk costs one iteration per declaration and rule instead of one per line of
+        a helper module.  The kind of a 'D' record is 'generic' for a plain '# helper:', 'bar' for
+        '# helper-bar:' and 'please' for '# helper-please:' and decides which personality lists it.
         A file which neither names a helper module nor declares a helper contributes no record at all
         and is dropped before the walk, with one 'grep -l' that stops at the first matching line: the
         index stays cheap while the module sources grow (a byte of a module nobody declares a helper
@@ -873,13 +918,26 @@ MODULE API/RULES
         A declaration is only accepted once the rule directly below it has been seen, so this
         single pass covers registration, resolution, adjacency and naming at once.  The index shows
         the '+<...>' lines and the guard reports the '!<...>' lines, which is what keeps the two
-        from drifting apart.
+        from drifting apart.  A declaration is listed only when its kind addresses the personality
+        of this invocation ('generic' always, 'bar' only for 'bar', 'please' only for 'please'),
+        while every violation is reported no matter which kind it belongs to.
         leaving a file: an open declaration and a module without helpers are violations
         there.  The sentinel record below leaves the last file through this same branch.
 
       helpers_declarations - the registered helpers as '<name> <purpose> <usage> <output> <word> <file>'
         Sorted by name; the file is the module file as it was found in '$BAR_DIR'.  The violations
         'helpers_walk' reports are counted on stderr, the guard names each one.
+
+      helpers_index_text - the text index: one row per helper, then the count line
+        The rows of this personality, then ('please' only) the rows of the union, then a split line
+        and the count line.  The invocation of every row is prefixed with the personality it belongs
+        to, and the count is the number of listed rows -- the same total the JSON form reports.
+
+      helpers_index_json - the JSON index: one object per helper, count and both halves of a union
+        One object: 'bar_helpers':1, the count and one object per listed helper.  Every object
+        carries the personality in 'command' and has it prefixed on 'invocation' (a wrapper can tell
+        a 'please' helper from a 'bar' one).  For 'please' the 'bar' repertoire of the current
+        directory is merged in as well -- summed count, both halves' objects, again without dedup.
 
       helpers_check_body - the registration guard for every helper module
         Prints every violation 'helpers_walk' reports, one line each, and returns 1; prints nothing
@@ -3021,16 +3079,20 @@ HELPER REPERTOIRE
   one deterministic answer which would otherwise be re-derived with several commands and a lot of
   context.  Such an answer is a 'helper': a rule of a 'helper module' which names itself with a
   '# helper-module:' header in its first lines and registers each of its rules with a
-  '# helper: <name> | <purpose> | <invocation> | <output shape>' declaration above it.
+  '# helper:', '# helper-bar:' or '# helper-please:' declaration above it -- the three forms
+  share their four fields and differ only in which personality ('bar' or 'please') lists the
+  helper, and every listed row is prefixed with that personality.
 
    bar helpers          # the repertoire of this installation, one line per helper plus its count
    bar helpers --json   # the same repertoire as one JSON object, for a wrapper
    bar helpers --check  # verify that every helper module is registered (also run by 'lints')
 
   The repertoire is generated by reading the module sources: listing it loads no module and runs
-  no helper, and 'please helpers' works from any directory.  See 'Bar.d/helpers_rules' for the
-  naming rules (a helper rule loads its module by its own first word), the registration format,
-  the output conventions and the elision and exit code requirements every helper has to follow.
+  no helper, and 'please helpers' works from any directory -- it even appends the 'bar'
+  repertoire of the directory it is run in (a 'bar helpers' there), again without dedup.  See
+  'Bar.d/helpers_rules' for the naming rules (a helper rule loads its module by its own first
+  word), the registration format, the output conventions and the elision and exit code
+  requirements every helper has to follow.
 
 
 MAIN API
