@@ -1504,7 +1504,7 @@ MODULE API/RULES
     incoming item may be trusted, how a topic starts -- and how a repository gets onto radicle in
     the first place.
     
-    Five helpers, all served by the backing library Bar.d/radicle_lib (running 'rad', reading its
+    Six helpers, all served by the backing library Bar.d/radicle_lib (running 'rad', reading its
     padded tables back, the age of a last event, the node storage, the '.worktrees/' exclusion and
     the JSON literals):
     
@@ -1512,6 +1512,9 @@ MODULE API/RULES
       bar rad_patches [--state <s>] [--author <a>] [--json] [--max <n>]
                                                              only the patches, filtered
       bar rad_trust --repo <rid> --author <who>              is that author a trusted source
+      bar rad_comment_metadata <item> --query <label|assign|unassign>
+                                                             the trusted '*label:'/'*assign:'/
+                                                             '*unassign:' proposals of one item
       bar rad_topic <class> "<description>"                  open the topic tree of an item
       bar rad_import                                         import this repository into radicle
     
@@ -1579,6 +1582,35 @@ MODULE API/RULES
       trusted author=cehteh delegate=yes authored=396 threshold=10 reason=delegate of this repository repo=rad:z3WhBdHt1VVNyeQ61zpY66pNzuSrP
     
       exit 0 trusted -- 1 untrusted -- 2 could not answer (unknown author, no data, usage)
+    
+    'rad_comment_metadata' is the second half of the same policy, for the writes nobody but a
+    delegate may make.  Radicle authorizes an issue's `Label`, `Assign` and `Lifecycle` actions to
+    the repository delegates (and to the issue's author for editing and closing it) -- verified in
+    the implementation (`heartwood`, 'crates/radicle/src/cob/issue.rs', 'Issue::authorization'), so
+    an incoming contributor *cannot* label or assign anything: the store refuses it.  Instead the
+    proposal travels as a **structured comment**: the first lines of a comment may be
+    
+      *label:improvement
+      *assign:cehteh
+      *unassign:ct_vibes
+    
+    one per line, starting at the comment (the issue description counts -- rad calls it the root
+    comment of the thread).  This helper reads those blocks back from the node storage and returns
+    only the entries a trusted source wrote:
+    
+      bar rad_comment_metadata <item> --query label [--repo <rid|path>] [--trust <spec>].. [--last] [--json]
+    
+    '<item>' is the issue or patch the question is about, short or full -- one item only, not the
+    whole repository: the ref listing is a single call, the chains (the ops and their payloads) are
+    opened for that COB alone.  An id the node does not hold is 'no data' (3), an id an issue and a
+    patch both match is a usage error (2).
+    
+    '--trust' takes 'did:<did|nid>' (that identity, named) and 'contributor(<n>)' (an identity with
+    at least <n> authored commits); with no '--trust' only the **delegates** are trusted, which is
+    the narrow default.  '--last' keeps only the newest block per item, which is what applies it.
+    The trust facts come from the same tool 'rad_trust' uses ('tools/radicle_triage/triage-facts').
+    A delegate's maintenance command reads the trusted proposals back and applies them -- the labels
+    and assignments themselves still need that delegate's own key.
     
     'rad_topic' opens the topic tree of that work in one action: it mints the name from the
     branch *class* and the description, resolves the clone and the freshest base, keeps '.worktrees/'
@@ -1656,6 +1688,17 @@ MODULE API/RULES
         the timestamp the ages are relative to
         Default: 0
 
+      RAD_COMMENT_METADATA_AUTHORED (gA)
+        '<rid>|<nid>' -> the commits that identity authored
+        Default: ()
+
+      RAD_METADATA_AUTHORED_VALUE (g)
+        what 'rad_metadata_authored' hands back
+
+      RAD_COMMENT_METADATA_ASSIGNEES (ga)
+        the current assignees of the item asked about
+        Default: ()
+
     Functions:
 
       rad_import import a git repository into radicle
@@ -1705,6 +1748,90 @@ MODULE API/RULES
         'unknown' verdict (exit 2), never 'untrusted'.  The fields are joined with US (0x1f) and not
         with a tab: an empty field has to survive the read, and IFS whitespace would collapse it.
 
+      rad_metadata_nid <did-or-nid>
+        the bare NID of an identity
+        'did:key:z6Mk…', 'did:z6Mk…' and a bare NID all mean the same identity; 'rad' prints the
+        first form and a human types any of them.
+
+      rad_metadata_mail_nid <mail>
+        the NID 'rad' writes into a COB op's author mail
+        A COB op is authored as '<alias>@<nid>' (measured: 'cehteh@z6MksaJk…'), so the *actor* of an
+        op travels in that mail.  The namespace the op was read from does not identify it: one COB's
+        chain is replicated into every namespace which holds it, byte for byte the same commits.
+
+      rad_metadata_marks <body>
+        the marker lines at the very start of <body>
+        One '<mark>US<value>' record per line of the block.  The block starts at the comment and ends
+        at the first line which is not a marker: a marker quoted inside a reply is prose, not a
+        proposal.  A value is a single word -- a label name, a DID, an alias -- and a line which
+        carries more is dropped rather than handed back half cut.
+
+      rad_metadata_authored <rid> <nid>
+        the commits that identity authored, '-' when unknown
+        Asked once per identity and remembered, so several thresholds cost one lookup.
+        Counted is only what that identity authored *as itself* ('<alias>@<nid>'): the gate has to
+        resolve into a radicle identity, and commits of plain git authors carry no radicle identity
+        and are therefore dropped.  That is why 'commits_as_identity' is read and not the wider
+        'total_authored' -- an identity the command cannot resolve stays '-' and is not trusted.
+        'RAD_TRUST_CMD' is provided by the deployment (a command and its arguments, e.g.
+        'please rad_trust'): where the facts about an identity come from is not this module's
+        business, and a home directory path does not belong into a vendored source file.
+        An identity whose count cannot be read is not trusted -- say so, else a broken facts
+        command looks exactly like a contributor who is below the threshold.
+
+      rad_comment_metadata_assignees <storage> <ref>
+        the item's current assignees
+        The newest 'assign' op of the chain carries the whole set (a radicle op is the new value of
+        its field), so the walk stops at the first one -- walking backwards from the tip is what makes
+        that one read, not one read per op.  Only identities of the radicle system count here: an
+        assignee which is not a DID/NID is dropped like any other entry without identity.
+
+      rad_comment_metadata_collect <storage> <item>
+        the marker lines of one item
+        Reads the chain of the one item asked for, never the whole repository: the ref listing is a
+        single call (it is what says which COB the id names), the ops and their payloads are opened
+        for that COB alone.  A COB lives in every namespace which replicated it, so it is keyed by
+        type and id and only the newest tip is walked -- else every op would be read once per copy.
+        Only the op kinds which can carry a body are opened ('Comment', 'Edit comment', 'Create
+        issue', 'Edit root'), and the payload is the blob 'rad' names '0'.
+        Returns 3 when the node holds no such issue or patch, 2 when the id matches more than one.
+        An op of another COB can stand in this chain (rad chains a COB onto the identity
+        commits), so the op has to declare the type the ref carries -- else a foreign
+        comment would be reported against this item.
+        Chronological, the item and the op as the tie break -- two ops of one second are ordered, so
+        '--last' has something to point at.
+
+      rad_comment_metadata_json - the whole answer as one object
+        Complete, never elided: the entries the filter kept, oldest first.
+        The assignees belong into the answer: they are one of the reasons an entry is trusted, and a
+        caller which sees a surprise wants to know where the trust came from.  Identities travel in
+        the form the radicle tools want ('rad issue assign --add <DID>'), the same one the text
+        output prints: a consumer must never have to re-normalize them.
+
+      rad_comment_metadata_usage [reason]
+        usage on stderr
+
+      rad_comment_metadata see the module header
+        the one item the question is about (the only positional argument there is)
+        The trust specs are validated before anything is read: a usage error is not worth a node
+        lookup, and it has to be reported the same way whether or not the node holds the repository.
+        'rad' first: without it nothing can be resolved, and "the node holds no storage" would be
+        the wrong answer for the operator to chase.
+        Which repository: an explicit one (RID or path), else the checkout this runs in.
+        Who is trusted: the delegates answer from the identity document, 'did:' names one identity and
+        'contributor(<n>)' is decided from the authored commits the fact tool counts.
+        An asked-for contributor threshold needs the facts command: without it every count reads
+        'unknown', which would answer 'nothing is trusted' where the operator asked for trust.
+        The item's assignees are a trust source of their own: assigning an issue to a contributor
+        makes that contributor's proposals count -- so the same query can answer differently before
+        and after an assignment.  That is the design: trust is read when it is asked for, never
+        stored, and it is always an identity of the radicle system ('z6M…') which carries it.
+        No radicle identity in the op's author (a git-only author, or a mail which is not
+        '<alias>@<nid>'): there is nothing to authenticate against, so the proposal is dropped
+        -- silently, like every other proposal which is not trusted.
+        The newest block per item -- keyed on the *op*, not on the record: a comment which
+        proposes two labels is one block and has to come back as the pair it is.
+
       rad_topic_usage [reason]
         usage on stderr
 
@@ -1735,6 +1862,16 @@ MODULE API/RULES
 
       rad_trust
         The trust verdict of the triage policy; exit 0 trusted, 1 untrusted, 2 could not answer.
+
+      rad_comment_metadata
+        Who is trusted is read when the question is asked, from the repository (its delegates), from the
+        item (the identities it is assigned to) and from the command line ('--trust'); 'contributor(<n>)'
+        asks 'RAD_TRUST_CMD' for the commits that identity authored as itself -- the gate resolves into
+        radicle identities, commits of plain git authors are not counted.  Only identities of the radicle
+        system carry trust -- an op whose author or assignee is not a DID/NID is dropped, silently, and
+        'RAD_TRUST_CMD' being unset is only an error when a contributor threshold was asked for.  A
+        proposal which is not trusted yet can become trusted later (a delegate assigns the item to its
+        author), so the answer to the same query is allowed to change between runs.
 
       rad_topic
         Creates '<clone>/.worktrees/<class>-<description>' on the branch of the same name; exit 0 created,
