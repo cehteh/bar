@@ -4,7 +4,7 @@
 #
 # Acceptance tests for the radicle state helper (Bar.d/radstate).
 #
-# Everything runs against throw-away projects and a fake 'rad' ('RADSTATE_RAD'), so no radicle
+# Everything runs against throw-away projects and a fake 'rad' ('RAD_BIN'), so no radicle
 # installation, no node and no network are needed: the tables the fake answers with are built
 # here, cell by cell, with the padding and the box drawing 'rad' prints.  Covered:
 #
@@ -30,7 +30,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 BAR="$REPO_ROOT/bar"
 
 # the modules a throw-away project needs to run bar, the repertoire and the helper
-FIXTURE_MODULES="std_lib rule_lib tty_lib std_rules git_lib agent_rules helpers_rules radstate"
+FIXTURE_MODULES="std_lib rule_lib tty_lib std_rules git_lib agent_rules helpers_rules radicle_lib radstate"
 
 failures=0
 pass() { echo "  ✓ $*"; }
@@ -323,14 +323,14 @@ run_command() { # <dir> <radstate-rad> <radstate-test-fixture> <args..>
     shift 3
     OUT=""
     RC=0
-    OUT="$(cd "$dir" && RADSTATE_RAD="$radcmd" RADSTATE_TEST_FIXTURE="$statefixture" "$BAR" "$@" 2>/dev/null)" || RC=$?
+    OUT="$(cd "$dir" && RAD_BIN="$radcmd" RADSTATE_TEST_FIXTURE="$statefixture" "$BAR" "$@" 2>/dev/null)" || RC=$?
 }
 run_command_err() { # same, but capture stderr and drop stdout
     local dir="$1" radcmd="$2" statefixture="$3"
     shift 3
     OUT=""
     RC=0
-    OUT="$(cd "$dir" && RADSTATE_RAD="$radcmd" RADSTATE_TEST_FIXTURE="$statefixture" "$BAR" "$@" 2>&1 >/dev/null)" || RC=$?
+    OUT="$(cd "$dir" && RAD_BIN="$radcmd" RADSTATE_TEST_FIXTURE="$statefixture" "$BAR" "$@" 2>&1 >/dev/null)" || RC=$?
 }
 run_bar() { run_command "$REPO" "$FAKERAD" "$FIX" "$@"; }
 run_bar_err() { run_command_err "$REPO" "$FAKERAD" "$FIX" "$@"; }

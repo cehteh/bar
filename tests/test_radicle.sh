@@ -34,7 +34,7 @@ BAR="$REPO_ROOT/bar"
 
 # the modules a throw-away project needs to run bar and the helpers under test ('git' is read for
 # the branch classes, 'agent_rules' supplies the '--json' rule of 'bar --json <rule>')
-FIXTURE_MODULES="std_lib rule_lib tty_lib std_rules git git_lib agent_rules helpers_rules radicle"
+FIXTURE_MODULES="std_lib rule_lib tty_lib std_rules git git_lib agent_rules helpers_rules radicle_lib radicle"
 
 failures=0
 pass() { echo "  ✓ $*"; }
@@ -165,7 +165,7 @@ mkclone "$TRUST"
 # -------------------------------------------------------------------------------------------------
 
 echo "--- AC1 a delegate is trusted ---"
-run_bar_env "$TRUST" "RADICLE_TRIAGE_FACTS=$STUB" "STUB_ARGS=$WORK/args" \
+run_bar_env "$TRUST" "RAD_TRIAGE_FACTS=$STUB" "STUB_ARGS=$WORK/args" \
     "STUB_JSON=$(trusted_json true 396 10)" -- radicle_trust --repo rad:zTEST --author cehteh
 check "$RC" "0" "exit 0 for a delegate"
 contains "$OUT" "trusted author=cehteh" "the verdict and the author are on the line"
@@ -176,7 +176,7 @@ contains "$OUT" "repo=rad:zTEST" "the repository is on the line"
 check "$(printf '%s' "$OUT" | wc -l)" "0" "one line, no trailing blank"
 
 echo "--- AC2 below the threshold is untrusted ---"
-run_bar_env "$TRUST" "RADICLE_TRIAGE_FACTS=$STUB" "STUB_ARGS=$WORK/args" \
+run_bar_env "$TRUST" "RAD_TRIAGE_FACTS=$STUB" "STUB_ARGS=$WORK/args" \
     "STUB_JSON=$(trusted_json false 3 10)" -- radicle_trust --repo rad:zTEST --author someone
 check "$RC" "1" "exit 1 for an outsider"
 contains "$OUT" "untrusted author=cehteh" "the verdict carries the alias the tool resolved"
@@ -184,23 +184,23 @@ contains "$OUT" "delegate=no" "the delegate fact is 'no'"
 
 echo "--- AC3 the threshold reaches the tool, an unknown author is not 'untrusted' ---"
 : >"$WORK/args"
-run_bar_env "$TRUST" "RADICLE_TRIAGE_FACTS=$STUB" "STUB_ARGS=$WORK/args" \
+run_bar_env "$TRUST" "RAD_TRIAGE_FACTS=$STUB" "STUB_ARGS=$WORK/args" \
     "STUB_JSON=$(trusted_json true 4 4)" -- radicle_trust --repo rad:zTEST --author x --threshold 4
 check "$RC" "0" "exit 0 at the threshold"
 contains "$(cat "$WORK/args")" "--threshold 4" "the threshold is passed to the fact tool"
 contains "$OUT" "threshold=4" "the threshold of the answer is the one asked for"
-run_bar_env "$TRUST" "RADICLE_TRIAGE_FACTS=$STUB" "STUB_ARGS=/dev/null" \
+run_bar_env "$TRUST" "RAD_TRIAGE_FACTS=$STUB" "STUB_ARGS=/dev/null" \
     'STUB_JSON={"rid":"rad:zTEST","threshold":10,"author":null,"contributor":null,"reason":"","error":"cannot resolve author x"}' \
     -- radicle_trust --repo rad:zTEST --author x
 check "$RC" "2" "exit 2 when the author cannot be resolved"
 contains "$OUT" "unknown author=-" "the verdict is 'unknown', never 'untrusted'"
 contains "$OUT" "cannot resolve author x" "the reason of the tool is carried"
-run_bar_env "$TRUST" "RADICLE_TRIAGE_FACTS=$STUB" "STUB_ARGS=/dev/null" "STUB_RC=2" \
+run_bar_env "$TRUST" "RAD_TRIAGE_FACTS=$STUB" "STUB_ARGS=/dev/null" "STUB_RC=2" \
     'STUB_JSON={"rid":"rad:zTEST","threshold":10,"author":null,"contributor":null,"error":"cannot resolve author x"}' \
     -- radicle_trust --repo rad:zTEST --author x
 check "$RC" "2" "a non-zero tool exit is exit 2, not a crash"
 contains "$OUT" "cannot resolve author x" "the reason survives a non-zero tool exit"
-run_bar_env "$TRUST" "RADICLE_TRIAGE_FACTS=$STUB" "STUB_ARGS=/dev/null" "STUB_RC=3" "STUB_JSON=" \
+run_bar_env "$TRUST" "RAD_TRIAGE_FACTS=$STUB" "STUB_ARGS=/dev/null" "STUB_RC=3" "STUB_JSON=" \
     -- radicle_trust --repo rad:zTEST --author x
 check "$RC" "2" "an empty answer is exit 2"
 check "$OUT" "" "stdout stays empty"
@@ -216,13 +216,13 @@ run_bar "$TRUST" radicle_trust --repo rad:zTEST --author x --threshold nope
 check "$RC" "2" "a non-numeric threshold is a usage error"
 run_bar "$TRUST" radicle_trust --repo rad:zTEST --author x --frobnicate
 check "$RC" "2" "an unknown argument is a usage error"
-run_bar_env "$TRUST" "RADICLE_TRIAGE_FACTS=$WORK/nope" -- radicle_trust --repo rad:zTEST --author x
+run_bar_env "$TRUST" "RAD_TRIAGE_FACTS=$WORK/nope" -- radicle_trust --repo rad:zTEST --author x
 check "$RC" "2" "a missing fact tool is exit 2"
 check "$OUT" "" "stdout stays empty"
 contains "$ERR" "not executable" "the missing tool is named"
 
 echo "--- AC5 --json carries the same numbers ---"
-run_bar_env "$TRUST" "RADICLE_TRIAGE_FACTS=$STUB" "STUB_ARGS=/dev/null" \
+run_bar_env "$TRUST" "RAD_TRIAGE_FACTS=$STUB" "STUB_ARGS=/dev/null" \
     "STUB_JSON=$(trusted_json true 396 10)" -- radicle_trust --repo rad:zTEST --author cehteh --json
 check "$RC" "0" "exit 0 in the machine form too"
 check "$(printf '%s' "$OUT" | jq -r '.bar_radicle')" "1" "the object is marked"

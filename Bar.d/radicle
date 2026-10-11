@@ -48,8 +48,13 @@
 ### Neither rule writes to the main checkout: the tree is created below '<clone>/.worktrees/', kept
 ### out of 'git status' by a line in '.git/info/exclude' (never by the tracked '.gitignore'), and
 ### 'git worktree add' does not touch the trunk's HEAD.
+###
+### The JSON literals both rules emit and the '.worktrees/' exclusion come from
+### Bar.d/radicle_lib, the plumbing shared with Bar.d/radstate, which this module requires.
 
 # helper-module: radicle
+
+require radicle_lib
 
 # helper: radicle_trust | whether the author of an incoming Radicle issue or patch counts as a trusted source, that is a delegate or an identity with at least <threshold> authored commits | radicle_trust --repo <rid-or-path> --author <did-or-nid-or-alias> [--threshold <n>] [--json] | one '<verdict> author=… delegate=… authored=… threshold=… reason=… repo=…' line, <verdict> one of trusted, untrusted, unknown; '--json' the same facts as one object
 ## The trust verdict of the triage policy; exit 0 trusted, 1 untrusted, 2 could not answer.
@@ -61,25 +66,7 @@ rule radicle_trust: -
 ## unknown class, not a git repository, git failed).
 rule radicle_topic: -
 
-# --- shared -------------------------------------------------------------------------------------
-
-function radicle_json_string ## <text> - a JSON string literal
-{
-    local text="$1"
-    text="${text//\\/\\\\}"
-    text="${text//\"/\\\"}"
-    text="$(printf '%s' "$text" | LC_ALL=C tr -d '[:cntrl:]')"
-    printf '"%s"' "$text"
-}
-
-function radicle_json_flag ## <text> - 'true', 'false' or 'null' for a yes/no/unset field
-{
-    case "$1" in
-    yes) printf 'true' ;;
-    no) printf 'false' ;;
-    *) printf 'null' ;;
-    esac
-}
+# --- minting the name: the classes bar defines, and the slug of a description --------------------
 
 function radicle_classes ## - the branch classes bar defines, one '<class>-' prefix per line
 {
@@ -101,20 +88,6 @@ function radicle_slug ## <text> - the description as a name slug, empty when not
     printf '%s' "$1" |
         LC_ALL=C tr '[:upper:]' '[:lower:]' |
         LC_ALL=C sed -e 's/[^a-z0-9._-]\+/-/g' -e 's/--\+/-/g' -e 's/^[-._]\+//' -e 's/[-._]\+$//'
-}
-
-function radicle_exclude_worktrees ## <clone> - keep '<clone>/.worktrees/' out of 'git status'
-{
-    ## The line goes into '.git/info/exclude', never into a tracked '.gitignore': the main checkout
-    ## has to stay byte-identical, and a tree which exists is not a fact about the project.
-    local clone="$1" git_dir exclude
-    git_dir="$(git -C "$clone" rev-parse --absolute-git-dir 2>/dev/null)" || return 0
-    exclude="$git_dir/info/exclude"
-    mkdir -p "$git_dir/info" 2>/dev/null || return 0
-    if [[ ! -f "$exclude" ]] || ! LC_ALL=C grep -qxF '.worktrees/' "$exclude"; then
-        printf '.worktrees/\n' >>"$exclude" || return 0
-    fi
-    return 0
 }
 
 # --- radicle_trust ------------------------------------------------------------------------------
@@ -178,7 +151,7 @@ function radicle_trust ## see the module header
         return 2
     fi
 
-    local tool="${RADICLE_TRIAGE_FACTS:-$HOME/.hermes/docs/hermes_src/tools/radicle_triage/triage-facts}"
+    local tool="${RAD_TRIAGE_FACTS:-$HOME/.hermes/docs/hermes_src/tools/radicle_triage/triage-facts}"
     if [[ ! -x "$tool" ]]; then
         printf 'radicle_trust: the fact tool is missing or not executable: %s\n' "$tool" >&2
         return 2
@@ -222,7 +195,7 @@ function radicle_trust ## see the module header
     if [[ -n "$json" ]]; then
         printf '%s' "$facts" | jq -c --arg verdict "$verdict" \
             '. + {bar_radicle: 1, verdict: $verdict}' 2>/dev/null ||
-            printf '{"bar_radicle":1,"verdict":%s}\n' "$(radicle_json_string "$verdict")"
+            printf '{"bar_radicle":1,"verdict":%s}\n' "$(rad_json_string "$verdict")"
     else
         printf '%s author=%s delegate=%s authored=%s threshold=%s reason=%s repo=%s\n' \
             "$verdict" "$author_name" "$delegate" "$authored" "$thr" "$reason" "$rid"
@@ -246,13 +219,13 @@ function radicle_usage_topic ## [reason] - usage on stderr
 function radicle_topic_json ## <root> <name> <path> <base> <head> <fetched> - one object
 {
     printf '{"bar_radicle":1,"action":"topic","root":%s,"name":%s,"path":%s,"branch":%s,"base":%s,"head":%s,"fetched":%s}\n' \
-        "$(radicle_json_string "$1")" \
-        "$(radicle_json_string "$2")" \
-        "$(radicle_json_string "$3")" \
-        "$(radicle_json_string "$2")" \
-        "$(radicle_json_string "$4")" \
-        "$(radicle_json_string "$5")" \
-        "$(radicle_json_flag "$6")"
+        "$(rad_json_string "$1")" \
+        "$(rad_json_string "$2")" \
+        "$(rad_json_string "$3")" \
+        "$(rad_json_string "$2")" \
+        "$(rad_json_string "$4")" \
+        "$(rad_json_string "$5")" \
+        "$(rad_json_flag "$6")"
 }
 
 function radicle_topic ## see the module header
@@ -416,7 +389,7 @@ function radicle_topic ## see the module header
         return 0
     fi
 
-    radicle_exclude_worktrees "$main_tree"
+    rad_exclude_worktrees "$main_tree"
     mkdir -p "$wt_dir" 2>/dev/null || {
         printf 'radicle_topic: cannot create %s\n' "$wt_dir" >&2
         return 2

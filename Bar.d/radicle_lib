@@ -1,0 +1,311 @@
+# -*- mode: sh; sh-shell: bash -*-
+# vim: set ft=bash:
+# shellcheck shell=bash
+
+### Shared radicle plumbing: run 'rad', read what it prints, and emit the JSON literals.
+###
+### The two radicle domains of bar -- the state of a checkout (Bar.d/radstate) and the flow around
+### an incoming item (Bar.d/radicle) -- ask the same small questions about the tool and its data.
+### The answers live here once, named after the command they belong to:
+###
+###   rad_run                run '$RAD_BIN' and carry its answer and its exit code
+###   rad_path               where the node keeps its storage ('rad path')
+###   rad_cobs_time          when and how the last event of a patch or issue happened, read from
+###                          'refs/namespaces/*/refs/cobs/xyz.radicle.<type>' below that storage
+###   rad_age                an epoch as a short age ('6m', '2h', '3d', '1y')
+###   rad_line/rad_columns/rad_table
+###                          cut the padded, boxed tables 'rad' prints by the names of their
+###                          columns
+###   rad_exclude_worktrees  keep '<clone>/.worktrees/' out of 'git status'
+###   rad_json_string/_number/_list/_flag
+###                          the JSON literals of every '--json' form
+###
+### This module defines no rules.  It is the backing library of the 'radicle' word -- what
+### 'rule_autoload' finds for a 'radicle_*' rule -- and is required by the modules which use it.
+###
+### Nothing here goes to the network and nothing guesses: a function which cannot answer returns
+### non-zero ('rad_run' tells 'no radicle repository here' (3) from 'rad failed' (1), see there),
+### and the callers own their diagnostics.
+###
+### 'RAD_BIN' names the command to run instead of 'rad' (the tests point it at a fake).
+### 'RADSTATE_US' is the field separator of the records these functions return and take
+### ('rad_table' hands its cells over that way, US for the same reason Bar.d/helpers_rules uses it:
+### a field may be empty and a space would collapse it), and 'RADSTATE_RS' is the field separator
+### of a 'git for-each-ref' line.  Reading rad's tables back needs a character aware shell; bar
+### exports a UTF-8 'LC_ALL' whenever the system has one.
+
+declare -gx RAD_BIN="${RAD_BIN:-rad}"  ## the command to use instead of 'rad'
+declare -gr RADSTATE_US=$'\037'        ## the field separator of the records 'rad_table' returns
+declare -gr RADSTATE_RS=$'\011'        ## the field separator of a 'git for-each-ref' line
+
+# --- running rad --------------------------------------------------------------------------------
+
+function rad_run ## <args>.. - run '$RAD_BIN' and print what it wrote
+{
+    ## Fails with 1 and a diagnostic on stderr when rad failed, with 3 when the failure was that
+    ## there is no radicle repository: stderr is folded into the output so both can be told apart.
+    local out
+    if ! out="$(LC_ALL=C "$RAD_BIN" "$@" 2>&1)"; then
+        if [[ "$out" == *"not a Radicle repository"* ]]; then
+            error "no radicle repository here: '$RAD_BIN $*' says '${out##*$'\n'}'"
+            return 3
+        fi
+        error "'$RAD_BIN $*' failed: '${out##*$'\n'}'"
+        return 1
+    fi
+    printf '%s' "$out"
+}
+
+function rad_path ## - the radicle home of this node, empty when 'rad path' does not answer
+{
+    ## Memoized: the COB reader asks for it once per object type, and every caller within one run
+    ## wants the same answer.
+    local path
+    path="$(LC_ALL=C "$RAD_BIN" path 2>/dev/null)" || path=""
+    printf '%s' "$path"
+}
+memofn rad_path
+
+# --- reading the node storage -------------------------------------------------------------------
+
+function rad_cobs_time ## <type> <rid> <array> - when and how the last event of every <type> happened
+{
+    ## The kind and the time of the last event of every patch and issue into the associative
+    ## array <array> named by the caller, as '<type>:<id>' -> '<updated> <kind>'.  Every namespace
+    ## of the node storage keeps a copy of a COB, so the newest commit over all of them is the
+    ## last event and its subject names its kind ('Comment', 'Merge revision', ...).  A storage
+    ## which is not there is not an error, the times stay empty then.
+    local type="$1" rid="$2" target="$3"
+    local radpath storage id updated kind
+    radpath="$(rad_path)" || radpath=""
+    storage="$radpath/storage/${rid#rad:}"
+    [[ -n "$radpath" && -d "$storage" ]] || return 0
+    while IFS="$RADSTATE_RS" read -r id updated kind; do
+        [[ -n "$id" ]] || continue
+        iset "${target}[$type:$id]" "$updated $kind"
+    done < <(git --git-dir="$storage" for-each-ref --sort=-committerdate \
+        --format="%(committerdate:unix)${RADSTATE_RS}%(subject)${RADSTATE_RS}%(refname:lstrip=4)" \
+        "refs/namespaces/*/refs/cobs/xyz.radicle.$type/*" 2>/dev/null |
+        LC_ALL=C awk -F'\t' '
+            {
+                id = $3
+                sub(/.*\//, "", id)
+                id = substr(id, 1, 7)
+                if (!(id in newest)) {
+                    newest[id] = $1
+                    kind[id] = $2
+                }
+            }
+            END {
+                for (id in newest)
+                    print id "\t" newest[id] "\t" kind[id]
+            }')
+}
+
+# --- times ---------------------------------------------------------------------------------------
+
+function rad_age ## <now> <epoch> - a short age ('6m', '2h', '3d', '1y'), '-' when there is no epoch
+{
+    local now="$1"
+    local epoch="${2:-}"
+    [[ "$epoch" =~ ^[0-9]+$ ]] || {
+        printf '%s' "-"
+        return 0
+    }
+    local delta=$(( now - epoch ))
+    (( delta < 0 )) && delta=0
+    if (( delta < 60 )); then
+        printf '%ds' "$delta"
+    elif (( delta < 3600 )); then
+        printf '%dm' "$(( (delta + 30) / 60 ))"
+    elif (( delta < 86400 )); then
+        printf '%dh' "$(( (delta + 1800) / 3600 ))"
+    elif (( delta < 604800 )); then
+        printf '%dd' "$(( (delta + 43200) / 86400 ))"
+    elif (( delta < 2592000 )); then
+        printf '%dw' "$(( (delta + 302400) / 604800 ))"
+    elif (( delta < 31536000 )); then
+        printf '%dmo' "$(( (delta + 1296000) / 2592000 ))"
+    else
+        printf '%dy' "$(( (delta + 15768000) / 31536000 ))"
+    fi
+}
+
+# --- cutting rad's tables ----------------------------------------------------------------------
+
+function rad_line ## <line> - a table line without the box edges, the state marker cell and the padding
+{
+    ## '│ ●  a1bd13a  title  ...  │' -> 'a1bd13a  title  ...'.  The marker cell is a single token
+    ## ('●' or '✓', whatever rad prints there) and is dropped: the columns behind it then start at
+    ## the same offset in the header line and in every row, which is what 'rad_table' cuts by.
+    local line="$1"
+    line="${line#*│}"
+    line="${line%│*}"
+    line="${line#"${line%%[![:space:]]*}"}"
+    line="${line#*[[:space:]]}"
+    line="${line#"${line%%[![:space:]]*}"}"
+    printf '%s' "${line%"${line##*[![:space:]]}"}"
+}
+
+function rad_columns ## <header> - the start offset of every column of a normalized table header
+{
+    ## A column starts where a run of two or more spaces ends and content follows (plus the first
+    ## one): the two spaces are the separator between two cells, the padding of a cell is never
+    ## part of its neighbour.  Neither a name nor a value is needed for this, the header line
+    ## carries the layout itself.  The offsets are space separated.
+    local header="$1"
+    local count="${#header}"
+    local i=0 out="0" char before="" earlier=""
+    for (( i = 1; i < count; i++ )); do
+        char="${header:i:1}"
+        before="${header:i-1:1}"
+        earlier="${header:i-2:1}"
+        if [[ "$char" != " " && "$before" == " " && "$earlier" == " " ]]; then
+            out+=" $i"
+        fi
+    done
+    printf '%s' "$out"
+}
+
+function rad_table ## <table> <column>.. - the named cells of every row of a 'rad' table, US separated
+{
+    ## The columns are located by name in the header line (see 'rad_columns' for where a column
+    ## starts), then every row is cut at the same offsets -- up to where the next column begins,
+    ## so that a requested cell never carries the ones behind it.  Cut and not split: a cell may
+    ## itself contain two spaces (a truncated author reads 'ct_vibes  (you)'), which splitting on
+    ## whitespace would tear apart.  Every requested name has to exist in the table, otherwise
+    ## this returns 1 and the caller reports that rad's output could not be understood.
+    local table="$1"
+    shift
+    local -a names=("$@")
+    local -a lines=() offsets=() starts=()
+    local line header="" row cell id start end
+    local index=0 length=0
+    local i name complete column
+
+    while IFS= read -r line; do
+        lines+=( "$(rad_line "$line")" )
+    done <<<"$table"
+
+    for i in "${!lines[@]}"; do
+        complete=1
+        for name in "${names[@]}"; do
+            if [[ " ${lines[i]} " != *" $name "* ]]; then
+                complete=0
+                break
+            fi
+        done
+        if (( complete )); then
+            header="${lines[i]}"
+            index=$i
+            break
+        fi
+    done
+    [[ -n "$header" ]] || return 1
+    read -r -a starts <<<"$(rad_columns "$header")"
+
+    for name in "${names[@]}"; do
+        column=""
+        for start in "${starts[@]}"; do
+            if [[ "${header:start:${#name}}" == "$name" ]]; then
+                column="$start"
+                break
+            fi
+        done
+        [[ -n "$column" ]] || return 1
+        offsets+=( "$column" )
+    done
+
+    for (( i = index + 1; i < ${#lines[@]}; i++ )); do
+        line="${lines[i]}"
+        id="${line%%[[:space:]]*}"
+        [[ "$id" =~ ^[0-9a-f]{7}$ ]] || continue
+        row=""
+        for (( start = 0; start < ${#names[@]}; start++ )); do
+            end=""
+            for column in "${starts[@]}"; do
+                if (( column > offsets[start] )); then
+                    end="$column"
+                    break
+                fi
+            done
+            length=$(( ${end:-${#line}} - offsets[start] ))
+            cell="${line:offsets[start]:length}"
+            cell="${cell#"${cell%%[![:space:]]*}"}"
+            cell="${cell%"${cell##*[![:space:]]}"}"
+            if (( start == 0 )); then
+                row="$cell"
+            else
+                row+="${RADSTATE_US}${cell}"
+            fi
+        done
+        printf '%s\n' "$row"
+    done
+}
+
+# --- the worktree exclusion ----------------------------------------------------------------------
+
+function rad_exclude_worktrees ## <clone> - keep '<clone>/.worktrees/' out of 'git status'
+{
+    ## The line goes into '.git/info/exclude', never into a tracked '.gitignore': the main checkout
+    ## has to stay byte-identical, and a tree which exists is not a fact about the project.
+    local clone="$1" git_dir exclude
+    git_dir="$(git -C "$clone" rev-parse --absolute-git-dir 2>/dev/null)" || return 0
+    exclude="$git_dir/info/exclude"
+    mkdir -p "$git_dir/info" 2>/dev/null || return 0
+    if [[ ! -f "$exclude" ]] || ! LC_ALL=C grep -qxF '.worktrees/' "$exclude"; then
+        printf '.worktrees/\n' >>"$exclude" || return 0
+    fi
+    return 0
+}
+
+# --- the JSON literals ---------------------------------------------------------------------------
+
+function rad_json_string ## <text> - a JSON string literal
+{
+    ## Backslash, quote and tab are escaped, the remaining control characters cannot be
+    ## represented in the literals bar emits and are dropped.
+    local text="$1"
+    text="${text//\\/\\\\}"
+    text="${text//\"/\\\"}"
+    text="${text//$'\t'/\\t}"
+    printf '"%s"' "$(printf '%s' "$text" | LC_ALL=C tr -d '[:cntrl:]')"
+}
+
+function rad_json_number ## <value> - the value as a JSON number, 'null' when there is none
+{
+    if [[ "${1:-}" =~ ^[0-9]+$ ]]; then
+        printf '%s' "$1"
+    else
+        printf 'null'
+    fi
+}
+
+function rad_json_list ## <text> - the comma separated text as a JSON array of strings
+{
+    ## Empty entries and the spaces around them are dropped, so an unset field is an empty array
+    ## and not an array holding nothing.
+    local text="$1"
+    local -a entries=()
+    local entry="" joined="" separator=""
+    if [[ -n "$text" ]]; then
+        IFS=',' read -r -a entries <<<"$text"
+    fi
+    for entry in ${entries[@]+"${entries[@]}"}; do
+        entry="${entry#"${entry%%[![:space:]]*}"}"
+        entry="${entry%"${entry##*[![:space:]]}"}"
+        [[ -n "$entry" ]] || continue
+        joined+="${separator}$(rad_json_string "$entry")"
+        separator=","
+    done
+    printf '[%s]' "$joined"
+}
+
+function rad_json_flag ## <text> - 'true', 'false' or 'null' for a yes/no/unset field
+{
+    case "$1" in
+    yes) printf 'true' ;;
+    no) printf 'false' ;;
+    *) printf 'null' ;;
+    esac
+}
