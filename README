@@ -783,7 +783,7 @@ MODULE API/RULES
     'is_', 'has_' and 'try_' are stripped first, see 'rule_autoload' in Bar.d/std_lib).  A helper
     rule therefore loads exactly its own module: invoking one helper never loads another helper
     module, and listing the repertoire loads none at all.  '<word>' must be a word no other module
-    claims -- bar ships 'git', 'rad', 'radicle', 'cargo', 'net', 'ssh', 'testdir', ... -- because a
+    claims -- bar ships 'git', 'rad', 'cargo', 'net', 'ssh', 'testdir', 'kanban', ... -- because a
     rule named 'rad_state' would autoload 'Bar.d/rad' and then fail to exist.  Pick a free word.
     
     Everything in a helper module that is not an entry point is a *function*: functions are not
