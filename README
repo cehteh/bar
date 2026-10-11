@@ -1269,8 +1269,8 @@ MODULE API/RULES
       kanban_state                              the bounded summary digest, no card listed
       kanban_state --status blocked             the blocked cards, one line each, with the reason
       kanban_state --assignee default           the cards of one agent, highest priority first
-      kanban_state --parent t_4bdcb8bb          the children of one card
-      kanban_state --runs t_4bdcb8bb            the runs of one card, newest first
+      kanban_state --parent t_deadbeef          the children of one card
+      kanban_state --runs t_deadbeef            the runs of one card, newest first
       kanban_state --json                       the same numbers as one JSON object
     
     A listing is bounded by '--limit' (default 50) and prints the exact elision counts plus the path
