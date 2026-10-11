@@ -177,7 +177,7 @@ function rad_table ## <table> <column>.. - the named cells of every row of a 'ra
     ## The columns are located by name in the header line (see 'rad_columns' for where a column
     ## starts), then every row is cut at the same offsets -- up to where the next column begins,
     ## so that a requested cell never carries the ones behind it.  Cut and not split: a cell may
-    ## itself contain two spaces (a truncated author reads 'ct_vibes  (you)'), which splitting on
+    ## itself contain two spaces (a truncated author reads '<author>  (you)'), which splitting on
     ## whitespace would tear apart.  Every requested name has to exist in the table, otherwise
     ## this returns 1 and the caller reports that rad's output could not be understood.
     local table="$1"

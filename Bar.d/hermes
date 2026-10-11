@@ -79,7 +79,7 @@
 ###                    '2026-10-10 08:00:00'); records before the cutoff are dropped.  In the store
 ###                    the range is pushed into SQL, which makes a bounded session query cheap.
 ###   --source <kind>  restrict to a source kind, repeatable.
-###   --task <sel>     keep only the sources whose path contains <sel>: '--task t_9dd10ce5' keeps a
+###   --task <sel>     keep only the sources whose path contains <sel>: '--task t_deadbeef' keeps a
 ###                    worker transcript, '--run 2026-10-10' the cron run of that day.  Applied to
 ###                    the source path, so the store never matches a task selector.
 ###   --session <id>   keep only the records of that session: store rows whose session id contains it
@@ -135,7 +135,7 @@ usage: bar hermes_logs [--grep <ere>] [-i] [--since <when>] [--source <kind>].. 
   --since <when>     keep records at or after <when>: '<n>[smhdw]' ago ('90m', '1d') or an
                      absolute time ('2026-10-10', '2026-10-10 08:00:00')
   --source <kind>    scan only this source kind, repeatable: logs workers cron sessions store
-  --task <sel>       keep only sources whose path contains <sel> ('--task t_9dd10ce5')
+  --task <sel>       keep only sources whose path contains <sel> ('--task t_deadbeef')
   --session <id>     keep only the records of that session
   --limit <n>        at most <n> match lines in the digest
   --count            print the exact number of matching lines and nothing else

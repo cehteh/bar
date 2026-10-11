@@ -6,35 +6,35 @@
 ### The source trees below a source-work root: the clones, their worktrees, their state and what
 ### is not merged yet.
 ###
-### On this host the layout is fixed: every project is a clone below '~/hermes_src/<project>' and
-### every topic lives in a *worktree* below '<clone>/.worktrees/<topic>'.  The main checkout of a
-### clone is the local trunk and the single place where topics meet -- a topic branch is branched
-### off it and merged back into it, and the main checkout is the only coordination point.  A topic
-### branch that exists nowhere else is never reclaimed, so 'what is not merged yet' is the question
-### that has to be answered before anything is cleaned up.
+### A source-work root holds one clone per project and every topic lives in a *worktree* below
+### '<clone>/.worktrees/<topic>'.  The main checkout of a clone is the local trunk and the single
+### place where topics meet -- a topic branch is branched off it and merged back into it, and the
+### main checkout is the only coordination point.  A topic branch that exists nowhere else is never
+### reclaimed, so 'what is not merged yet' is the question that has to be answered before anything
+### is cleaned up.
 ###
 ### Answering it the obvious way costs a 'git worktree list', a 'git status' per tree, a merge base
 ### question per tree and a shell loop to line the results up -- a dozen commands and a page of
 ### output for a handful of facts.  This helper answers it in one line per tree.
 ###
-###   bar sourcetree_state                 # the digest of '~/hermes_src'
-###   bar sourcetree_state <root>          # the digest of another source-work root
+###   bar sourcetree_state                 # the digest of '$BAR_SOURCE_ROOT'
+###   bar sourcetree_state <root>          # the digest of the source-work root named here
 ###   bar sourcetree_state --json <root>   # the same digest as one JSON object, for a wrapper
 ###
 ### THE ROOT
 ###
-### <root> defaults to '~/hermes_src', the source-work root of this host.  A root which is itself
-### a repository (a '.git' at its top, or a bare git directory) is reported as that one clone --
-### handy for a repository which is not part of a source-work root -- otherwise every direct
-### sub-directory holding a repository is one.  The walk is one level deep and never descends into
-### a clone or into object, build or vendor directories: a clone belonging to a clone is not part
-### of the layout this helper describes.
+### <root> is the source-work root: the argument, or '$BAR_SOURCE_ROOT' when the argument is not
+### given.  There is no default root -- with neither, the helper cannot know which layout is meant
+### and answers a usage error.  A root which is itself a repository (a '.git' at its top, or a bare
+### git directory) is reported as that one clone -- handy for a repository which is not part of a
+### source-work root -- otherwise every direct sub-directory holding a repository is one.  The walk
+### is one level deep and never descends into a clone or into object, build or vendor directories:
+### a clone belonging to a clone is not part of the layout this helper describes.
 ###
-### '~/src' is *not* a source-work root, it is the read-only discovery index of everything ever
-### checked out on this host: historical variants of the same project side by side, no worktrees
-### and no current state.  A clone there is history, not the working tree a topic is built on.
-### Using it as the root is therefore named on stderr -- the answer is still printed, because
-### auditing exactly that may be the intent.
+### A root which is not a source-work root -- a flat index of every checkout ever made, variants of
+### one project side by side, no worktrees and no current state -- is named on stderr: a clone in
+### such a root is history, not the working tree a topic is built on.  The answer is still printed,
+### because auditing exactly that may be the intent.
 ###
 ### THE TREES
 ###
@@ -87,9 +87,9 @@
 ###
 ### COST (measured on this host, 2026-10-10)
 ###
-### The digest of '~/hermes_src' -- 4 clones with 13 worktrees, 18 lines, 2.2 kB of text or 8.3 kB
-### of JSON -- takes 0.3 s (best of five; a bare 'bar rule_exists' call takes 0.09 s), the digest
-### of a throw-away root with one clone and three trees 0.15 s.  Two git calls per tree are the
+### A root with four clones and thirteen worktrees -- 18 lines, 2.2 kB of text or 8.3 kB of JSON --
+### takes 0.3 s (best of five; a bare 'bar rule_exists' call takes 0.09 s), the digest of a
+### throw-away root with one clone and three trees 0.15 s.  Two git calls per tree are the
 ### cost ('status' and the left-right count, plus 'merge-base' when a tree is both ahead and
 ### behind); the layout is read through them once, nothing is paged and no interface is entered
 ### which refuses to run outside its own context.
@@ -108,14 +108,16 @@ declare -gA SOURCETREE_ROW=()  ## The row 'sourcetree_record' stores, filled by 
 declare -ga SOURCETREE_ROWS=() ## The rows of the clone being collected, sorted before printing.
 
 # helper: sourcetree_state | the clones and worktrees below a source-work root, their state and what is not merged yet | sourcetree_state [--json] [<root>] | one line per tree, then the counts
-## The source-tree digest: one line per main checkout and worktree found below <root> (default
-## '~/hermes_src'), then '(N clones, M worktrees, U unmerged, D dirty)'.  See the module header
-## for the fields, the JSON shape, the exit codes and what the helper deliberately does not do.
+## The source-tree digest: one line per main checkout and worktree found below <root> (the
+## argument, or '$BAR_SOURCE_ROOT'), then '(N clones, M worktrees, U unmerged, D dirty)'.  See the
+## module header for the fields, the JSON shape, the exit codes and what the helper deliberately
+## does not do.
 rule sourcetree_state: -
 
 function sourcetree_usage
 {
     printf 'usage: bar sourcetree_state [--json] [<root>]\n' >&2
+    printf '       <root> is the source-work root; without the argument BAR_SOURCE_ROOT is used\n' >&2
 }
 
 function sourcetree_json_flag ## <var> <flags> <name> - put 'true' into <var> when the flag is set
@@ -161,15 +163,22 @@ function sourcetree_relative ## <var> <root> <path> - put <path> as printed, rel
     esac
 }
 
-function sourcetree_pitfall ## <root> - name the '~/src' confusion on stderr
+function sourcetree_pitfall ## <root> - name a root which is not a source-work root on stderr
 {
-    ## '~/src' holds every repository ever checked out on this host, variants side by side, and
-    ## is read-only by convention.  Inventorying it as if it were the working tree is the mistake
-    ## this helper exists to prevent, so the root is named when it happens.
-    local src
-    src="$(readlink -f -- "$HOME/src" 2>/dev/null)" || src="$HOME/src"
-    if [[ "$1" == "$src" ]]; then
-        warn "'$1' is the read-only ~/src discovery index; the source-work root is ~/hermes_src"
+    ## A source-work root holds one clone per project and every topic in a worktree below
+    ## '<clone>/.worktrees/'.  A flat index of every checkout ever made -- variants of one project
+    ## side by side, no worktrees, and no current state -- has the clones but none of the
+    ## worktrees; inventorying it as if it were the working tree a topic is built on is the
+    ## mistake this helper exists to prevent, so such a root is named when it happens.
+    local clone found=
+    while IFS= read -r clone; do
+        found=1
+        if [[ -d "$clone/.worktrees" ]]; then
+            return 0
+        fi
+    done < <(sourcetree_clones "$1")
+    if [[ -n "$found" ]]; then
+        warn "'$1' is not a source-work root: no clone below it keeps a topic in a '<clone>/.worktrees/' worktree"
     fi
     return 0
 }
@@ -621,7 +630,12 @@ function sourcetree_state ## [--json] [<root>] - the source-tree digest, see the
         return 2
     fi
 
-    local root="${args[0]:-$HOME/hermes_src}"
+    local root="${args[0]:-${BAR_SOURCE_ROOT:-}}"
+    if [[ -z "$root" ]]; then
+        sourcetree_usage
+        printf 'sourcetree_state: no source-work root: name it as an argument or set BAR_SOURCE_ROOT\n' >&2
+        return 2
+    fi
     if [[ ! -d "$root" ]]; then
         printf 'sourcetree_state: not a directory: %s\n' "$root" >&2
         return 3

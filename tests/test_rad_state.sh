@@ -145,7 +145,7 @@ NOW="$(date +%s)"
 mkdir -p "$FIX" "$WORK/bin"
 printf '%s\n' "$RID" >"$FIX/rid"
 cat >"$FIX/self" <<'SELF'
-Alias        ct_vibes
+Alias        testuser
 DID          did:key:z6MkRadstateTestRadstateTestRadstateTest
 Node         running (test)
 SSH          not running
@@ -240,11 +240,11 @@ git -C "$REPO" checkout -q work
 # carries a patch can be named, and one head is a commit this checkout does not have
 PATCH_HEADER='●|ID|Title|Author|Reviews|Head|+|-|Updated|Labels'
 PATCH_ALL_ROWS=(
-    "●|a1bd13a|find the frobs|ct_vibes  (you)|-|$C2|+12|-3|10 minutes ago|"
+    "●|a1bd13a|find the frobs|testuser  (you)|-|$C2|+12|-3|10 minutes ago|"
     "●|3ff91cb|fix the naïve parser|z6MksP7…ZpYZJTo|✓|$C1|+8|-6|1 year ago|"
-    "◌|c0ffee1|a draft of a rewrite|ct_vibes  (you)|-|1234567|+1|-0|2 hours ago|wip"
+    "◌|c0ffee1|a draft of a rewrite|testuser  (you)|-|1234567|+1|-0|2 hours ago|wip"
     "✓|deadbe1|merge the frobs|cehteh|-|1234567|+21|-4|3 days ago|"
-    "✓|beef001|an archived thing|ct_vibes  (you)|✓|1234567|+2|-2|1 month ago|archived"
+    "✓|beef001|an archived thing|testuser  (you)|✓|1234567|+2|-2|1 month ago|archived"
 )
 table "$PATCH_HEADER" "${PATCH_ALL_ROWS[@]}" >"$FIX/patch-all.txt"
 table "$PATCH_HEADER" "${PATCH_ALL_ROWS[0]}" "${PATCH_ALL_ROWS[2]}" "${PATCH_ALL_ROWS[4]}" >"$FIX/patch-all-ours.txt"
@@ -255,10 +255,10 @@ table "$PATCH_HEADER" "${PATCH_ALL_ROWS[0]}" "${PATCH_ALL_ROWS[1]}" >"$FIX/patch
 
 ISSUE_HEADER='●|ID|Title|Author|Labels|Assignees|Opened'
 ISSUE_ROWS=(
-    "●|a967c0c|a smoke test|ct_vibes   (you)|bug, p1|ct_vibes|7 hours ago"
+    "●|a967c0c|a smoke test|testuser   (you)|bug, p1|testuser|7 hours ago"
     "●|b0b0b0b|another issue|cehteh|||2 days ago"
     "●|abcdef0|a closed one|cehteh|||1 day ago"
-    "✓|c0de001|a solved one|ct_vibes  (you)|done||2 days ago"
+    "✓|c0de001|a solved one|testuser  (you)|done||2 days ago"
 )
 table "$ISSUE_HEADER" "${ISSUE_ROWS[@]}" >"$FIX/issue-all.txt"
 table "$ISSUE_HEADER" "${ISSUE_ROWS[0]}" "${ISSUE_ROWS[1]}" >"$FIX/issue-open.txt"
@@ -346,7 +346,7 @@ check "$(lines_of "$OUT")" "18" "AC1: three header lines, five patches, four iss
 REPO_PATH_DISPLAY="${REPO/"$HOME"/\~}"
 check "$(sed -n 1p <<<"$OUT")" "repo      repo  $RID  $REPO_PATH_DISPLAY" \
     "AC1: the repository line names RID, name and path"
-check "$(sed -n 2p <<<"$OUT")" "ident     ct_vibes  did:key:$NID" "AC1: the identity line carries alias and DID"
+check "$(sed -n 2p <<<"$OUT")" "ident     testuser  did:key:$NID" "AC1: the identity line carries alias and DID"
 check "$(sed -n 3p <<<"$OUT")" \
     "head      work $C3   rad/main $C1   ahead 2  behind 0  (as of the last fetch)" \
     "AC1: the head line carries the branch, the canonical ref and the divergence"
@@ -380,10 +380,10 @@ matches "$(line_of a967c0c)" "  a967c0c  open*ours*a smoke test" "AC2: an open i
 matches "$(line_of c0de001)" "  c0de001  solved*ours*a solved one" "AC2: a solved issue of ours"
 matches "$(line_of abcdef0)" "  abcdef0  closed*other*a closed one" "AC2: a closed issue of someone else"
 contains "$OUT" "[bug, p1]" "AC2: the labels of an issue are printed"
-contains "$OUT" "[@ct_vibes]" "AC2: the assignees of an issue are printed"
+contains "$OUT" "[@testuser]" "AC2: the assignees of an issue are printed"
 absent "$(line_of b0b0b0b)" "[" "AC2: an issue without labels and assignees carries no bracket"
 absent "$OUT" "(you)" "AC2: the author of a patch is the name, not rad's '(you)' marker"
-absent "$(line_of a1bd13a)" "[ct_vibes]" "AC2: our own patches carry no author bracket"
+absent "$(line_of a1bd13a)" "[testuser]" "AC2: our own patches carry no author bracket"
 contains "$(line_of deadbe1)" "[cehteh]" "AC2: the patch of someone else names its author"
 
 # --------------------------------------------------------------------------------------------
@@ -440,7 +440,7 @@ if command -v jq >/dev/null; then
     check "$(jq -r '.issues.items[] | select(.id=="a967c0c") | .last' <<<"$OUT")" "Label" \
         "AC6: the kind of the last event of an issue"
     check "$(jq -r '.head.ahead' <<<"$OUT")" "2" "AC6: the divergence"
-    check "$(jq -r '.identity.alias' <<<"$OUT")" "ct_vibes" "AC6: the identity"
+    check "$(jq -r '.identity.alias' <<<"$OUT")" "testuser" "AC6: the identity"
     check "$(jq -r '.branches.without_patch' <<<"$OUT")" "2" "AC6: the branches without a patch"
     check "$(jq -r '.branches.not_in_canonical' <<<"$OUT")" "2" "AC6: the commits which are not in rad/main"
     check "$(jq -r '.branches.items[] | select(.name=="topic") | .patch' <<<"$OUT")" "a1bd13a" \

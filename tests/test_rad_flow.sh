@@ -5,8 +5,8 @@
 # Acceptance tests for the Radicle/source-work flow helpers (Bar.d/rad).
 #
 # Everything runs against throw-away repositories, a throw-away source-work root and a stub fact
-# tool, so nothing here depends on this host's radicle node, on '~/hermes_src' or on the real
-# 'tools/radicle_triage/triage-facts'.  Covered:
+# tool, so nothing here depends on this host's radicle node, on a real source-work root or on any
+# real triage fact tool.  Covered:
 #
 #   AC1  rad_trust: a delegate is 'trusted', exit 0, one line of key=value facts
 #   AC2  rad_trust: below the threshold is 'untrusted', exit 1

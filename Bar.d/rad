@@ -77,8 +77,8 @@
 ###
 ### 'rad_trust' answers whether the author of an incoming issue or patch counts as a *trusted
 ### source* for the triage policy (`incoming-issue-triage` §3): a delegate of that repository, or an
-### identity with at least <threshold> authored commits.  The numbers come from the fact tool
-### 'tools/radicle_triage/triage-facts' (delegates from the identity document, the commits an
+### identity with at least <threshold> authored commits.  The numbers come from the fact tool the
+### setting 'RAD_TRIAGE_FACTS' names (delegates from the identity document, the commits an
 ### identity authored as its own NID from the COB commits, plus the code commits of the humans
 ### behind its patches); this helper is the one action which turns them into the verdict and the exit
 ### code, so the question costs no agent turn and no prose:
@@ -188,7 +188,7 @@
 ### reassembles by hand every time it starts a topic:
 ###
 ###   bar rad_topic fix "crash on empty config"
-###   /home/ct/hermes_src/bar/.worktrees/fix-crash-on-empty-config  fix-crash-on-empty-config  base=rad/main  head=55d5924
+###   <clone>/.worktrees/fix-crash-on-empty-config  fix-crash-on-empty-config  base=rad/main  head=55d5924
 ###
 ### The name is '<class>-<description>'.  The class vocabulary is read from the branch matchers of
 ### the 'git' module ('is_git_*_branch'), so bar's own classes and the gates it hangs off them stay
@@ -221,8 +221,12 @@
 ### function come from there.  The JSON literals of the '--json' forms below come from
 ### Bar.d/json_lib, the one place where bar writes them.
 ###
-### 'RAD_STATE_MAX' is the default of '--max'.  Reading rad's tables back needs a character aware
-### shell; bar exports a UTF-8 'LC_ALL' whenever the system has one.
+### 'RAD_STATE_MAX' is the default of '--max'.  'RAD_TRIAGE_FACTS' names the fact tool 'rad_trust'
+### reads from: the path of the triage fact tool of the caller's own installation, and the only
+### setting for it -- bar cannot know the layout of another machine, so there is no default, and an
+### unset or unexecutable setting is named and answered with 'could not answer' (exit 2) instead of
+### a silently wrong verdict.  Reading rad's tables back needs a character aware shell; bar exports a
+### UTF-8 'LC_ALL' whenever the system has one.
 ###
 ### The rules below are about 'rad', the radicle frontend and the repository it is used in.  Building
 ### a radicle installation itself is not one of them (radicle is packaged; the tools below
@@ -373,7 +377,7 @@ function rad_state_table_checked
     printf '%s' "$rows"
 }
 
-## <cell> - an author cell of a table as one name ('ct_vibes  (you)' -> 'ct_vibes')
+## <cell> - an author cell of a table as one name ('<author>  (you)' -> '<author>')
 function rad_state_author
 {
     local cell="${1//$'\t'/ }"
@@ -1035,7 +1039,11 @@ function rad_trust ## see the module header
         return 2
     fi
 
-    local tool="${RAD_TRIAGE_FACTS:-$HOME/.hermes/docs/hermes_src/tools/radicle_triage/triage-facts}"
+    local tool="${RAD_TRIAGE_FACTS:-}"
+    if [[ -z "$tool" ]]; then
+        printf 'rad_trust: no fact tool configured: set RAD_TRIAGE_FACTS to the triage fact tool\n' >&2
+        return 2
+    fi
     if [[ ! -x "$tool" ]]; then
         printf 'rad_trust: the fact tool is missing or not executable: %s\n' "$tool" >&2
         return 2

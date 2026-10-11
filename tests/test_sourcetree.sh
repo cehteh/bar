@@ -5,13 +5,13 @@
 # Acceptance tests for the source-tree digest helper (Bar.d/sourcetree).
 #
 # Everything runs against throw-away repositories in throw-away source-work roots, so nothing here
-# depends on this repository's own worktrees or on the state of '~/hermes_src'.  Covered:
+# depends on this repository's own worktrees or on the state of a real source-work root.  Covered:
 #
 #   AC1  the digest of a source-work root: one line per tree, then the counts, exit 0
 #   AC2  the state counts a changed and an untracked file apart
 #   AC3  'unmerged' is what a merge would bring in, 'behind' how far the trunk moved on
 #   AC4  the walk is one level deep, and the root may be a repository itself
-#   AC5  the default root is '~/hermes_src' (a fake HOME), and the digest is cwd independent
+#   AC5  the root is named -- the argument or '$BAR_SOURCE_ROOT' -- and the digest is cwd independent
 #   AC6  how '.worktrees/' is kept out: 'local', a tracked '.gitignore' -- or neither
 #   AC7  an externally registered and a locked worktree
 #   AC8  a bare repository and a repository without a usable git
@@ -20,7 +20,8 @@
 #   AC11 usage errors are exit 2, a root which is not a directory is exit 3, stdout stays empty
 #   AC12 the helper is registered (index, guard) and the module is documented by 'bar help'
 #   AC13 the digest is deterministic, ANSI-free and one line per tree
-#   AC14 the runtime and the size of the digest (fixture and the real '~/hermes_src', best of 5)
+#   AC14 the runtime and the size of the digest (a fixture root, best of 5)
+#   AC15 the module names no place of this host (a directory outside the project only when standard)
 
 set -euo pipefail
 
@@ -225,30 +226,39 @@ check "$(flat "$(line_of .worktrees/topic)")" \
     "AC4: the trees of that clone are the same as under the source-work root"
 
 # --------------------------------------------------------------------------------------------
-# AC5  the default root and the cwd
+# AC5  the root is named -- the argument or '$BAR_SOURCE_ROOT' -- and the cwd does not matter
 # --------------------------------------------------------------------------------------------
-FAKE_HOME="$WORK/fakehome"
-mkdir -p "$FAKE_HOME/hermes_src" "$FAKE_HOME/src" "$PROJ/sub/dir"
-mksource "$FAKE_HOME/hermes_src"
-mksource "$FAKE_HOME/src"
-run_bar_env "$PROJ" "HOME=$FAKE_HOME" sourcetree_state
-check "$RC" "0" "AC5: without a root argument the digest answers"
-check "$(sed -n 1p <<<"$OUT" | awk '{ print $1 }')" "proj" \
-    "AC5: the default root is '~/hermes_src' and not '~/src'"
-check "$(counts_of "$OUT")" "(1 clone, 2 worktrees, 1 unmerged, 1 dirty)" \
-    "AC5: the clone under the fake '~/hermes_src' is the one reported"
-run_bar "$PROJ/sub/dir" sourcetree_state "$ROOT"
+run_bar "$PROJ" sourcetree_state "$ROOT"
 DIGEST="$OUT"
+run_bar_env "$PROJ" "BAR_SOURCE_ROOT=" sourcetree_state
+check "$RC" "2" "AC5: with neither the argument nor '\$BAR_SOURCE_ROOT' it is a usage error"
+check "$OUT" "" "AC5: and nothing is printed on stdout"
+run_bar_env_err "$PROJ" "BAR_SOURCE_ROOT=" sourcetree_state
+contains "$OUT" "usage: bar sourcetree_state [--json] [<root>]" "AC5: the usage goes to stderr"
+contains "$OUT" "BAR_SOURCE_ROOT" "AC5: and the reason names the environment variable"
+run_bar_env "$PROJ" "BAR_SOURCE_ROOT=$ROOT" sourcetree_state
+check "$RC" "0" "AC5: the root may come from '\$BAR_SOURCE_ROOT' instead"
+check "$OUT" "$DIGEST" "AC5: and the digest is the one the root argument answers with"
+mkdir -p "$WORK/otherroot"
+run_bar_env "$PROJ" "BAR_SOURCE_ROOT=$ROOT" sourcetree_state "$WORK/otherroot"
+check "$(counts_of "$OUT")" "(0 clones, 0 worktrees, 0 unmerged, 0 dirty)" \
+    "AC5: the argument wins over '\$BAR_SOURCE_ROOT'"
+mkdir -p "$PROJ/sub/dir"
+run_bar "$PROJ/sub/dir" sourcetree_state "$ROOT"
+check "$OUT" "$DIGEST" "AC5: the digest does not depend on the working directory"
 mkproject "$WORK/proj2"
 run_bar "$WORK/proj2" sourcetree_state "$ROOT"
-check "$OUT" "$DIGEST" "AC5: the digest does not depend on the working directory or the project"
-run_bar_env_err "$PROJ" "HOME=$FAKE_HOME" sourcetree_state "$FAKE_HOME/src"
-contains "$OUT" "'$FAKE_HOME/src' is the read-only ~/src discovery index" \
-    "AC5: using '~/src' as the source-work root is named on stderr"
-run_bar_env "$PROJ" "HOME=$FAKE_HOME" sourcetree_state "$FAKE_HOME/src"
-check "$RC" "0" "AC5: and the answer is still printed (auditing the index is a legitimate question)"
-check "$(counts_of "$OUT")" "(1 clone, 2 worktrees, 1 unmerged, 1 dirty)" \
-    "AC5: a root which is neither a scan nor the index is asked the same way"
+check "$OUT" "$DIGEST" "AC5: nor on the project bar was invoked from"
+FLATROOT="$WORK/flatroot"
+mkdir -p "$FLATROOT/proj"
+git -C "$FLATROOT/proj" init -q -b main
+run_bar_err "$PROJ" sourcetree_state "$FLATROOT"
+contains "$OUT" "'$FLATROOT' is not a source-work root" \
+    "AC5: a root which is not a source-work root is named on stderr"
+run_bar "$PROJ" sourcetree_state "$FLATROOT"
+check "$RC" "0" "AC5: and the answer is still printed (auditing a flat index is a legitimate question)"
+check "$(counts_of "$OUT")" "(1 clone, 0 worktrees, 0 unmerged, 0 dirty)" \
+    "AC5: the flat index names its clones and no worktree"
 
 # --------------------------------------------------------------------------------------------
 # AC6  how '.worktrees/' is kept out of a checkout
@@ -451,23 +461,19 @@ if (( size <= 8192 )); then
 else
     fail "AC14: the fixture object is ${size} B for 4 trees"
 fi
-if [[ -d "$HOME/hermes_src" ]]; then
-    real=1000000
-    for _ in 1 2 3 4 5; do
-        t="$(time_run "$PROJ" "$BAR" sourcetree_state "$HOME/hermes_src")"
-        (( t < real )) && real="$t"
-    done
-    run_bar "$PROJ" sourcetree_state "$HOME/hermes_src"
-    lines="$(printf '%s\n' "$OUT" | grep -c .)"
-    real_size="$(bytes_of "$OUT")"
-    if (( real < 5000 )); then
-        pass "AC14: the real '~/hermes_src' digest takes ${real} ms and ${real_size} B for ${lines} lines (best of 5)"
-    else
-        fail "AC14: the real '~/hermes_src' digest takes ${real} ms (best of 5, budget 5000 ms)"
-    fi
-else
-    pass "AC14: no '~/hermes_src' on this host, the real root is not measured"
-fi
+
+# --------------------------------------------------------------------------------------------
+# AC15 the module names no place of this host
+# --------------------------------------------------------------------------------------------
+# The module ships to other users and runs in their trees: a directory outside the project is
+# named by the symbol which already exists for it ('<root>', '<clone>/.worktrees/<topic>', the
+# environment variable), and only a standard directory may be named outright.
+MODULE="$REPO_ROOT/Bar.d/sourcetree"
+named="$(LC_ALL=C grep -oE '(\$HOME|~)/[A-Za-z0-9_.-]+' "$MODULE" | LC_ALL=C sort -u |
+    LC_ALL=C grep -vE '^(\$HOME|~)/(\.config|\.cache|\.local|\.ssh)$' || true)"
+check "$named" "" "AC15: the module names a home directory only when it is a standard one"
+absolute="$(LC_ALL=C grep -E '/(home|Users)/[A-Za-z0-9_.-]+' "$MODULE" || true)"
+check "$absolute" "" "AC15: and no user's absolute home directory"
 
 echo
 if (( failures == 0 )); then
