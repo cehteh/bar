@@ -1055,6 +1055,44 @@ MODULE API/RULES
     replace the 'session_search' tool for fuzzy recall, and it does not read what Hermes stores
     outside the paths above (the kanban board as a database, cron job definitions, the vault).  It
     never pages, never colours, and prints no progress on stdout.
+    
+    HANDOFF BRIEFS ('hermes_handoff')
+    
+    A child session ('delegate_task') starts with no memory of the conversation that spawned it, so
+    the caller hands it a brief.  'hermes_handoff' composes that brief, resolves its anchor phrases
+    against the session store and checks that a child could retrieve the session -- one rule, three
+    modes:
+    
+      hermes_handoff --goal <line> [--context <text> | --context-file <path>]
+                     [--anchor <phrase>].. [--gate <line>].. [--report-chars <n>]
+                     [--session <id>] [--db <path>] [--json]
+          a brief in seven sections, in order, one heading each, plain text: GOAL, CONTEXT,
+          RETRIEVAL, ANCHORS, MECHANICS, ACCEPTANCE GATES and REPORT FORMAT.  GOAL, CONTEXT and
+          every --gate line are printed verbatim; each --anchor phrase resolves to its messages.
+      hermes_handoff --anchors <phrase>.. [--limit <n>] [--session <id>] [--db <path>] [--json]
+          one 'msg <id> <role> <snippet>' line per distinct matching message, then 'matches: <n>'.
+      hermes_handoff --verify [--session <id>] [--db <path>] [--json]
+          whether a child could retrieve this session: 'session <id> msgs=<n> chars=<n>
+          retrieval=ok|missing', then the two retrieval recipes and the live delegation caps.
+    
+    THE SESSION STORE
+    
+    The store is a read only SQLite database, '${HERMES_HOME:-$HOME/.hermes}/state.db', overridden by
+    '--db <path>' or '$HANDOFF_DB'.  The session id comes from '--session <id>' or
+    '$HERMES_SESSION_ID'; the profile -- the first segment of an '@session:<profile>/<id>' link --
+    from '$HERMES_SESSION_PROFILE', default 'default'.  'messages' and 'sessions' are read with the
+    'sqlite3' CLI: no LLM and no summariser.  An anchor phrase resolves to the messages whose
+    'content' contains it, case insensitively; a phrase that resolves to nothing is reported as
+    'UNRESOLVED: <phrase>' and never guessed.  Nothing host local is hardcoded: the caps are read
+    live with 'hermes config get delegation.<key>' and '$HERMES_MAX_ITERATIONS'.
+    
+    EXIT CODES
+    
+      0 answered; 1 --anchors matched nothing; 2 usage error; 3 the session or the store is unknown
+      or unreadable; 4 the brief has an unresolved anchor (the whole brief is still printed).
+    
+    The text and the '--json' forms carry the same numbers; '--json' is one object.
+    
 
     Variables:
 
@@ -1136,6 +1174,91 @@ MODULE API/RULES
         Body of the 'hermes_logs' rule: parse the options into the query context, resolve the corpus
         roots and hand over to 'hermes_logs_scan'.  See the module header for the contract.
 
+      hermes_handoff_home - the Hermes home directory
+        '$HERMES_HOME' when set, '~/.hermes' otherwise.  Resolved here and nowhere else so no path of
+        one host leaks into the rule.
+
+      hermes_handoff_db <override>
+        the session store path
+        '--db' wins, then '$HANDOFF_DB', then the store below the Hermes home.
+
+      hermes_handoff_profile - the profile of an '@session:' link
+
+      hermes_handoff_session <override>
+        the session id, or empty
+
+      hermes_handoff_trim <text>
+        <text> without leading or trailing whitespace
+
+      hermes_handoff_cap_text <value>
+        <value>, or 'unavailable' when it is empty
+
+      hermes_handoff_sql <db> <sql>
+        run one read only query, US separated fields
+        'sqlite3 -readonly' never creates a journal and never writes to the store.
+
+      hermes_handoff_quote <value>
+        a SQL single quoted literal
+
+      hermes_handoff_match <phrase>
+        the SQL predicate matching one anchor phrase
+        A case insensitive substring match over the message content.  'instr' -- not 'like' -- is
+        used so no wildcard of the phrase has a meaning of its own.
+
+      hermes_handoff_store_ok <db>
+        0 when <db> is a readable session store
+
+      hermes_handoff_session_exists <db> <session>
+        0 when the session is in the store
+
+      hermes_handoff_resolve <db> <session> <phrase> [<limit>]
+        the matching messages
+
+      hermes_handoff_count <db> <session> <phrase>
+        the number of matching messages
+
+      hermes_handoff_stats <db> <session>
+        the message count and total content size
+        Sets HERMES_HANDOFF_MSGS and HERMES_HANDOFF_CHARS.
+
+      hermes_handoff_record <record>
+        'msg <id> <role> <snippet>' from one US record
+
+      hermes_handoff_config <key>
+        one 'hermes config get delegation.<key>' value, or empty
+
+      hermes_handoff_caps - read the live delegation caps into the HERMES_HANDOFF_CAP_* variables
+        Read live and never hardcoded: the spawn depth and the summary budget come from the Hermes
+        configuration, the child iteration cap from '$HERMES_MAX_ITERATIONS' when set and the
+        configuration otherwise.
+
+      hermes_handoff_caps_line - one 'caps:' line
+
+      hermes_handoff_recipes <db> <session>
+        the two exact retrieval recipes
+
+      hermes_handoff_json_strings <text..>
+        the texts as a JSON array of strings
+
+      hermes_handoff_json_records <record..>
+        the US records as a JSON array of objects
+
+      hermes_handoff_usage - the usage text, on stderr
+
+      hermes_handoff_brief_run <session> <db> <json> <goal> <context> <report_chars>
+
+      hermes_handoff_anchors_json <session> <db> <limit> <matched> <printed> <full>
+
+      hermes_handoff_anchors_run <session> <db> <json> <limit>
+        Whatever the digest leaves out stays retrievable from a file whose path is printed next
+        to the elision counts.  Written through a temporary name.
+
+      hermes_handoff_verify_json <session> <db> <retrieval>
+
+      hermes_handoff_verify_run <session> <db> <json>
+        Body of the 'hermes_handoff' rule: parse the options, pick the mode and hand over.  See the
+        'HANDOFF BRIEFS' section of the module header for the modes, the store and the exit codes.
+
     Rules:
 
       hermes_logs
@@ -1144,6 +1267,12 @@ MODULE API/RULES
         prints a bounded digest and the exact match count, and keeps the complete match list on disk.
         Exit 0 answered, 3 for no match, 2 usage error, 1 a source could not be read.  See the module
         header for the corpus, the locator format, the filters and the non goals.
+
+      hermes_handoff
+        One rule, three modes: a child session brief, the resolved anchor phrases, and whether a child
+        could retrieve the session.  Reads the Hermes session store with 'sqlite3' and the delegation
+        caps live -- no LLM.  Exit 0 answered, 1 --anchors matched nothing, 2 usage error, 3 the session
+        or the store is unknown/unreadable, 4 the brief has an unresolved anchor.  See the module header.
 
   hermeskanban - The Hermes Kanban board state digest -- the board questions in one call
     

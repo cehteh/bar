@@ -725,3 +725,649 @@ function hermes_logs
 ## Exit 0 answered, 3 for no match, 2 usage error, 1 a source could not be read.  See the module
 ## header for the corpus, the locator format, the filters and the non goals.
 rule hermes_logs: -
+
+
+###
+### HANDOFF BRIEFS ('hermes_handoff')
+###
+### A child session ('delegate_task') starts with no memory of the conversation that spawned it, so
+### the caller hands it a brief.  'hermes_handoff' composes that brief, resolves its anchor phrases
+### against the session store and checks that a child could retrieve the session -- one rule, three
+### modes:
+###
+###   hermes_handoff --goal <line> [--context <text> | --context-file <path>]
+###                  [--anchor <phrase>].. [--gate <line>].. [--report-chars <n>]
+###                  [--session <id>] [--db <path>] [--json]
+###       a brief in seven sections, in order, one heading each, plain text: GOAL, CONTEXT,
+###       RETRIEVAL, ANCHORS, MECHANICS, ACCEPTANCE GATES and REPORT FORMAT.  GOAL, CONTEXT and
+###       every --gate line are printed verbatim; each --anchor phrase resolves to its messages.
+###   hermes_handoff --anchors <phrase>.. [--limit <n>] [--session <id>] [--db <path>] [--json]
+###       one 'msg <id> <role> <snippet>' line per distinct matching message, then 'matches: <n>'.
+###   hermes_handoff --verify [--session <id>] [--db <path>] [--json]
+###       whether a child could retrieve this session: 'session <id> msgs=<n> chars=<n>
+###       retrieval=ok|missing', then the two retrieval recipes and the live delegation caps.
+###
+### THE SESSION STORE
+###
+### The store is a read only SQLite database, '${HERMES_HOME:-$HOME/.hermes}/state.db', overridden by
+### '--db <path>' or '$HANDOFF_DB'.  The session id comes from '--session <id>' or
+### '$HERMES_SESSION_ID'; the profile -- the first segment of an '@session:<profile>/<id>' link --
+### from '$HERMES_SESSION_PROFILE', default 'default'.  'messages' and 'sessions' are read with the
+### 'sqlite3' CLI: no LLM and no summariser.  An anchor phrase resolves to the messages whose
+### 'content' contains it, case insensitively; a phrase that resolves to nothing is reported as
+### 'UNRESOLVED: <phrase>' and never guessed.  Nothing host local is hardcoded: the caps are read
+### live with 'hermes config get delegation.<key>' and '$HERMES_MAX_ITERATIONS'.
+###
+### EXIT CODES
+###
+###   0 answered; 1 --anchors matched nothing; 2 usage error; 3 the session or the store is unknown
+###   or unreadable; 4 the brief has an unresolved anchor (the whole brief is still printed).
+###
+### The text and the '--json' forms carry the same numbers; '--json' is one object.
+###
+
+## The one snippet expression: every control character that would break one record per line is
+## replaced by a space (newline, carriage return, tab and the US field separator of this section),
+## then at most 72 characters are kept.
+HERMES_HANDOFF_SNIPPET_SQL="substr(replace(replace(replace(replace(coalesce(content, ''), char(10), ' '), char(13), ' '), char(9), ' '), char(31), ' '), 1, 72)"
+
+function hermes_handoff_home ## - the Hermes home directory
+{
+    ## '$HERMES_HOME' when set, '~/.hermes' otherwise.  Resolved here and nowhere else so no path of
+    ## one host leaks into the rule.
+    printf '%s' "${HERMES_HOME:-$HOME/.hermes}"
+}
+
+function hermes_handoff_db ## <override> - the session store path
+{
+    ## '--db' wins, then '$HANDOFF_DB', then the store below the Hermes home.
+    if [[ -n "${1:-}" ]]; then
+        printf '%s' "$1"
+    elif [[ -n "${HANDOFF_DB:-}" ]]; then
+        printf '%s' "$HANDOFF_DB"
+    else
+        printf '%s/state.db' "$(hermes_handoff_home)"
+    fi
+}
+
+function hermes_handoff_profile ## - the profile of an '@session:' link
+{
+    printf '%s' "${HERMES_SESSION_PROFILE:-default}"
+}
+
+function hermes_handoff_session ## <override> - the session id, or empty
+{
+    if [[ -n "${1:-}" ]]; then
+        printf '%s' "$1"
+    else
+        printf '%s' "${HERMES_SESSION_ID:-}"
+    fi
+}
+
+function hermes_handoff_trim ## <text> - <text> without leading or trailing whitespace
+{
+    local text="$1"
+    text="${text#"${text%%[![:space:]]*}"}"
+    text="${text%"${text##*[![:space:]]}"}"
+    printf '%s' "$text"
+}
+
+function hermes_handoff_cap_text ## <value> - <value>, or 'unavailable' when it is empty
+{
+    printf '%s' "${1:-unavailable}"
+}
+
+function hermes_handoff_sql ## <db> <sql> - run one read only query, US separated fields
+{
+    ## 'sqlite3 -readonly' never creates a journal and never writes to the store.
+    local db="$1" sql="$2"
+    sqlite3 -readonly -separator $'\037' "$db" "$sql"
+}
+
+function hermes_handoff_quote ## <value> - a SQL single quoted literal
+{
+    local value="$1"
+    printf "'%s'" "${value//\'/\'\'}"
+}
+
+function hermes_handoff_match ## <phrase> - the SQL predicate matching one anchor phrase
+{
+    ## A case insensitive substring match over the message content.  'instr' -- not 'like' -- is
+    ## used so no wildcard of the phrase has a meaning of its own.
+    printf "instr(lower(coalesce(content, '')), lower(%s)) > 0" "$(hermes_handoff_quote "$1")"
+}
+
+function hermes_handoff_store_ok ## <db> - 0 when <db> is a readable session store
+{
+    local db="$1" found
+    [[ -f "$db" ]] || return 1
+    command -v sqlite3 >/dev/null 2>&1 || return 1
+    found="$(hermes_handoff_sql "$db" "select count(*) from sqlite_master where type = 'table' and name = 'messages';" 2>/dev/null)" || return 1
+    [[ "$found" == 1 ]]
+}
+
+function hermes_handoff_session_exists ## <db> <session> - 0 when the session is in the store
+{
+    local db="$1" session="$2" found
+    found="$(hermes_handoff_sql "$db" "select 1 from sessions where id = $(hermes_handoff_quote "$session") limit 1;" 2>/dev/null)" || return 1
+    [[ "$found" == 1 ]]
+}
+
+function hermes_handoff_resolve ## <db> <session> <phrase> [<limit>] - the matching messages
+{
+    local db="$1" session="$2" phrase="$3" limit="${4:-}"
+    local limit_sql=""
+    [[ -n "$limit" && "$limit" != 0 ]] && limit_sql="limit $limit"
+    hermes_handoff_sql "$db" "
+select id, role, $HERMES_HANDOFF_SNIPPET_SQL
+from messages
+where session_id = $(hermes_handoff_quote "$session")
+  and $(hermes_handoff_match "$phrase")
+order by id
+$limit_sql;"
+}
+
+function hermes_handoff_count ## <db> <session> <phrase> - the number of matching messages
+{
+    hermes_handoff_sql "$1" "select count(*) from messages where session_id = $(hermes_handoff_quote "$2") and $(hermes_handoff_match "$3");"
+}
+
+function hermes_handoff_stats ## <db> <session> - the message count and total content size
+{
+    ## Sets HERMES_HANDOFF_MSGS and HERMES_HANDOFF_CHARS.
+    local row
+    row="$(hermes_handoff_sql "$1" "select count(*), coalesce(sum(length(content)), 0) from messages where session_id = $(hermes_handoff_quote "$2");")"
+    HERMES_HANDOFF_MSGS="$(hermes_handoff_trim "${row%%$'\037'*}")"
+    HERMES_HANDOFF_CHARS="$(hermes_handoff_trim "${row#*$'\037'}")"
+}
+
+function hermes_handoff_record ## <record> - 'msg <id> <role> <snippet>' from one US record
+{
+    local -a f=()
+    IFS=$'\037' read -r -a f <<<"$1"
+    printf 'msg %s %s %s' "${f[0]:-}" "${f[1]:-}" "${f[2]:-}"
+}
+
+function hermes_handoff_config ## <key> - one 'hermes config get delegation.<key>' value, or empty
+{
+    command -v hermes >/dev/null 2>&1 || return 0
+    hermes_handoff_trim "$(hermes config get "delegation.$1" 2>/dev/null | head -n 1)"
+}
+
+function hermes_handoff_caps ## - read the live delegation caps into the HERMES_HANDOFF_CAP_* variables
+{
+    ## Read live and never hardcoded: the spawn depth and the summary budget come from the Hermes
+    ## configuration, the child iteration cap from '$HERMES_MAX_ITERATIONS' when set and the
+    ## configuration otherwise.
+    HERMES_HANDOFF_CAP_DEPTH="$(hermes_handoff_config max_spawn_depth)"
+    HERMES_HANDOFF_CAP_SUMMARY="$(hermes_handoff_config max_summary_chars)"
+    if [[ -n "${HERMES_MAX_ITERATIONS:-}" ]]; then
+        HERMES_HANDOFF_CAP_ITERATIONS="$HERMES_MAX_ITERATIONS"
+        HERMES_HANDOFF_CAP_ITERATIONS_SOURCE='$HERMES_MAX_ITERATIONS'
+    else
+        HERMES_HANDOFF_CAP_ITERATIONS="$(hermes_handoff_config max_iterations)"
+        HERMES_HANDOFF_CAP_ITERATIONS_SOURCE='delegation.max_iterations'
+    fi
+}
+
+function hermes_handoff_caps_line ## - one 'caps:' line
+{
+    printf 'caps: max_spawn_depth=%s max_summary_chars=%s child_iterations=%s\n' \
+        "$(hermes_handoff_cap_text "$HERMES_HANDOFF_CAP_DEPTH")" \
+        "$(hermes_handoff_cap_text "$HERMES_HANDOFF_CAP_SUMMARY")" \
+        "$(hermes_handoff_cap_text "$HERMES_HANDOFF_CAP_ITERATIONS")"
+}
+
+function hermes_handoff_recipes ## <db> <session> - the two exact retrieval recipes
+{
+    printf "scroll: session_search(session_id='%s', around_message_id=<msg-id>, window=10, role_filter='user,assistant,tool')\n" "$2"
+    printf '%s\n' '  the scroll shape returns the window around the anchor un-truncated; the discovery shape'
+    printf '%s\n' "  (the 'query' argument) returns top-N sessions with truncated bodies, so scroll when exact text matters"
+    printf "verbatim: sqlite3 -readonly '%s' \"select id, role, content from messages where session_id='%s' order by id;\"\n" "$1" "$2"
+}
+
+function hermes_handoff_json_strings ## <text..> - the texts as a JSON array of strings
+{
+    local out="" separator="" text literal=""
+    for text in "$@"; do
+        json_set_string literal "$text"
+        out+="$separator$literal"
+        separator=","
+    done
+    printf '[%s]' "$out"
+}
+
+function hermes_handoff_json_records ## <record..> - the US records as a JSON array of objects
+{
+    local out="" separator="" record id role snippet literal="" role_json=""
+    for record in "$@"; do
+        IFS=$'\037' read -r id role snippet <<<"$record"
+        json_set_string literal "$role"
+        role_json="$literal"
+        json_set_string literal "$snippet"
+        out+="$separator{\"id\":${id:-null},\"role\":$role_json,\"snippet\":$literal}"
+        separator=","
+    done
+    printf '[%s]' "$out"
+}
+
+function hermes_handoff_usage ## - the usage text, on stderr
+{
+    cat >&2 <<'USAGE'
+usage: bar hermes_handoff --goal <line> [--context <text> | --context-file <path>]
+                          [--anchor <phrase>].. [--gate <line>].. [--report-chars <n>]
+                          [--session <id>] [--db <path>] [--json]
+       bar hermes_handoff --anchors <phrase>.. [--limit <n>] [--session <id>] [--db <path>] [--json]
+       bar hermes_handoff --verify [--session <id>] [--db <path>] [--json]
+
+  --goal <line>          the goal of the child, printed verbatim (a brief)
+  --context <text>       context the child cannot retrieve, printed verbatim
+  --context-file <path>  the context read from a file instead
+  --anchor <phrase>      a phrase resolved to 'msg <id> <role> <snippet>'; repeatable
+  --gate <line>          one acceptance gate, printed verbatim; repeatable
+  --report-chars <n>     the report bound told to the child (default 1500)
+  --anchors <phrase>..   resolve phrases and print the matches instead of a brief
+  --verify               print whether a child could retrieve the session
+  --limit <n>            --anchors: print at most n matches (0 = all; default 20)
+  --session <id>         the session (default $HERMES_SESSION_ID)
+  --db <path>            the session store (default $HANDOFF_DB or the Hermes home's state.db)
+  --json                 one object with the same numbers as the text form
+
+exit codes: 0 answered, 1 --anchors matched nothing, 2 usage error,
+            3 session or store unknown/unreadable, 4 a brief anchor did not resolve
+USAGE
+}
+
+function hermes_handoff_brief_text
+{
+    local line phrase
+    printf 'GOAL\n%s\n\n' "$HERMES_HANDOFF_GOAL"
+    if [[ -n "$HERMES_HANDOFF_CONTEXT" ]]; then
+        printf 'CONTEXT\n%s\n\n' "$HERMES_HANDOFF_CONTEXT"
+    else
+        printf 'CONTEXT\n(no context given)\n\n'
+    fi
+    printf 'RETRIEVAL\n@session:%s/%s\n' "$(hermes_handoff_profile)" "$HERMES_HANDOFF_SESSION"
+    hermes_handoff_recipes "$HERMES_HANDOFF_DB" "$HERMES_HANDOFF_SESSION"
+    printf '\nANCHORS\n'
+    if (( ${#HERMES_HANDOFF_PHRASES[@]} == 0 )); then
+        printf '%s\n' '(no anchors given)'
+    else
+        for line in ${HERMES_HANDOFF_RESOLVED[@]+"${HERMES_HANDOFF_RESOLVED[@]}"}; do
+            hermes_handoff_record "$line"
+            printf '\n'
+        done
+        for phrase in ${HERMES_HANDOFF_UNRESOLVED[@]+"${HERMES_HANDOFF_UNRESOLVED[@]}"}; do
+            printf 'UNRESOLVED: %s\n' "$phrase"
+        done
+    fi
+    printf '\nMECHANICS\n'
+    printf 'max_spawn_depth: %s\n' "$(hermes_handoff_cap_text "$HERMES_HANDOFF_CAP_DEPTH")"
+    printf 'max_summary_chars: %s\n' "$(hermes_handoff_cap_text "$HERMES_HANDOFF_CAP_SUMMARY")"
+    printf 'child_iterations: %s (from %s)\n' "$(hermes_handoff_cap_text "$HERMES_HANDOFF_CAP_ITERATIONS")" "$HERMES_HANDOFF_CAP_ITERATIONS_SOURCE"
+    printf '%s\n' 'standing facts:' \
+        '- a child cannot call clarify' \
+        '- a child cannot write memory' \
+        '- a child does not inherit the skills index; name every skill explicitly' \
+        '- a command needing human approval is denied, not hung' \
+        '- decide nothing - report instead'
+    printf '\nACCEPTANCE GATES\n'
+    if (( ${#HERMES_HANDOFF_GATES[@]} == 0 )); then
+        printf '%s\n' '(no gates given)'
+    else
+        for line in "${HERMES_HANDOFF_GATES[@]}"; do
+            printf '%s\n' "$line"
+        done
+    fi
+    printf '\nREPORT FORMAT\n'
+    printf 'report at most %s chars, and carry the handles the caller will verify:\n' "$HERMES_HANDOFF_REPORT_CHARS"
+    printf '%s\n' \
+        '- absolute paths of every file you created or changed' \
+        '- ids: the session, message, card and run ids you touched' \
+        '- shas: git HEAD and any tree you produced, and the commands you ran'
+}
+
+function hermes_handoff_brief_json
+{
+    local literal=""
+    printf '{"bar_hermes_handoff":1,"mode":"brief","session":'
+    json_set_string literal "$HERMES_HANDOFF_SESSION"
+    printf '%s,"profile":' "$literal"
+    json_set_string literal "$(hermes_handoff_profile)"
+    printf '%s,"db":' "$literal"
+    json_set_string literal "$HERMES_HANDOFF_DB"
+    printf '%s,"goal":' "$literal"
+    json_set_string literal "$HERMES_HANDOFF_GOAL"
+    printf '%s,"context":' "$literal"
+    if [[ -n "$HERMES_HANDOFF_CONTEXT" ]]; then
+        json_set_string literal "$HERMES_HANDOFF_CONTEXT"
+        printf '%s' "$literal"
+    else
+        printf 'null'
+    fi
+    printf ',"phrases":'
+    hermes_handoff_json_strings ${HERMES_HANDOFF_PHRASES[@]+"${HERMES_HANDOFF_PHRASES[@]}"}
+    printf ',"anchors":'
+    hermes_handoff_json_records ${HERMES_HANDOFF_RESOLVED[@]+"${HERMES_HANDOFF_RESOLVED[@]}"}
+    printf ',"anchor_count":%s' "${#HERMES_HANDOFF_RESOLVED[@]}"
+    printf ',"unresolved":'
+    hermes_handoff_json_strings ${HERMES_HANDOFF_UNRESOLVED[@]+"${HERMES_HANDOFF_UNRESOLVED[@]}"}
+    printf ',"unresolved_count":%s' "${#HERMES_HANDOFF_UNRESOLVED[@]}"
+    printf ',"mechanics":{"max_spawn_depth":%s,"max_summary_chars":%s,"child_iterations":%s,"child_iterations_source":' \
+        "$(json_number "$HERMES_HANDOFF_CAP_DEPTH")" "$(json_number "$HERMES_HANDOFF_CAP_SUMMARY")" "$(json_number "$HERMES_HANDOFF_CAP_ITERATIONS")"
+    json_set_string literal "$HERMES_HANDOFF_CAP_ITERATIONS_SOURCE"
+    printf '%s}' "$literal"
+    printf ',"gates":'
+    hermes_handoff_json_strings ${HERMES_HANDOFF_GATES[@]+"${HERMES_HANDOFF_GATES[@]}"}
+    printf ',"gates_count":%s' "${#HERMES_HANDOFF_GATES[@]}"
+    printf ',"report_chars":%s}\n' "$HERMES_HANDOFF_REPORT_CHARS"
+}
+
+function hermes_handoff_brief_run ## <session> <db> <json> <goal> <context> <report_chars>
+{
+    local session="$1" db="$2" json="$3" goal="$4" context="$5" report_chars="$6"
+    local phrase line total
+    if [[ -z "$session" ]]; then
+        printf 'hermes_handoff: no session, pass --session or set $HERMES_SESSION_ID\n' >&2
+        return 3
+    fi
+    if ! hermes_handoff_store_ok "$db"; then
+        printf 'hermes_handoff: cannot read the session store at %s\n' "$db" >&2
+        return 3
+    fi
+    if ! hermes_handoff_session_exists "$db" "$session"; then
+        printf 'hermes_handoff: no session %s in %s\n' "$session" "$db" >&2
+        return 3
+    fi
+    HERMES_HANDOFF_SESSION="$session"
+    HERMES_HANDOFF_DB="$db"
+    HERMES_HANDOFF_GOAL="$goal"
+    HERMES_HANDOFF_CONTEXT="$context"
+    HERMES_HANDOFF_REPORT_CHARS="$report_chars"
+    HERMES_HANDOFF_RESOLVED=()
+    HERMES_HANDOFF_UNRESOLVED=()
+    local -A seen_ids=()
+    for phrase in ${HERMES_HANDOFF_PHRASES[@]+"${HERMES_HANDOFF_PHRASES[@]}"}; do
+        total="$(hermes_handoff_count "$db" "$session" "$phrase")"
+        if [[ "$total" == 0 ]]; then
+            HERMES_HANDOFF_UNRESOLVED+=("$phrase")
+            continue
+        fi
+        while IFS= read -r line; do
+            [[ -n "$line" ]] || continue
+            if [[ -z "${seen_ids["${line%%$'\037'*}"]:-}" ]]; then
+                seen_ids["${line%%$'\037'*}"]=1
+                HERMES_HANDOFF_RESOLVED+=("$line")
+            fi
+        done < <(hermes_handoff_resolve "$db" "$session" "$phrase" "")
+    done
+    hermes_handoff_caps
+    if [[ -n "$json" ]]; then
+        hermes_handoff_brief_json
+    else
+        hermes_handoff_brief_text
+    fi
+    if (( ${#HERMES_HANDOFF_UNRESOLVED[@]} > 0 )); then
+        return 4
+    fi
+    return 0
+}
+
+function hermes_handoff_anchors_json ## <session> <db> <limit> <matched> <printed> <full>
+{
+    local session="$1" db="$2" limit="$3" matched="$4" printed="$5" full="$6" literal=""
+    printf '{"bar_hermes_handoff":1,"mode":"anchors","session":'
+    json_set_string literal "$session"
+    printf '%s,"db":' "$literal"
+    json_set_string literal "$db"
+    printf '%s,"limit":%s,"matches":%s,"showing":%s,"full":' "$literal" "$(json_number "$limit")" "$matched" "$printed"
+    if [[ -n "$full" ]]; then
+        json_set_string literal "$full"
+        printf '%s' "$literal"
+    else
+        printf 'null'
+    fi
+    printf ',"messages":'
+    hermes_handoff_json_records ${HERMES_HANDOFF_ROWS[@]+"${HERMES_HANDOFF_ROWS[@]}"}
+    printf '}\n'
+}
+
+function hermes_handoff_anchors_run ## <session> <db> <json> <limit>
+{
+    local session="$1" db="$2" json="$3" limit="$4"
+    local -i printed=0
+    local matched=0 clause="" rows="" full="" file="" tmp="" line phrase
+    HERMES_HANDOFF_ROWS=()
+
+    if [[ -z "$session" ]]; then
+        printf 'hermes_handoff: no session, pass --session or set $HERMES_SESSION_ID\n' >&2
+        return 3
+    fi
+    if ! hermes_handoff_store_ok "$db"; then
+        printf 'hermes_handoff: cannot read the session store at %s\n' "$db" >&2
+        return 3
+    fi
+    if ! hermes_handoff_session_exists "$db" "$session"; then
+        printf 'hermes_handoff: no session %s in %s\n' "$session" "$db" >&2
+        return 3
+    fi
+
+    for phrase in ${HERMES_HANDOFF_PHRASES[@]+"${HERMES_HANDOFF_PHRASES[@]}"}; do
+        clause+="${clause:+ or }$(hermes_handoff_match "$phrase")"
+    done
+
+    matched="$(hermes_handoff_trim "$(hermes_handoff_sql "$db" "select count(*) from messages where session_id = $(hermes_handoff_quote "$session") and ($clause);")")"
+
+    if [[ "$matched" == 0 ]]; then
+        if [[ -n "$json" ]]; then
+            hermes_handoff_anchors_json "$session" "$db" "$limit" 0 0 ""
+        else
+            printf 'matches: 0\n'
+        fi
+        return 1
+    fi
+
+    rows="$(hermes_handoff_sql "$db" "
+select id, role, $HERMES_HANDOFF_SNIPPET_SQL
+from messages
+where session_id = $(hermes_handoff_quote "$session") and ($clause)
+order by id
+$([[ "$limit" != 0 ]] && printf 'limit %s' "$limit");")"
+
+    if [[ -n "$rows" ]]; then
+        while IFS= read -r line; do
+            [[ -n "$line" ]] || continue
+            printed=$(( printed + 1 ))
+            HERMES_HANDOFF_ROWS+=("$line")
+            if [[ -z "$json" ]]; then
+                hermes_handoff_record "$line"
+                printf '\n'
+            fi
+        done <<<"$rows"
+    fi
+
+    if (( limit != 0 && printed < matched )); then
+        ## Whatever the digest leaves out stays retrievable from a file whose path is printed next
+        ## to the elision counts.  Written through a temporary name.
+        file="${TMPDIR:-/tmp}/hermes_handoff-${session}.txt"
+        tmp="$file.$$"
+        {
+            while IFS= read -r line; do
+                [[ -n "$line" ]] || continue
+                hermes_handoff_record "$line"
+                printf '\n'
+            done <<<"$(hermes_handoff_sql "$db" "
+select id, role, $HERMES_HANDOFF_SNIPPET_SQL
+from messages
+where session_id = $(hermes_handoff_quote "$session") and ($clause)
+order by id;")"
+        } >"$tmp"
+        mv -f "$tmp" "$file"
+        full="$file"
+    fi
+
+    if [[ -n "$json" ]]; then
+        hermes_handoff_anchors_json "$session" "$db" "$limit" "$matched" "$printed" "$full"
+    else
+        if [[ -n "$full" ]]; then
+            printf 'showing %s of %s (full list: %s)\n' "$printed" "$matched" "$full"
+        fi
+        printf 'matches: %s\n' "$matched"
+    fi
+    return 0
+}
+
+function hermes_handoff_verify_json ## <session> <db> <retrieval>
+{
+    local session="$1" db="$2" retrieval="$3" literal=""
+    printf '{"bar_hermes_handoff":1,"mode":"verify","session":'
+    json_set_string literal "$session"
+    printf '%s,"profile":' "$literal"
+    json_set_string literal "$(hermes_handoff_profile)"
+    printf '%s,"db":' "$literal"
+    json_set_string literal "$db"
+    printf '%s,"msgs":%s,"chars":%s,"retrieval":' "$literal" "${HERMES_HANDOFF_MSGS:-0}" "${HERMES_HANDOFF_CHARS:-0}"
+    json_set_string literal "$retrieval"
+    printf '%s' "$literal"
+    printf ',"caps":{"max_spawn_depth":%s,"max_summary_chars":%s,"child_iterations":%s,"child_iterations_source":' \
+        "$(json_number "$HERMES_HANDOFF_CAP_DEPTH")" "$(json_number "$HERMES_HANDOFF_CAP_SUMMARY")" "$(json_number "$HERMES_HANDOFF_CAP_ITERATIONS")"
+    json_set_string literal "$HERMES_HANDOFF_CAP_ITERATIONS_SOURCE"
+    printf '%s}}\n' "$literal"
+}
+
+function hermes_handoff_verify_run ## <session> <db> <json>
+{
+    local session="$1" db="$2" json="$3"
+    local retrieval="missing" rc=0
+    if [[ -z "$session" ]]; then
+        printf 'hermes_handoff: no session, pass --session or set $HERMES_SESSION_ID\n' >&2
+        return 3
+    fi
+    HERMES_HANDOFF_SESSION="$session"
+    HERMES_HANDOFF_DB="$db"
+    HERMES_HANDOFF_MSGS=0
+    HERMES_HANDOFF_CHARS=0
+    if hermes_handoff_store_ok "$db" && hermes_handoff_session_exists "$db" "$session"; then
+        hermes_handoff_stats "$db" "$session"
+        [[ "$HERMES_HANDOFF_MSGS" =~ ^[0-9]+$ ]] || HERMES_HANDOFF_MSGS=0
+        [[ "$HERMES_HANDOFF_CHARS" =~ ^[0-9]+$ ]] || HERMES_HANDOFF_CHARS=0
+        if (( HERMES_HANDOFF_MSGS > 0 )); then
+            retrieval="ok"
+        fi
+    fi
+    [[ "$retrieval" == ok ]] || rc=3
+    hermes_handoff_caps
+    if [[ -n "$json" ]]; then
+        hermes_handoff_verify_json "$session" "$db" "$retrieval"
+    else
+        printf 'session %s msgs=%s chars=%s retrieval=%s\n' "$session" "$HERMES_HANDOFF_MSGS" "$HERMES_HANDOFF_CHARS" "$retrieval"
+        hermes_handoff_recipes "$db" "$session"
+        hermes_handoff_caps_line
+    fi
+    return "$rc"
+}
+
+function hermes_handoff
+{
+    ## Body of the 'hermes_handoff' rule: parse the options, pick the mode and hand over.  See the
+    ## 'HANDOFF BRIEFS' section of the module header for the modes, the store and the exit codes.
+    local -a args=()
+    local raw arg mode="brief" goal="" context="" context_file="" report_chars=1500 session="" db="" json="" limit="20"
+    local -i count i=0
+
+    HERMES_HANDOFF_PHRASES=()
+    HERMES_HANDOFF_GATES=()
+    for raw in "$@"; do
+        if [[ "$raw" == --*=* ]]; then
+            args+=("${raw%%=*}" "${raw#*=}")
+        else
+            args+=("$raw")
+        fi
+    done
+    count=${#args[@]}
+    while (( i < count )); do
+        arg="${args[i]}"
+        i=$(( i + 1 ))
+        case "$arg" in
+        --json) json=1 ;;
+        --verify) mode="verify" ;;
+        --anchors) mode="anchors" ;;
+        --goal | --context | --context-file | --anchor | --gate | --report-chars | --session | --db | --limit)
+            if (( i >= count )) || [[ -z "${args[i]}" ]]; then
+                printf 'hermes_handoff: %s needs a non-empty value\n' "$arg" >&2
+                hermes_handoff_usage
+                return 2
+            fi
+            case "$arg" in
+            --goal) goal="${args[i]}" ;;
+            --context) context="${args[i]}" ;;
+            --context-file) context_file="${args[i]}" ;;
+            --anchor) HERMES_HANDOFF_PHRASES+=("${args[i]}") ;;
+            --gate) HERMES_HANDOFF_GATES+=("${args[i]}") ;;
+            --report-chars) report_chars="${args[i]}" ;;
+            --session) session="${args[i]}" ;;
+            --db) db="${args[i]}" ;;
+            --limit) limit="${args[i]}" ;;
+            esac
+            i=$(( i + 1 ))
+            ;;
+        --*)
+            printf 'hermes_handoff: unknown argument %s\n' "$arg" >&2
+            hermes_handoff_usage
+            return 2
+            ;;
+        *)
+            HERMES_HANDOFF_PHRASES+=("$arg")
+            ;;
+        esac
+    done
+
+    [[ -n "${BAR_AGENT_JSON:-}" ]] && json=1
+
+    session="$(hermes_handoff_session "$session")"
+    db="$(hermes_handoff_db "$db")"
+
+    case "$mode" in
+    brief)
+        if [[ -z "$goal" ]]; then
+            printf 'hermes_handoff: --goal is required for a brief\n' >&2
+            hermes_handoff_usage
+            return 2
+        fi
+        if [[ ! "$report_chars" =~ ^[0-9]+$ ]]; then
+            printf 'hermes_handoff: invalid --report-chars %s\n' "$report_chars" >&2
+            return 2
+        fi
+        if [[ -n "$context_file" ]]; then
+            if [[ ! -r "$context_file" ]]; then
+                printf 'hermes_handoff: cannot read --context-file %s\n' "$context_file" >&2
+                return 2
+            fi
+            context="$(<"$context_file")"
+        fi
+        hermes_handoff_brief_run "$session" "$db" "$json" "$goal" "$context" "$report_chars"
+        ;;
+    anchors)
+        if (( ${#HERMES_HANDOFF_PHRASES[@]} == 0 )); then
+            printf 'hermes_handoff: --anchors needs at least one phrase\n' >&2
+            hermes_handoff_usage
+            return 2
+        fi
+        if [[ ! "$limit" =~ ^[0-9]+$ ]]; then
+            printf 'hermes_handoff: invalid --limit %s\n' "$limit" >&2
+            return 2
+        fi
+        hermes_handoff_anchors_run "$session" "$db" "$json" "$limit"
+        ;;
+    verify)
+        hermes_handoff_verify_run "$session" "$db" "$json"
+        ;;
+    esac
+}
+
+# helper: hermes_handoff | compose and verify the brief of a delegated child session | hermes_handoff [--goal <line> --context <text> or --context-file <path> --anchor <phrase>.. --gate <line>.. --report-chars <n>] [--anchors <phrase>.. --limit <n>] [--verify] [--session <id>] [--db <path>] [--json] | the brief's seven sections, or 'msg <id> <role> <snippet>' lines then 'matches: <n>', or the retrieval status line with the two recipes and the live caps
+## One rule, three modes: a child session brief, the resolved anchor phrases, and whether a child
+## could retrieve the session.  Reads the Hermes session store with 'sqlite3' and the delegation
+## caps live -- no LLM.  Exit 0 answered, 1 --anchors matched nothing, 2 usage error, 3 the session
+## or the store is unknown/unreadable, 4 the brief has an unresolved anchor.  See the module header.
+rule hermes_handoff: -
