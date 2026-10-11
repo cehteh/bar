@@ -1,0 +1,127 @@
+# -*- mode: sh; sh-shell: bash -*-
+# vim: set ft=bash:
+# shellcheck shell=bash
+
+### The JSON literals of bar's machine readable output: one escaping rule for every '--json' form.
+###
+### The JSON forms of the helpers -- 'kanban_state --json', 'rad_state --json', 'sourcetree_state
+### --json', 'hermes_logs --json', 'helpers --json', the report of 'bar check' -- are assembled from
+### string, number, boolean and array literals.  Writing one of them is one small piece of policy
+### and it belongs in one place:
+###
+###   json_string <text>             the JSON string literal of <text>
+###   json_set_string <var> <text>   the same, left in <var> instead of printed
+###   json_number <value>            <value> as a JSON number, 'null' when it is no number
+###   json_set_number <var> <value>  the same, left in <var>
+###   json_bool <text>               'true' for 'yes', 'false' for 'no', 'null' otherwise
+###   json_list <text> [<sep>]       <text> cut at <sep> (default ','), as a JSON array of strings
+###   json_array <literal..>         the literals as one JSON array
+###
+### THE ESCAPING RULE
+###
+### Backslash and double quote are escaped, a tab becomes the escape '\t' and every other control
+### character is dropped; nothing else about <text> changes.  A literal therefore never carries a
+### raw control character, so one record is one line: an object can be held in a shell variable,
+### compared byte for byte and cut by line without a parser.  Dropping is deliberate -- a newline
+### inside a title would otherwise end the record.
+###
+### 'EMPTY IS NULL'
+###
+### A field bar could not answer is 'null', not an empty string and not a zero: 'json_number'
+### answers 'null' for anything which is no number (an empty value included), and 'json_bool'
+### answers 'null' for a value which is neither 'yes' nor 'no', so an unset flag stays
+### distinguishable from a flag which is off.  An empty array is a different answer and stays '[]':
+### 'no labels' is a fact.
+###
+### WHY THE SETTERS EXIST
+###
+### A command substitution forks a subshell, and a listing quotes a dozen fields per record:
+### 'kanban_state' measured 800 ms for 90 cards when every field forked and 90 ms when none did.
+### A caller which quotes many fields asks for the literal in a variable with the setters and never
+### forks; a caller with one or two fields asks for the printed form.  Both forms are one
+### implementation -- 'json_string' calls 'json_set_string' -- so the rule above cannot drift.
+###
+### This module is a library: no rules, no helpers and therefore no helper module header of its own
+### (a lib is not a repertoire module, see Bar.d/helpers_rules).  A module whose '--json' form needs
+### literal says 'require json_lib'; where a field is not a JSON literal but module policy -- the
+### yes/no/unset rule of rad, the flag list of sourcetree, the control characters 'kanban_state'
+### replaces by a space instead of dropping them -- that policy stays in the module, which asks
+### these functions for the literal and keeps only the decision.
+
+function json_set_string ## <var> <text> - put the JSON string literal of <text> into <var>
+{
+    ## The escaping rule of every '--json' form of bar.  Backslash and quote first (so the escapes
+    ## they introduce are not escaped again), then the tab -- which is the one control character
+    ## worth carrying, an indented line is common in a log -- and finally every other control
+    ## character, dropped with the same pattern substitution 'kanban_state' uses: no 'tr', so no
+    ## subshell per field.
+    local text="${2:-}"
+    text="${text//\\/\\\\}"
+    text="${text//\"/\\\"}"
+    text="${text//$'\t'/\\t}"
+    text="${text//[[:cntrl:]]/}"
+    printf -v "$1" '"%s"' "$text"
+}
+
+function json_string ## <text> - a JSON string literal
+{
+    local literal=""
+    json_set_string literal "$1"
+    printf '%s' "$literal"
+}
+
+function json_set_number ## <var> <value> - put <value> as a JSON number into <var>, 'null' if none
+{
+    if [[ "${2:-}" =~ ^-?[0-9]+$ ]]; then
+        printf -v "$1" '%s' "$2"
+    else
+        printf -v "$1" 'null'
+    fi
+}
+
+function json_number ## <value> - <value> as a JSON number, 'null' when there is none
+{
+    local literal=""
+    json_set_number literal "$1"
+    printf '%s' "$literal"
+}
+
+function json_bool ## <text> - 'true', 'false' or 'null' for a yes/no/unset field
+{
+    case "${1:-}" in
+    yes) printf 'true' ;;
+    no) printf 'false' ;;
+    *) printf 'null' ;;
+    esac
+}
+
+function json_list ## <text> [<sep>] - the <sep> separated <text> as a JSON array of strings
+{
+    ## The members are the fields of <text>, trimmed; an empty member is dropped, so an unset field
+    ## is '[]' and not '[""]'.  The separator is '+' for the flag lists of a digest and ',' for
+    ## everything a user wrote.
+    local text="${1:-}" sep="${2:-,}"
+    local -a members=()
+    local member joined="" separator=""
+    if [[ -n "$text" ]]; then
+        IFS="$sep" read -r -a members <<<"$text"
+    fi
+    for member in ${members[@]+"${members[@]}"}; do
+        member="${member#"${member%%[![:space:]]*}"}"
+        member="${member%"${member##*[![:space:]]}"}"
+        [[ -n "$member" ]] || continue
+        joined+="${separator}$(json_string "$member")"
+        separator=","
+    done
+    printf '[%s]' "$joined"
+}
+
+function json_array ## <literal..> - the literals as one JSON array
+{
+    local item joined="" separator=""
+    for item in "$@"; do
+        joined="${joined}${separator}${item}"
+        separator=","
+    done
+    printf '[%s]' "$joined"
+}

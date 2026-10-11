@@ -18,8 +18,10 @@
 ###                          cut the padded, boxed tables 'rad' prints by the names of their
 ###                          columns
 ###   rad_exclude_worktrees  keep '<clone>/.worktrees/' out of 'git status'
-###   rad_json_string/_number/_list/_flag
-###                          the JSON literals of every '--json' form
+###
+### The JSON literals of the '--json' forms are not rad's business: every module of bar which emits
+### one asks Bar.d/json_lib, which this library requires ('json_string', 'json_number', 'json_bool',
+### 'json_list').
 ###
 ### This module defines no rules.  It is the backing library of the 'rad' word, required by the
 ### module which carries those rules ('Bar.d/rad') -- a rule name like 'rad_state' makes
@@ -34,6 +36,8 @@
 ### a field may be empty and a space would collapse it), and 'RAD_RS' is the field separator
 ### of a 'git for-each-ref' line.  Reading rad's tables back needs a character aware shell; bar
 ### exports a UTF-8 'LC_ALL' whenever the system has one.
+
+require json_lib
 
 declare -gx RAD_BIN="${RAD_BIN:-rad}"  ## the command to use instead of 'rad'
 declare -gr RAD_US=$'\037'        ## the field separator of the records 'rad_table' returns
@@ -260,53 +264,3 @@ function rad_exclude_worktrees ## <clone> - keep '<clone>/.worktrees/' out of 'g
     return 0
 }
 
-# --- the JSON literals ---------------------------------------------------------------------------
-
-function rad_json_string ## <text> - a JSON string literal
-{
-    ## Backslash, quote and tab are escaped, the remaining control characters cannot be
-    ## represented in the literals bar emits and are dropped.
-    local text="$1"
-    text="${text//\\/\\\\}"
-    text="${text//\"/\\\"}"
-    text="${text//$'\t'/\\t}"
-    printf '"%s"' "$(printf '%s' "$text" | LC_ALL=C tr -d '[:cntrl:]')"
-}
-
-function rad_json_number ## <value> - the value as a JSON number, 'null' when there is none
-{
-    if [[ "${1:-}" =~ ^[0-9]+$ ]]; then
-        printf '%s' "$1"
-    else
-        printf 'null'
-    fi
-}
-
-function rad_json_list ## <text> - the comma separated text as a JSON array of strings
-{
-    ## Empty entries and the spaces around them are dropped, so an unset field is an empty array
-    ## and not an array holding nothing.
-    local text="$1"
-    local -a entries=()
-    local entry="" joined="" separator=""
-    if [[ -n "$text" ]]; then
-        IFS=',' read -r -a entries <<<"$text"
-    fi
-    for entry in ${entries[@]+"${entries[@]}"}; do
-        entry="${entry#"${entry%%[![:space:]]*}"}"
-        entry="${entry%"${entry##*[![:space:]]}"}"
-        [[ -n "$entry" ]] || continue
-        joined+="${separator}$(rad_json_string "$entry")"
-        separator=","
-    done
-    printf '[%s]' "$joined"
-}
-
-function rad_json_flag ## <text> - 'true', 'false' or 'null' for a yes/no/unset field
-{
-    case "$1" in
-    yes) printf 'true' ;;
-    no) printf 'false' ;;
-    *) printf 'null' ;;
-    esac
-}

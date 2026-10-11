@@ -30,7 +30,7 @@ BAR="$REPO_ROOT/bar"
 
 # the modules a throw-away project needs to run bar and the repertoire (agent_rules supplies the
 # '--json' rule of 'bar --json <rule>')
-FIXTURE_MODULES="std_lib rule_lib tty_lib std_rules git_lib agent_rules helpers_rules"
+FIXTURE_MODULES="std_lib rule_lib tty_lib std_rules git_lib json_lib agent_rules helpers_rules"
 
 failures=0
 pass() { echo "  ✓ $*"; }

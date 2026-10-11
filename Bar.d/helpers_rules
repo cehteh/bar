@@ -85,6 +85,8 @@
 ### '~/.config/please', see Bar.d/init) and for a project with 'bar init --update' (which copies
 ### new modules into the project's 'Bar.d/').
 
+require json_lib
+
 function helpers_module_of ## <rule> - the module 'rule_autoload' loads for <rule>
 {
     ## Mirrors 'rule_autoload' in Bar.d/std_lib: the prefixes are stripped, then everything from
@@ -359,16 +361,6 @@ function helpers_index_text
         }'
 }
 
-function helpers_json_string ## <text> - a JSON string literal
-{
-    local text="$1"
-    text="${text//\\/\\\\}"
-    text="${text//\"/\\\"}"
-    text="${text//$'\t'/\\t}"
-    text="$(printf '%s' "$text" | LC_ALL=C tr -d '[:cntrl:]')"
-    printf '"%s"' "$text"
-}
-
 function helpers_index_json
 {
     local -a objects=()
@@ -376,12 +368,12 @@ function helpers_index_json
     local object joined="" separator=""
     while IFS=$'\t' read -r name purpose usage output word file; do
         objects+=( "$(printf '{"name":%s,"purpose":%s,"invocation":%s,"output":%s,"module":%s,"file":%s}' \
-            "$(helpers_json_string "$name")" \
-            "$(helpers_json_string "$purpose")" \
-            "$(helpers_json_string "$usage")" \
-            "$(helpers_json_string "$output")" \
-            "$(helpers_json_string "$word")" \
-            "$(helpers_json_string "$file")")" )
+            "$(json_string "$name")" \
+            "$(json_string "$purpose")" \
+            "$(json_string "$usage")" \
+            "$(json_string "$output")" \
+            "$(json_string "$word")" \
+            "$(json_string "$file")")" )
     done < <(helpers_declarations)
     for object in "${objects[@]}"; do
         joined="${joined}${separator}${object}"

@@ -39,6 +39,8 @@
 
 # helper-module: kanban
 
+require json_lib
+
 # helper: kanban_state | the local Hermes Kanban board: counts by status, ready staleness, filtered card listings with dependencies and live runs, blocked reasons, and the runs of one card | kanban_state [--json] [--board <slug>] [--db <path>] [--status <s>[,<s>]..] [--assignee <name>] [--project <project>] [--parent <task-id>] [--id <task-id>] [--limit <n>] [--all] [--runs <task-id>] | no selector: a six line summary; a selector: one line per card then '(n of N cards)'; '--runs': one line per run then '(n runs)'; '--json': one object carrying the same numbers
 ## The bounded board state digest.  See the module header for the exit codes, the board resolution
 ## and the elision rules; nothing but the answer is written to stdout.
@@ -155,22 +157,20 @@ function kanban_json ## <text> - sets KANBAN_JSON to <text> as a JSON string lit
 {
     ## Sets a global instead of printing: a command substitution would fork a subshell for every
     ## field of every record, which is what makes a listing of a hundred cards take a second
-    ## (measured 800 ms for 90 cards before this, 90 ms after).  Control characters -- a newline in
-    ## a title, a tab -- are replaced, so one record stays on one line.
+    ## (measured 800 ms for 90 cards before this, 90 ms after).  The escaping and the 'into a
+    ## variable' form are 'json_set_string'; what stays local is kanban's own policy -- every
+    ## control character becomes a space instead of being dropped, so a title keeps its word
+    ## boundaries ('title with\na newline' reads 'title with a newline').
     local text="${1:-}"
-    text="${text//\\/\\\\}"
-    text="${text//\"/\\\"}"
     text="${text//[[:cntrl:]]/ }"
-    KANBAN_JSON="\"$text\""
+    json_set_string KANBAN_JSON "$text"
 }
 
 function kanban_json_number_or_null ## <number|''> - sets KANBAN_JSON to a JSON number, or 'null'
 {
-    if [[ "${1:-}" =~ ^-?[0-9]+$ ]]; then
-        KANBAN_JSON="$1"
-    else
-        KANBAN_JSON='null'
-    fi
+    ## The argument shape is kanban's (a run id or a duration as sqlite3 prints it, '' for none),
+    ## the literal is 'json_set_number'.
+    json_set_number KANBAN_JSON "${1:-}"
 }
 
 function kanban_duration ## <seconds> - '3d4h', '5h12m', '12m30s' or '45s'

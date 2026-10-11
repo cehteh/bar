@@ -55,7 +55,7 @@ echo
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 mkdir -p "$WORK/Bar.d"
-for module in std_lib rule_lib tty_lib std_rules git_lib agent_rules; do
+for module in std_lib rule_lib tty_lib std_rules git_lib json_lib agent_rules; do
     ln -s "$REPO_ROOT/Bar.d/$module" "$WORK/Bar.d/$module"
 done
 
@@ -347,7 +347,7 @@ if (( $(bytes_of "$OUT") <= MAX_BYTES )); then pass "AC14: 40 x 10 kB lines yiel
 gc_dir="$(mktemp -d)"
 gc_bar() { (cd "$gc_dir" && BAR_AGENT_KEEP=3 "$BAR" "$@" >/dev/null 2>&1) || true; }
 mkdir -p "$gc_dir/Bar.d"
-for module in std_lib rule_lib tty_lib std_rules git_lib agent_rules; do
+for module in std_lib rule_lib tty_lib std_rules git_lib json_lib agent_rules; do
     ln -s "$REPO_ROOT/Bar.d/$module" "$gc_dir/Bar.d/$module"
 done
 printf "rule pass: -- 'true'\n" >"$gc_dir/Barf"

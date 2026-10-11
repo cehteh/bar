@@ -102,6 +102,8 @@
 
 # helper-module: sourcetree
 
+require json_lib
+
 declare -gA SOURCETREE_ROW=()  ## The row 'sourcetree_record' stores, filled by the collector.
 declare -ga SOURCETREE_ROWS=() ## The rows of the clone being collected, sorted before printing.
 
@@ -116,26 +118,6 @@ function sourcetree_usage
     printf 'usage: bar sourcetree_state [--json] [<root>]\n' >&2
 }
 
-function sourcetree_json_string ## <var> <text> - put the JSON string literal of <text> into <var>
-{
-    ## The result is left in <var> instead of being printed: the object of one tree quotes a dozen
-    ## fields and a subshell per field would cost more than the git calls it describes.
-    local text="$2"
-    text="${text//\\/\\\\}"
-    text="${text//\"/\\\"}"
-    text="${text//$'\t'/\\t}"
-    printf -v "$1" '"%s"' "$text"
-}
-
-function sourcetree_json_number ## <var> <text> - put <text> as a JSON number into <var>, else 'null'
-{
-    if [[ "$2" =~ ^[0-9]+$ ]]; then
-        printf -v "$1" '%s' "$2"
-    else
-        printf -v "$1" 'null'
-    fi
-}
-
 function sourcetree_json_flag ## <var> <flags> <name> - put 'true' into <var> when the flag is set
 {
     case " ${2:-} " in
@@ -148,20 +130,17 @@ function sourcetree_json_flag ## <var> <flags> <name> - put 'true' into <var> wh
     esac
 }
 
-function sourcetree_json_array ## <var> <text> - put the '+' separated <text> into <var> as a JSON array
+function sourcetree_exclude_json ## <var> <text> - put the exclusion sources into <var> as a JSON array
 {
-    ## The exclusion sources ('local', 'gitignore') arrive joined by '+'; 'none' is no source.
-    local -a values=()
-    if [[ -n "$2" && "$2" != "none" ]]; then
-        IFS='+' read -r -a values <<<"$2"
+    ## The sources ('local', 'gitignore') arrive joined by '+'; 'none' is no source, which is the
+    ## empty array and not the array of the word -- that is sourcetree's policy about its own field,
+    ## the array literal is 'json_list'.
+    local text="${2:-}"
+    if [[ -z "$text" || "$text" == "none" ]]; then
+        printf -v "$1" '[]'
+        return 0
     fi
-    local joined="" separator="" value quoted
-    for value in ${values[@]+"${values[@]}"}; do
-        sourcetree_json_string quoted "$value"
-        joined="${joined}${separator}${quoted}"
-        separator=","
-    done
-    printf -v "$1" '%s' "$joined"
+    printf -v "$1" '%s' "$(json_list "$text" '+')"
 }
 
 function sourcetree_relative ## <var> <root> <path> - put <path> as printed, relative to <root>, into <var>
@@ -559,9 +538,10 @@ function sourcetree_state_text ## <root> <records> <counts> - the aligned digest
 
 function sourcetree_state_json ## <root> <records> <counts> - the digest as one JSON object
 {
-    ## One object per tree.  Every field goes through the helpers above which leave their result
-    ## in a variable instead of printing it: the object of one tree quotes a dozen of them and a
-    ## subshell per field would dominate the runtime of the machine form.
+    ## One object per tree.  Every field goes through the helpers above -- the ones of this module
+    ## and the literals of Bar.d/json_lib -- which leave their result in a variable instead of
+    ## printing it: the object of one tree quotes a dozen of them and a subshell per field would
+    ## dominate the runtime of the machine form.
     local root="$1" quoted
     local clones worktrees unmerged dirty
     read -r clones worktrees unmerged dirty <<<"$3"
@@ -578,27 +558,27 @@ function sourcetree_state_json ## <root> <records> <counts> - the digest as one 
             jdetached=true
         fi
         sourcetree_relative qpath "$root" "$abs"
-        sourcetree_json_string qpath "$qpath"
+        json_set_string qpath "$qpath"
         sourcetree_relative qclone "$root" "$clone"
-        sourcetree_json_string qclone "$qclone"
-        sourcetree_json_string qabs "$abs"
-        sourcetree_json_string qclone_abs "$clone"
-        sourcetree_json_string qkind "$kind"
-        sourcetree_json_string qbranch "$branch"
-        sourcetree_json_string qcommit "$commit"
-        sourcetree_json_string qhead "${commit:0:7}"
-        sourcetree_json_string qstate "$state"
-        sourcetree_json_string qbase "$merge_base"
-        sourcetree_json_string qreason "$reason"
-        sourcetree_json_array qexclude "$exclude"
-        sourcetree_json_number jchanged "$changed"
-        sourcetree_json_number juntracked "$untracked"
-        sourcetree_json_number junmerged "$um"
-        sourcetree_json_number jbehind "$behind"
+        json_set_string qclone "$qclone"
+        json_set_string qabs "$abs"
+        json_set_string qclone_abs "$clone"
+        json_set_string qkind "$kind"
+        json_set_string qbranch "$branch"
+        json_set_string qcommit "$commit"
+        json_set_string qhead "${commit:0:7}"
+        json_set_string qstate "$state"
+        json_set_string qbase "$merge_base"
+        json_set_string qreason "$reason"
+        sourcetree_exclude_json qexclude "$exclude"
+        json_set_number jchanged "$changed"
+        json_set_number juntracked "$untracked"
+        json_set_number junmerged "$um"
+        json_set_number jbehind "$behind"
         sourcetree_json_flag jlocked "$flags" locked
         sourcetree_json_flag jprunable "$flags" prunable
         sourcetree_json_flag jbare "$flags" bare
-        printf -v object '{"path":%s,"abs":%s,"clone":%s,"clone_abs":%s,"kind":%s,"branch":%s,"commit":%s,"head":%s,"detached":%s,"state":%s,"changed":%s,"untracked":%s,"unmerged":%s,"behind":%s,"merge_base":%s,"locked":%s,"lock_reason":%s,"prunable":%s,"bare":%s,"exclude":[%s]}' \
+        printf -v object '{"path":%s,"abs":%s,"clone":%s,"clone_abs":%s,"kind":%s,"branch":%s,"commit":%s,"head":%s,"detached":%s,"state":%s,"changed":%s,"untracked":%s,"unmerged":%s,"behind":%s,"merge_base":%s,"locked":%s,"lock_reason":%s,"prunable":%s,"bare":%s,"exclude":%s}' \
             "$qpath" "$qabs" "$qclone" "$qclone_abs" "$qkind" "$qbranch" "$qcommit" "$qhead" \
             "$jdetached" "$qstate" "$jchanged" "$juntracked" "$junmerged" "$jbehind" "$qbase" \
             "$jlocked" "$qreason" "$jprunable" "$jbare" "$qexclude"
@@ -609,7 +589,7 @@ function sourcetree_state_json ## <root> <records> <counts> - the digest as one 
         joined="${joined}${separator}${object}"
         separator=","
     done
-    sourcetree_json_string quoted "$root"
+    json_set_string quoted "$root"
     printf '{"bar_sourcetree":1,"root":%s,"clones":%s,"worktrees":%s,"unmerged":%s,"dirty":%s,"trees":[%s]}\n' \
         "$quoted" "$clones" "$worktrees" "$unmerged" "$dirty" "$joined"
     return 0

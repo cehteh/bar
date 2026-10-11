@@ -49,7 +49,7 @@
 ### it carry that terminal's escape sequences.  The printed evidence never does (it is normalized)
 ### and the totals always describe the file exactly as it is on disk.
 
-require git_lib
+require git_lib json_lib
 
 declare -gx BAR_AGENT_DIR="${BAR_AGENT_DIR:-.bar.agent}"        ## Directory for the run logs below $BAR_TOPLEVEL.
 declare -gx BAR_AGENT_INNER="${BAR_AGENT_INNER:-2}"             ## Verbosity the measured run is forced to.
@@ -344,15 +344,6 @@ function agent_report_failure ## <target> <log> <rc> - print the bounded failure
     printf '%s\n' "$line_log"
 }
 
-function agent_json_string ## <text> - a JSON string literal
-{
-    local text="$1"
-    text="${text//\\/\\\\}"
-    text="${text//\"/\\\"}"
-    text="${text//$'\t'/\\t}"
-    printf '"%s"' "$text"
-}
-
 function agent_json_evidence ## <log> <total> <budget> - the evidence and elision members
 {
     local log="$1" total="$2" budget="$3"
@@ -363,7 +354,7 @@ function agent_json_evidence ## <log> <total> <budget> - the evidence and elisio
                 local nr="${rec#E }"
                 nr="${nr%% *}"
                 out+="${out:+,}$(printf '{"line":%s,"text":%s}' \
-                    "$nr" "$(agent_json_string "${rec#E "$nr" }")")"
+                    "$nr" "$(json_string "${rec#E "$nr" }")")"
                 ;;
             "X 0 0")
                 no_evidence=',"no_evidence":true'
@@ -390,9 +381,9 @@ function agent_json_target ## <target> <log> <rc> - one JSON object for a measur
     [[ "$rc" =~ ^[0-9]+$ ]] && jrc="$rc"
     read -r total bytes < <(wc -l -c <"$log")
     printf '{"target":%s,"ok":false,"rc":%s,"chain":%s,"lines":%s,"bytes":%s,"log":%s,%s}' \
-        "$(agent_json_string "$target")" "$jrc" \
-        "$(agent_json_string "$(agent_fail_chain "$target" "$log")")" \
-        "$total" "$bytes" "$(agent_json_string "$log")" \
+        "$(json_string "$target")" "$jrc" \
+        "$(json_string "$(agent_fail_chain "$target" "$log")")" \
+        "$total" "$bytes" "$(json_string "$log")" \
         "$(agent_json_evidence "$log" "$total" "$(agent_max_block 0)")"
 }
 
@@ -402,7 +393,7 @@ function agent_json_success ## <target> <log> - one JSON object for a target tha
     local -i total bytes
     read -r total bytes < <(wc -l -c <"$log")
     printf '{"target":%s,"ok":true,"rc":0,"lines":%s,"bytes":%s,"log":%s,"evidence":[]}' \
-        "$(agent_json_string "$target")" "$total" "$bytes" "$(agent_json_string "$log")"
+        "$(json_string "$target")" "$total" "$bytes" "$(json_string "$log")"
 }
 
 function agent_run_block ## <mode> <target>.. - body of the 'check' and 'verdict' rules

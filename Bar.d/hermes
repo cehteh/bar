@@ -100,6 +100,8 @@
 
 # helper-module: hermes
 
+require json_lib
+
 declare -gx BAR_HERMES_LOGS_ROOT="${BAR_HERMES_LOGS_ROOT:-}"            ## ':' separated corpus roots, '--root' wins
 declare -gx BAR_HERMES_LOGS_LIMIT="${BAR_HERMES_LOGS_LIMIT:-20}"        ## match lines the digest prints
 declare -gx BAR_HERMES_LOGS_SNIPPET="${BAR_HERMES_LOGS_SNIPPET:-160}"   ## characters kept of a matching line
@@ -142,25 +144,6 @@ usage: bar hermes_logs [--grep <ere>] [-i] [--since <when>] [--source <kind>].. 
                      default $HERMES_HOME or ~/.hermes
 USAGE
     return 2
-}
-
-function hermes_logs_json_string ## <text> - a JSON string literal
-{
-    local text="$1"
-    text="${text//\\/\\\\}"
-    text="${text//\"/\\\"}"
-    text="${text//$'\t'/\\t}"
-    printf '"%s"' "$text"
-}
-
-function hermes_logs_json_array ## <literal..> - the literals as one JSON array
-{
-    local item joined="" separator=""
-    for item in "$@"; do
-        joined="${joined}${separator}${item}"
-        separator=","
-    done
-    printf '[%s]' "$joined"
 }
 
 function hermes_logs_selector ## <option> <value> - reject a selector neither SQL nor the shell can carry
@@ -499,11 +482,11 @@ function hermes_logs_report_json
             stamp="${stamp#\~}"
         fi
         hits+=( "$(printf '{"locator":%s,"timestamp":%s,"exact":%s,"text":%s}' \
-            "$(hermes_logs_json_string "$locator")" "$(hermes_logs_json_string "$stamp")" \
-            "$exact" "$(hermes_logs_json_string "$text")")" )
+            "$(json_string "$locator")" "$(json_string "$stamp")" \
+            "$exact" "$(json_string "$text")")" )
     done <"$HERMES_LOGS_R_CLIP"
     for index in "${!HERMES_LOGS_Q_ROOTS[@]}"; do
-        roots+=( "$(hermes_logs_json_string "${HERMES_LOGS_Q_ROOTS[$index]}")" )
+        roots+=( "$(json_string "${HERMES_LOGS_Q_ROOTS[$index]}")" )
     done
     for index in "${!HERMES_LOGS_R_USED[@]}"; do
         for kind in ${HERMES_LOGS_R_USED[$index]}; do
@@ -512,25 +495,25 @@ function hermes_logs_report_json
     done
     for canon in logs workers cron sessions store; do
         if [[ -n "${seen[$canon]:-}" ]]; then
-            sources+=( "$(hermes_logs_json_string "$canon")" )
+            sources+=( "$(json_string "$canon")" )
         fi
     done
     local since="null" ica="false"
     if [[ -n "$HERMES_LOGS_Q_CUTOFF" ]]; then
-        since="$(hermes_logs_json_string "$HERMES_LOGS_Q_CUTOFF")"
+        since="$(json_string "$HERMES_LOGS_Q_CUTOFF")"
     fi
     if [[ -n "$HERMES_LOGS_Q_ICASE" ]]; then
         ica="true"
     fi
     printf '{"bar_hermes_logs":1,"pattern":%s,"ignore_case":%s,"since":%s,"roots":%s,"sources":%s,' \
-        "$(hermes_logs_json_string "$HERMES_LOGS_Q_PAT")" "$ica" "$since" \
-        "$(hermes_logs_json_array ${roots[@]+"${roots[@]}"})" \
-        "$(hermes_logs_json_array ${sources[@]+"${sources[@]}"})"
+        "$(json_string "$HERMES_LOGS_Q_PAT")" "$ica" "$since" \
+        "$(json_array ${roots[@]+"${roots[@]}"})" \
+        "$(json_array ${sources[@]+"${sources[@]}"})"
     printf '"matches":%s,"shown":%s,"kept":%s,"limit":%s,"max_records":%s,"bytes_budget":%s,"clipped":%s,"unreadable":%s,"max":%s,' \
         "$HERMES_LOGS_R_TOTAL" "$HERMES_LOGS_R_SHOWN" "$HERMES_LOGS_R_KEPT" "$HERMES_LOGS_Q_LIMIT" \
         "$HERMES_LOGS_Q_MAX" "$HERMES_LOGS_Q_BYTES" "$HERMES_LOGS_R_CLIPPED" "$HERMES_LOGS_R_UNREADABLE" \
-        "$(hermes_logs_json_string "$HERMES_LOGS_R_HITS")"
-    printf '"hits":%s}\n' "$(hermes_logs_json_array ${hits[@]+"${hits[@]}"})"
+        "$(json_string "$HERMES_LOGS_R_HITS")"
+    printf '"hits":%s}\n' "$(json_array ${hits[@]+"${hits[@]}"})"
     return 0
 }
 

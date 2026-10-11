@@ -250,9 +250,6 @@ MODULE API/RULES
       agent_report_failure <target> <log> <rc>
         print the bounded failure block
 
-      agent_json_string <text>
-        a JSON string literal
-
       agent_json_evidence <log> <total> <budget>
         the evidence and elision members
 
@@ -884,9 +881,6 @@ MODULE API/RULES
         Sorted by name; the file is the module file as it was found in '$BAR_DIR'.  The violations
         'helpers_walk' reports are counted on stderr, the guard names each one.
 
-      helpers_json_string <text>
-        a JSON string literal
-
       helpers_check_body - the registration guard for every helper module
         Prints every violation 'helpers_walk' reports, one line each, and returns 1; prints nothing
         and returns 0 when the repertoire is complete.
@@ -1032,12 +1026,6 @@ MODULE API/RULES
 
     Functions:
 
-      hermes_logs_json_string <text>
-        a JSON string literal
-
-      hermes_logs_json_array <literal..>
-        the literals as one JSON array
-
       hermes_logs_selector <option> <value>
         reject a selector neither SQL nor the shell can carry
 
@@ -1134,6 +1122,83 @@ MODULE API/RULES
         version is available and all modules including ones that are not present in 'Bar.d/' will
         be updated as well.  Barf will be left untouched.
 
+  json_lib - The JSON literals of bar's machine readable output: one escaping rule for every '--json' form.
+    
+    The JSON forms of the helpers -- 'kanban_state --json', 'rad_state --json', 'sourcetree_state
+    --json', 'hermes_logs --json', 'helpers --json', the report of 'bar check' -- are assembled from
+    string, number, boolean and array literals.  Writing one of them is one small piece of policy
+    and it belongs in one place:
+    
+      json_string <text>             the JSON string literal of <text>
+      json_set_string <var> <text>   the same, left in <var> instead of printed
+      json_number <value>            <value> as a JSON number, 'null' when it is no number
+      json_set_number <var> <value>  the same, left in <var>
+      json_bool <text>               'true' for 'yes', 'false' for 'no', 'null' otherwise
+      json_list <text> [<sep>]       <text> cut at <sep> (default ','), as a JSON array of strings
+      json_array <literal..>         the literals as one JSON array
+    
+    THE ESCAPING RULE
+    
+    Backslash and double quote are escaped, a tab becomes the escape '\t' and every other control
+    character is dropped; nothing else about <text> changes.  A literal therefore never carries a
+    raw control character, so one record is one line: an object can be held in a shell variable,
+    compared byte for byte and cut by line without a parser.  Dropping is deliberate -- a newline
+    inside a title would otherwise end the record.
+    
+    'EMPTY IS NULL'
+    
+    A field bar could not answer is 'null', not an empty string and not a zero: 'json_number'
+    answers 'null' for anything which is no number (an empty value included), and 'json_bool'
+    answers 'null' for a value which is neither 'yes' nor 'no', so an unset flag stays
+    distinguishable from a flag which is off.  An empty array is a different answer and stays '[]':
+    'no labels' is a fact.
+    
+    WHY THE SETTERS EXIST
+    
+    A command substitution forks a subshell, and a listing quotes a dozen fields per record:
+    'kanban_state' measured 800 ms for 90 cards when every field forked and 90 ms when none did.
+    A caller which quotes many fields asks for the literal in a variable with the setters and never
+    forks; a caller with one or two fields asks for the printed form.  Both forms are one
+    implementation -- 'json_string' calls 'json_set_string' -- so the rule above cannot drift.
+    
+    This module is a library: no rules, no helpers and therefore no helper module header of its own
+    (a lib is not a repertoire module, see Bar.d/helpers_rules).  A module whose '--json' form needs
+    literal says 'require json_lib'; where a field is not a JSON literal but module policy -- the
+    yes/no/unset rule of rad, the flag list of sourcetree, the control characters 'kanban_state'
+    replaces by a space instead of dropping them -- that policy stays in the module, which asks
+    these functions for the literal and keeps only the decision.
+
+    Functions:
+
+      json_set_string <var> <text>
+        put the JSON string literal of <text> into <var>
+        The escaping rule of every '--json' form of bar.  Backslash and quote first (so the escapes
+        they introduce are not escaped again), then the tab -- which is the one control character
+        worth carrying, an indented line is common in a log -- and finally every other control
+        character, dropped with the same pattern substitution 'kanban_state' uses: no 'tr', so no
+        subshell per field.
+
+      json_string <text>
+        a JSON string literal
+
+      json_set_number <var> <value>
+        put <value> as a JSON number into <var>, 'null' if none
+
+      json_number <value>
+        <value> as a JSON number, 'null' when there is none
+
+      json_bool <text>
+        'true', 'false' or 'null' for a yes/no/unset field
+
+      json_list <text> [<sep>]
+        the <sep> separated <text> as a JSON array of strings
+        The members are the fields of <text>, trimmed; an empty member is dropped, so an unset field
+        is '[]' and not '[""]'.  The separator is '+' for the flag lists of a digest and ',' for
+        everything a user wrote.
+
+      json_array <literal..>
+        the literals as one JSON array
+
   kanban - Hermes Kanban board state: what the local board holds right now, bounded.
     
     'kanban_state' answers the board questions that otherwise cost several turns of hand written
@@ -1201,11 +1266,15 @@ MODULE API/RULES
         sets KANBAN_JSON to <text> as a JSON string literal
         Sets a global instead of printing: a command substitution would fork a subshell for every
         field of every record, which is what makes a listing of a hundred cards take a second
-        (measured 800 ms for 90 cards before this, 90 ms after).  Control characters -- a newline in
-        a title, a tab -- are replaced, so one record stays on one line.
+        (measured 800 ms for 90 cards before this, 90 ms after).  The escaping and the 'into a
+        variable' form are 'json_set_string'; what stays local is kanban's own policy -- every
+        control character becomes a space instead of being dropped, so a title keeps its word
+        boundaries ('title with\na newline' reads 'title with a newline').
 
       kanban_json_number_or_null <number|''>
         sets KANBAN_JSON to a JSON number, or 'null'
+        The argument shape is kanban's (a run id or a duration as sqlite3 prints it, '' for none),
+        the literal is 'json_set_number'.
 
       kanban_duration <seconds>
         '3d4h', '5h12m', '12m30s' or '45s'
@@ -1484,10 +1553,11 @@ MODULE API/RULES
     radicle yet it runs 'rad init' (public, signing set up) and pushes every branch to the new
     remote.  Once a 'rad' remote exists it does nothing but say so.
     
-    Running 'rad', reading its tables back, the age of a last event, the COB store and the JSON
-    literals are shared with every other module of bar which talks to radicle and live in
-    Bar.d/radicle_lib, which this module requires: 'RAD_BIN' (the command to run instead of 'rad'),
-    the record separators and every 'rad_*' function come from there.
+    Running 'rad', reading its tables back, the age of a last event and the COB store are shared with
+    every other module of bar which talks to radicle and live in Bar.d/radicle_lib, which this module
+    requires: 'RAD_BIN' (the command to run instead of 'rad'), the record separators and every 'rad_*'
+    function come from there.  The JSON literals of the '--json' forms below come from
+    Bar.d/json_lib, the one place where bar writes them.
     
     'RAD_STATE_MAX' is the default of '--max'.  Reading rad's tables back needs a character aware
     shell; bar exports a UTF-8 'LC_ALL' whenever the system has one.
@@ -1678,8 +1748,10 @@ MODULE API/RULES
                              cut the padded, boxed tables 'rad' prints by the names of their
                              columns
       rad_exclude_worktrees  keep '<clone>/.worktrees/' out of 'git status'
-      rad_json_string/_number/_list/_flag
-                             the JSON literals of every '--json' form
+    
+    The JSON literals of the '--json' forms are not rad's business: every module of bar which emits
+    one asks Bar.d/json_lib, which this library requires ('json_string', 'json_number', 'json_bool',
+    'json_list').
     
     This module defines no rules.  It is the backing library of the 'rad' word, required by the
     module which carries those rules ('Bar.d/rad') -- a rule name like 'rad_state' makes
@@ -1757,22 +1829,6 @@ MODULE API/RULES
         keep '<clone>/.worktrees/' out of 'git status'
         The line goes into '.git/info/exclude', never into a tracked '.gitignore': the main checkout
         has to stay byte-identical, and a tree which exists is not a fact about the project.
-
-      rad_json_string <text>
-        a JSON string literal
-        Backslash, quote and tab are escaped, the remaining control characters cannot be
-        represented in the literals bar emits and are dropped.
-
-      rad_json_number <value>
-        the value as a JSON number, 'null' when there is none
-
-      rad_json_list <text>
-        the comma separated text as a JSON array of strings
-        Empty entries and the spaces around them are dropped, so an unset field is an empty array
-        and not an array holding nothing.
-
-      rad_json_flag <text>
-        'true', 'false' or 'null' for a yes/no/unset field
 
   release - Rules for software releases
     
@@ -2178,20 +2234,14 @@ MODULE API/RULES
 
     Functions:
 
-      sourcetree_json_string <var> <text>
-        put the JSON string literal of <text> into <var>
-        The result is left in <var> instead of being printed: the object of one tree quotes a dozen
-        fields and a subshell per field would cost more than the git calls it describes.
-
-      sourcetree_json_number <var> <text>
-        put <text> as a JSON number into <var>, else 'null'
-
       sourcetree_json_flag <var> <flags> <name>
         put 'true' into <var> when the flag is set
 
-      sourcetree_json_array <var> <text>
-        put the '+' separated <text> into <var> as a JSON array
-        The exclusion sources ('local', 'gitignore') arrive joined by '+'; 'none' is no source.
+      sourcetree_exclude_json <var> <text>
+        put the exclusion sources into <var> as a JSON array
+        The sources ('local', 'gitignore') arrive joined by '+'; 'none' is no source, which is the
+        empty array and not the array of the word -- that is sourcetree's policy about its own field,
+        the array literal is 'json_list'.
 
       sourcetree_relative <var> <root> <path>
         put <path> as printed, relative to <root>, into <var>
@@ -2275,9 +2325,10 @@ MODULE API/RULES
 
       sourcetree_state_json <root> <records> <counts>
         the digest as one JSON object
-        One object per tree.  Every field goes through the helpers above which leave their result
-        in a variable instead of printing it: the object of one tree quotes a dozen of them and a
-        subshell per field would dominate the runtime of the machine form.
+        One object per tree.  Every field goes through the helpers above -- the ones of this module
+        and the literals of Bar.d/json_lib -- which leave their result in a variable instead of
+        printing it: the object of one tree quotes a dozen of them and a subshell per field would
+        dominate the runtime of the machine form.
 
       sourcetree_state [--json] [<root>]
         the source-tree digest, see the module header

@@ -117,10 +117,11 @@
 ### radicle yet it runs 'rad init' (public, signing set up) and pushes every branch to the new
 ### remote.  Once a 'rad' remote exists it does nothing but say so.
 ###
-### Running 'rad', reading its tables back, the age of a last event, the COB store and the JSON
-### literals are shared with every other module of bar which talks to radicle and live in
-### Bar.d/radicle_lib, which this module requires: 'RAD_BIN' (the command to run instead of 'rad'),
-### the record separators and every 'rad_*' function come from there.
+### Running 'rad', reading its tables back, the age of a last event and the COB store are shared with
+### every other module of bar which talks to radicle and live in Bar.d/radicle_lib, which this module
+### requires: 'RAD_BIN' (the command to run instead of 'rad'), the record separators and every 'rad_*'
+### function come from there.  The JSON literals of the '--json' forms below come from
+### Bar.d/json_lib, the one place where bar writes them.
 ###
 ### 'RAD_STATE_MAX' is the default of '--max'.  Reading rad's tables back needs a character aware
 ### shell; bar exports a UTF-8 'LC_ALL' whenever the system has one.
@@ -131,7 +132,7 @@
 
 # helper-module: rad
 
-require radicle_lib
+require radicle_lib json_lib
 
 # helper: rad_import | import a git repository into radicle: 'rad init' and push every branch to the new remote | rad_import | nothing; a notice when the repository is already on radicle
 ## Imports the repository at the toplevel.  Not a question but the way in: it changes the repository
@@ -599,12 +600,12 @@ function rad_state_json_patches
         [[ "$select_state" == all || "$select_state" == "$state" ]] || continue
         [[ "$select_author" == all || "$select_author" == "$own" ]] || continue
         object="$(printf '{"id":%s,"state":%s,"author":%s,"ours":%s,"title":%s,"head":%s,"updated":%s,"age":%s,"last":%s}' \
-            "$(rad_json_string "$id")" "$(rad_json_string "$state")" \
-            "$(rad_json_string "$author")" "$(rad_json_flag "$([[ "$own" == ours ]] && printf yes || printf no)")" \
-            "$(rad_json_string "$title")" "$(rad_json_string "$head")" \
-            "$(rad_json_number "$updated")" \
-            "$(rad_json_string "$(rad_age "$RAD_STATE_NOW" "$updated")")" \
-            "$(rad_json_string "$kind")")"
+            "$(json_string "$id")" "$(json_string "$state")" \
+            "$(json_string "$author")" "$(json_bool "$([[ "$own" == ours ]] && printf yes || printf no)")" \
+            "$(json_string "$title")" "$(json_string "$head")" \
+            "$(json_number "$updated")" \
+            "$(json_string "$(rad_age "$RAD_STATE_NOW" "$updated")")" \
+            "$(json_string "$kind")")"
         joined+="${joined:+,}${object}"
     done
     printf '{"count":%d,"ours":%d,"others":%d,"open":%d,"draft":%d,"merged":%d,"archived":%d,"items":[%s]}' \
@@ -632,12 +633,12 @@ function rad_state_json_issues
         solved) solved=$(( solved + 1 )) ;;
         esac
         object="$(printf '{"id":%s,"state":%s,"author":%s,"ours":%s,"labels":%s,"assignees":%s,"title":%s,"updated":%s,"age":%s,"last":%s}' \
-            "$(rad_json_string "$id")" "$(rad_json_string "$state")" \
-            "$(rad_json_string "$author")" "$(rad_json_flag "$([[ "$own" == ours ]] && printf yes || printf no)")" \
-            "$(rad_json_list "$labels")" "$(rad_json_list "$assignees")" \
-            "$(rad_json_string "$title")" "$(rad_json_number "$updated")" \
-            "$(rad_json_string "$(rad_age "$RAD_STATE_NOW" "$updated")")" \
-            "$(rad_json_string "$kind")")"
+            "$(json_string "$id")" "$(json_string "$state")" \
+            "$(json_string "$author")" "$(json_bool "$([[ "$own" == ours ]] && printf yes || printf no)")" \
+            "$(json_list "$labels")" "$(json_list "$assignees")" \
+            "$(json_string "$title")" "$(json_number "$updated")" \
+            "$(json_string "$(rad_age "$RAD_STATE_NOW" "$updated")")" \
+            "$(json_string "$kind")")"
         joined+="${joined:+,}${object}"
     done
     printf '{"count":%d,"ours":%d,"others":%d,"open":%d,"closed":%d,"solved":%d,"items":[%s]}' \
@@ -658,28 +659,28 @@ function rad_state_json_branches
         if [[ "$patch" == "-" ]]; then
             patch="null"
         else
-            patch="$(rad_json_string "$patch")"
+            patch="$(json_string "$patch")"
         fi
         object="$(printf '{"name":%s,"commit":%s,"ahead":%s,"patch":%s}' \
-            "$(rad_json_string "$name")" "$(rad_json_string "$commit")" \
-            "$(rad_json_number "$ahead")" "$patch")"
+            "$(json_string "$name")" "$(json_string "$commit")" \
+            "$(json_number "$ahead")" "$patch")"
         joined+="${joined:+,}${object}"
     done
     printf '{"count":%d,"without_patch":%d,"not_in_canonical":%s,"items":[%s]}' \
-        "$total" "$without" "$(rad_json_number "$RAD_STATE_NOTCANONICAL")" "$joined"
+        "$total" "$without" "$(json_number "$RAD_STATE_NOTCANONICAL")" "$joined"
 }
 
 ## <state> <author> - the complete state as one JSON object
 function rad_state_json
 {
     printf '{"bar_rad":1,"repo":{"rid":%s,"name":%s,"path":%s},"identity":{"alias":%s,"did":%s,"known":%s},"head":{"branch":%s,"commit":%s,"canonical":%s,"canonical_commit":%s,"ahead":%s,"behind":%s},"select":{"state":%s,"author":%s},"patches":' \
-        "$(rad_json_string "$RAD_STATE_RID")" "$(rad_json_string "$RAD_STATE_NAME")" \
-        "$(rad_json_string "$RAD_STATE_PATH")" "$(rad_json_string "$RAD_STATE_ALIAS")" \
-        "$(rad_json_string "$RAD_STATE_DID")" "$(rad_json_flag "$RAD_STATE_KNOWN")" \
-        "$(rad_json_string "$RAD_STATE_BRANCH")" "$(rad_json_string "$RAD_STATE_COMMIT")" \
-        "$(rad_json_string "$RAD_STATE_CANONICAL")" "$(rad_json_string "$RAD_STATE_CANONICAL_COMMIT")" \
-        "$(rad_json_number "$RAD_STATE_AHEAD")" "$(rad_json_number "$RAD_STATE_BEHIND")" \
-        "$(rad_json_string "$1")" "$(rad_json_string "$2")"
+        "$(json_string "$RAD_STATE_RID")" "$(json_string "$RAD_STATE_NAME")" \
+        "$(json_string "$RAD_STATE_PATH")" "$(json_string "$RAD_STATE_ALIAS")" \
+        "$(json_string "$RAD_STATE_DID")" "$(json_bool "$RAD_STATE_KNOWN")" \
+        "$(json_string "$RAD_STATE_BRANCH")" "$(json_string "$RAD_STATE_COMMIT")" \
+        "$(json_string "$RAD_STATE_CANONICAL")" "$(json_string "$RAD_STATE_CANONICAL_COMMIT")" \
+        "$(json_number "$RAD_STATE_AHEAD")" "$(json_number "$RAD_STATE_BEHIND")" \
+        "$(json_string "$1")" "$(json_string "$2")"
     rad_state_json_patches "$1" "$2"
     printf ',"issues":'
     rad_state_json_issues
@@ -953,7 +954,7 @@ function rad_trust ## see the module header
     if [[ -n "$json" ]]; then
         printf '%s' "$facts" | jq -c --arg verdict "$verdict" \
             '. + {bar_rad: 1, verdict: $verdict}' 2>/dev/null ||
-            printf '{"bar_rad":1,"verdict":%s}\n' "$(rad_json_string "$verdict")"
+            printf '{"bar_rad":1,"verdict":%s}\n' "$(json_string "$verdict")"
     else
         printf '%s author=%s delegate=%s authored=%s threshold=%s reason=%s repo=%s\n' \
             "$verdict" "$author_name" "$delegate" "$authored" "$thr" "$reason" "$rid"
@@ -977,13 +978,13 @@ function rad_topic_usage ## [reason] - usage on stderr
 function rad_topic_json ## <root> <name> <path> <base> <head> <fetched> - one object
 {
     printf '{"bar_rad":1,"action":"topic","root":%s,"name":%s,"path":%s,"branch":%s,"base":%s,"head":%s,"fetched":%s}\n' \
-        "$(rad_json_string "$1")" \
-        "$(rad_json_string "$2")" \
-        "$(rad_json_string "$3")" \
-        "$(rad_json_string "$2")" \
-        "$(rad_json_string "$4")" \
-        "$(rad_json_string "$5")" \
-        "$(rad_json_flag "$6")"
+        "$(json_string "$1")" \
+        "$(json_string "$2")" \
+        "$(json_string "$3")" \
+        "$(json_string "$2")" \
+        "$(json_string "$4")" \
+        "$(json_string "$5")" \
+        "$(json_bool "$6")"
 }
 
 function rad_topic ## see the module header

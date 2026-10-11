@@ -34,7 +34,7 @@ BAR="$REPO_ROOT/bar"
 
 # the modules a throw-away project needs to run bar and the helpers under test ('git' is read for
 # the branch classes, 'agent_rules' supplies the '--json' rule of 'bar --json <rule>')
-FIXTURE_MODULES="std_lib rule_lib tty_lib std_rules git git_lib agent_rules helpers_rules radicle_lib rad"
+FIXTURE_MODULES="std_lib rule_lib tty_lib std_rules git git_lib json_lib agent_rules helpers_rules radicle_lib rad"
 
 failures=0
 pass() { echo "  ✓ $*"; }
