@@ -393,7 +393,9 @@ contains "$OUT" "not a directory" "AC11: the reason goes to stderr"
 run_bar "$PROJ" helpers
 check "$RC" "0" "AC12: the repertoire answers with the helper module in place"
 contains "$OUT" "sourcetree_state" "AC12: the helper is in the index"
-contains "$OUT" "what is not merged yet  | sourcetree_state [--json] [<root>]  | one line per tree, then the counts" \
+# The row carries the personality of the invocation as a prefix (the accepted repertoire change):
+# every listed invocation reads '<personality> <invocation>'.
+contains "$OUT" "what is not merged yet  | bar sourcetree_state [--json] [<root>]  | one line per tree, then the counts" \
     "AC12: with the purpose, the invocation and the output shape it declares"
 run_bar "$PROJ" helpers --check
 check "$RC" "0" "AC12: the registration guard passes"

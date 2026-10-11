@@ -21,6 +21,9 @@
 #   AC12 a re-run of 'init_install' from another checkout does not repoint existing links
 #   AC13 'please helpers' works from an arbitrary directory, in a fresh installation
 #   AC14 the index stays below 2500 ms (best of 5)
+#   AC15 the declaration kind picks the personality ('# helper'/'-bar'/'-please')
+#   AC16 'please helpers' unions the current directory as 'bar' rows, without dedup
+#   AC17 an unknown '# helper-<word>:' is a named violation, counted on stderr
 
 set -euo pipefail
 
@@ -39,6 +42,16 @@ check() { if [[ "$1" == "$2" ]]; then pass "$3"; else fail "$3 (got [$1], want [
 contains() { if [[ "$1" == *"$2"* ]]; then pass "$3"; else fail "$3 (no [$2] in [$1])"; fi; }
 absent() { if [[ "$1" != *"$2"* ]]; then pass "$3"; else fail "$3 ([$2] found in [$1])"; fi; }
 bytes_of() { printf '%s' "$1" | wc -c; }
+
+# A PATH which still carries every tool this script needs but no 'bar': the union half of
+# 'please helpers' must be controllable here, and 'bar not on PATH' is one of the cases it has to
+# survive.  'please' itself is always called by absolute path, so dropping its directory only
+# changes whether the child 'bar helpers' of the union can be resolved through the PATH.
+BARLESS_PATH=""
+while IFS= read -r path_dir; do
+    [[ -n "$path_dir" && -x "$path_dir/bar" ]] && continue
+    BARLESS_PATH="${BARLESS_PATH:+$BARLESS_PATH:}$path_dir"
+done < <(printf '%s\n' "$PATH" | tr ':' '\n')
 
 echo "=== Testing the helper repertoire (Bar.d/helpers_rules) ==="
 echo
@@ -160,11 +173,11 @@ check "$RC" "0" "AC1: 'bar helpers' exits 0"
 INDEX="$OUT"
 check "$(printf '%s\n' "$OUT" | wc -l)" "4" "AC1: three helpers and the count are four lines"
 check "$(sed -n 1p <<<"$OUT")" \
-    "frob        count the frobs  | frob [--json]  | one line per frob, then '(n frobs)'" \
+    "frob        count the frobs  | bar frob [--json]  | one line per frob, then '(n frobs)'" \
     "AC1: the first line is '<name>  <purpose>  | <invocation>  | <output shape>'"
-check "$(sed -n 2p <<<"$OUT")" "frob_extra  the extra frobs  | frob_extra  | one word" \
+check "$(sed -n 2p <<<"$OUT")" "frob_extra  the extra frobs  | bar frob_extra  | one word" \
     "AC1: the second line is the other helper of that module"
-check "$(sed -n 3p <<<"$OUT")" "quux        count the quuxes  | quux  | one line" \
+check "$(sed -n 3p <<<"$OUT")" "quux        count the quuxes  | bar quux  | one line" \
     "AC1: the helpers are sorted by name"
 check "$(sed -n 4p <<<"$OUT")" "(3 helpers)" "AC1: the total count is the last line"
 if (( $(bytes_of "$OUT") <= 512 )); then pass "AC1: the index is $(bytes_of "$OUT") B"; else fail "AC1: the index is $(bytes_of "$OUT") B"; fi
@@ -201,8 +214,10 @@ if command -v jq >/dev/null; then
     check "$(printf '%s' "$OUT" | jq -r '.count')" "3" "AC3: the JSON count matches the text form"
     check "$(printf '%s' "$OUT" | jq -r '[.helpers[].name] | join(",")')" "frob,frob_extra,quux" \
         "AC3: the JSON names are the listed helpers"
-    check "$(printf '%s' "$OUT" | jq -r '.helpers[1].invocation')" "frob_extra" \
-        "AC3: every helper carries its invocation"
+    check "$(printf '%s' "$OUT" | jq -r '.helpers[1].invocation')" "bar frob_extra" \
+        "AC3: every helper carries its personality-prefixed invocation"
+    check "$(printf '%s' "$OUT" | jq -r '.helpers[1].command')" "bar" \
+        "AC3: every helper names its personality in 'command'"
     check "$(printf '%s' "$OUT" | jq -r '.bar_helpers')" "1" "AC3: the object identifies itself"
 else
     pass "AC3: jq is not installed, the JSON is only checked for its shape"
@@ -393,11 +408,11 @@ else
     fail "AC11: no link for 'frob'"
 fi
 
-run_in "$WORK" env HOME="$FAKE_HOME" "$FAKE_HOME/.local/bin/please" helpers
+run_in "$WORK" env HOME="$FAKE_HOME" PATH="$BARLESS_PATH" "$FAKE_HOME/.local/bin/please" helpers
 check "$RC" "0" "AC13: 'please helpers' works from an arbitrary directory"
 check "$(printf '%s\n' "$OUT" | tail -1)" "($((REPO_HELPERS + 3)) helpers)" \
     "AC13: and lists the installed repertoire (the fixture helpers and the ones shipped here)"
-run_in "$WORK" env HOME="$FAKE_HOME" "$FAKE_HOME/.local/bin/please" frob_extra
+run_in "$WORK" env HOME="$FAKE_HOME" PATH="$BARLESS_PATH" "$FAKE_HOME/.local/bin/please" frob_extra
 check "$OUT" "extra" "AC13: an installed helper runs through 'please' too"
 
 # AC11  a module which is added later is linked by a re-run of init_install
@@ -413,10 +428,10 @@ if [[ -L "$FAKE_HOME/.config/please/late" ]]; then
 else
     fail "AC11: the module added later was not linked (a manual symlink would be needed)"
 fi
-run_in "$WORK" env HOME="$FAKE_HOME" "$FAKE_HOME/.local/bin/please" helpers
+run_in "$WORK" env HOME="$FAKE_HOME" PATH="$BARLESS_PATH" "$FAKE_HOME/.local/bin/please" helpers
 check "$(printf '%s\n' "$OUT" | tail -1)" "($((REPO_HELPERS + 4)) helpers)" \
     "AC11: and the index shows it without any other edit"
-run_in "$WORK" env HOME="$FAKE_HOME" "$FAKE_HOME/.local/bin/please" late
+run_in "$WORK" env HOME="$FAKE_HOME" PATH="$BARLESS_PATH" "$FAKE_HOME/.local/bin/please" late
 check "$OUT" "late" "AC11: the new helper runs through 'please'"
 
 # AC14  a re-run from another checkout must not repoint an installation at it
@@ -425,7 +440,7 @@ mkinstall "$SITE2"
 (cd "$SITE2" && HOME="$FAKE_HOME" ./bar init_install "$FAKE_HOME/.local" >/dev/null 2>&1) || true
 after="$(readlink "$FAKE_HOME/.config/please/helpers_rules")"
 check "$after" "$before" "AC14: 'init_install' leaves an existing link alone"
-run_in "$WORK" env HOME="$FAKE_HOME" "$FAKE_HOME/.local/bin/please" helpers
+run_in "$WORK" env HOME="$FAKE_HOME" PATH="$BARLESS_PATH" "$FAKE_HOME/.local/bin/please" helpers
 check "$(printf '%s\n' "$OUT" | tail -1)" "($((REPO_HELPERS + 4)) helpers)" \
     "AC14: the installation still works"
 
@@ -433,7 +448,7 @@ check "$(printf '%s\n' "$OUT" | tail -1)" "($((REPO_HELPERS + 4)) helpers)" \
 time_run() { # <cmd..>
     local start end
     start="$(date +%s%N)"
-    (cd "$WORK" && HOME="$FAKE_HOME" "$@" >/dev/null 2>&1) || true
+    (cd "$WORK" && HOME="$FAKE_HOME" PATH="$BARLESS_PATH" "$@" >/dev/null 2>&1) || true
     end="$(date +%s%N)"
     echo $(( (end - start) / 1000000 ))
 }
@@ -455,6 +470,111 @@ if (( best < 2500 )); then
 else
     fail "AC14: 'please helpers' takes ${best} ms (over the 2500 ms budget; a bare bar call is ${base} ms)"
 fi
+
+# --------------------------------------------------------------------------------------------
+# AC15 the declaration kind picks the personality
+# --------------------------------------------------------------------------------------------
+KINDS="$WORK/kinds"
+mkproject "$KINDS"
+cat >"$KINDS/Bar.d/mix" <<'MODULE'
+# -*- mode: sh; sh-shell: bash -*-
+
+### Fixture helper module: the three declaration kinds.
+
+# helper-module: mix
+
+# helper: mix_both | a generic helper | mix_both | one line
+## Generic (fixture).
+rule mix_both: -- printf '"both\n"'
+
+# helper-bar: mix_bar | a bar-only helper | mix_bar | one line
+## Bar only (fixture).
+rule mix_bar: -- printf '"bar\n"'
+
+# helper-please: mix_please | a please-only helper | mix_please | one line
+## Please only (fixture).
+rule mix_please: -- printf '"please\n"'
+MODULE
+
+# 'bar' lists the generic and the bar-only declaration, never the please-only one
+run_bar "$KINDS" helpers
+check "$RC" "0" "AC15: 'bar helpers' works with the three kinds side by side"
+contains "$OUT" "mix_both" "AC15: 'bar helpers' lists a generic declaration"
+contains "$OUT" "mix_bar" "AC15: 'bar helpers' lists a '# helper-bar:' declaration"
+absent "$OUT" "mix_please" "AC15: 'bar helpers' does not list a '# helper-please:' declaration"
+contains "$OUT" "bar mix_bar" "AC15: the bar-only row carries the 'bar' personality prefix"
+# the guard sees every kind, so the same module is still complete
+run_bar "$KINDS" helpers --check
+check "$RC" "0" "AC15: 'bar helpers --check' accepts generic and bar-only declarations together"
+
+# the same module under 'please' lists the generic and the please-only one
+KINDS_HOME="$WORK/kinds-home"
+mkdir -p "$KINDS_HOME/.config/please" "$KINDS_HOME/.local/bin"
+for link in "$KINDS/Bar.d/"*; do
+    ln -s "$link" "$KINDS_HOME/.config/please/${link##*/}"
+done
+ln -s "$BAR" "$KINDS_HOME/.local/bin/please"
+# from a cwd whose 'bar helpers' reports zero helpers the union is empty (a full one is AC16)
+run_in "$WORK/empty" env HOME="$KINDS_HOME" PATH="$BARLESS_PATH" \
+    "$KINDS_HOME/.local/bin/please" helpers
+check "$RC" "0" "AC15: 'please helpers' works with the three kinds side by side"
+contains "$OUT" "mix_please" "AC15: 'please helpers' lists a '# helper-please:' declaration"
+absent "$OUT" "mix_bar" "AC15: 'please helpers' does not list a '# helper-bar:' declaration"
+contains "$OUT" "please mix_please" "AC15: the please-only row carries the 'please' personality prefix"
+check "$(printf '%s\n' "$OUT" | tail -1)" "(5 helpers)" \
+    "AC15: a zero-helper directory adds nothing to the union (5 = the site repertoire)"
+
+# --------------------------------------------------------------------------------------------
+# AC16 the union: 'please helpers' appends the current directory as 'bar' rows, without dedup
+# --------------------------------------------------------------------------------------------
+UNION="$WORK/union"
+mkproject "$UNION"
+run_in "$UNION" env HOME="$FAKE_HOME" PATH="$BARLESS_PATH" "$FAKE_HOME/.local/bin/please" helpers
+check "$RC" "0" "AC16: 'please helpers' works in a directory with its own repertoire"
+# the site repertoire ('please', this repository's helpers plus the 4 fixture ones the installation
+# was built with) and the cwd repertoire ('bar', the 3 helpers of a fixture project) are both listed
+check "$(printf '%s\n' "$OUT" | tail -1)" "($((REPO_HELPERS + 7)) helpers)" "AC16: the count is both halves together"
+contains "$OUT" "($((REPO_HELPERS + 4)) please, 3 bar)" "AC16: and the split is on stdout"
+contains "$OUT" "| please frob [--json]" "AC16: the site half carries the 'please' personality"
+contains "$OUT" "| bar frob [--json]" "AC16: the cwd half carries the 'bar' personality"
+check "$(printf '%s\n' "$OUT" | grep -c 'frob  *count the frobs')" "2" \
+    "AC16: the generic helper is listed twice, once per personality (no dedup)"
+if command -v jq >/dev/null; then
+    UNION_JSON="$(cd "$UNION" && HOME="$FAKE_HOME" PATH="$BARLESS_PATH" \
+        "$FAKE_HOME/.local/bin/please" helpers --json 2>/dev/null)"
+    check "$(printf '%s' "$UNION_JSON" | jq -r '.count')" "$((REPO_HELPERS + 7))" \
+        "AC16: the JSON count sums both halves"
+    check "$(printf '%s' "$UNION_JSON" | jq -r '[.helpers[] | select(.command=="please")] | length')" \
+        "$((REPO_HELPERS + 4))" \
+        "AC16: the JSON keeps the 'please' half"
+    check "$(printf '%s' "$UNION_JSON" | jq -r '[.helpers[] | select(.command=="bar")] | length')" "3" \
+        "AC16: the JSON keeps the 'bar' half"
+else
+    pass "AC16: jq is not installed, the union JSON is only checked for its shape"
+fi
+
+# --------------------------------------------------------------------------------------------
+# AC17 an unknown '# helper-<word>:' is a named violation
+# --------------------------------------------------------------------------------------------
+UNKNOWN="$WORK/unknown"
+mkproject "$UNKNOWN"
+cat >"$UNKNOWN/Bar.d/frob" <<'MODULE'
+# helper-module: frob
+
+# helper: frob | yes | frob | one line
+rule frob: -- printf '"ok\n"'
+
+# helper-foo: frob_extra | an unknown kind | frob_extra | one line
+rule frob_extra: -- printf '"no\n"'
+MODULE
+run_bar "$UNKNOWN" helpers --check
+check "$RC" "1" "AC17: 'bar helpers --check' fails for an unknown declaration kind"
+contains "$OUT" "helper-foo" "AC17: the finding names the unknown kind"
+contains "$OUT" "Bar.d/frob:" "AC17: the finding names the file"
+run_bar_err "$UNKNOWN" helpers
+contains "$OUT" "unusable" "AC17: the index counts the unknown kind on stderr"
+run_bar "$UNKNOWN" helpers
+absent "$OUT" "frob_extra" "AC17: a rule under an unknown kind is not listed"
 
 echo
 if (( failures == 0 )); then
