@@ -1,7 +1,164 @@
 # -*- mode: sh; sh-shell: bash -*-
 # vim: set ft=bash:
 # shellcheck shell=bash
-### Support for the radicle p2p git frontend
+# shellcheck disable=SC2016  # the rule dependencies are single quoted so that they survive verbatim
+# shellcheck disable=SC2153  # 'RAD_BIN' and the record separators are declared in Bar.d/radicle_lib
+
+### The radicle domain of bar: what this checkout is, what it carries, whether the author of an
+### incoming item may be trusted, how a topic starts -- and how a repository gets onto radicle in
+### the first place.
+###
+### Five helpers, all served by the backing library Bar.d/radicle_lib (running 'rad', reading its
+### padded tables back, the age of a last event, the node storage, the '.worktrees/' exclusion and
+### the JSON literals):
+###
+###   bar rad_state [--json] [--max <n>]                     the whole state, one screen
+###   bar rad_patches [--state <s>] [--author <a>] [--json] [--max <n>]
+###                                                          only the patches, filtered
+###   bar rad_trust --repo <rid> --author <who>              is that author a trusted source
+###   bar rad_topic <class> "<description>"                  open the topic tree of an item
+###   bar rad_import                                         import this repository into radicle
+###
+### Every helper answers '-h' or '--help' with its usage on stdout and exit 0.
+###
+### 'rad_state' answers the questions an agent asks before it touches a radicle repository: which
+### repository is this (RID, name, path), which identity does 'rad' use here, how the patches stand
+### (how many, by state, ours against others), how the issues stand (state, labels, when something
+### happened last) and which local branches still carry commits no patch exposes.  'rad_patches' is
+### the patch section of that report, filtered by state and by author.
+###
+### Nothing there goes to the network: 'rad patch/issue list' answer from the local node storage and
+### the divergence is measured against 'rad/main' as the last 'git fetch rad' left it, which the
+### 'head' line names.  Syncing is the caller's business ('rad sync', 'git fetch rad'): this helper
+### reports what is there and says how old it is.  'rad_topic' is the one exception -- it fetches the
+### radicle remote (else 'origin') to *know* how the base relates to upstream, see below.
+###
+### SOURCES
+###
+###   rad inspect --rid         the repository identity, 'git rev-parse' the toplevel
+###   rad self                  alias and DID of the identity 'rad' uses here
+###   rad patch list --all      patch id, title, author and head (the state is not in the list)
+###   rad issue list --all      issue id, title, author, labels and assignees
+###   rad patch/issue list --authored/--draft/--merged/--archived/--closed/--solved
+###                             rad prints one state per call, so the states are subtracted as
+###                             sets: 'open' is what is in '--all' and in none of the others, and
+###                             'ours' is what '--authored' (patches) or '(you)' (issues) says
+###   the node storage          time and kind of the last event of every patch and issue, read
+###                             from 'refs/namespaces/*/refs/cobs/xyz.radicle.<type>' below
+###                             '$(rad path)/storage/<RID>' with 'git for-each-ref'
+###   git for-each-ref/rev-list the current branch, the local branches and their distance from
+###                             'refs/remotes/rad/main' or 'refs/remotes/rad/master'
+###   git ls-remote/log/branch  'rad_topic': the trunk on both sides and the commits in between
+###
+### OUTPUT
+###
+###   Text: one header line per section -- '<section>  <counts>' -- then one line per item, the
+###   free text last so that nothing has to be padded.  Ages are short ('6m', '2h', '1y') and are
+###   those of the last event.  '--json': one object marked with 'bar_rad': 1, the complete data,
+###   never elided.
+###   At most '--max' items per section (default 10, '--max 0' lists all).  A section which is
+###   cut states exactly how much ('n of N elided'), and when anything was cut the complete text
+###   is written to a file whose path the last line prints, so the elision loses nothing.
+###
+###   'ours' is what 'rad' itself calls ours, everything else is 'other' (whose author is then
+###   named behind the title); a patch which rad lists in more than one state is named by the
+###   first of 'draft', 'merged', 'archived'.
+###
+### EXIT CODES
+###
+###   0  answered (an empty repository -- no patch, no issue -- is an answer, not a failure)
+###   2  usage error
+###   3  no data: not a git repository, or no radicle repository here
+###   1  could not answer: 'rad' is missing or failed, or its output was not understood
+###
+### 'rad_trust' answers whether the author of an incoming issue or patch counts as a *trusted
+### source* for the triage policy (`incoming-issue-triage` §3): a delegate of that repository, or an
+### identity with at least <threshold> authored commits.  The numbers come from the fact tool
+### 'tools/radicle_triage/triage-facts' (delegates from the identity document, the commits an
+### identity authored as its own NID from the COB commits, plus the code commits of the humans
+### behind its patches); this helper is the one action which turns them into the verdict and the exit
+### code, so the question costs no agent turn and no prose:
+###
+###   bar rad_trust --repo rad:z3WhBdHt… --author cehteh
+###   trusted author=cehteh delegate=yes authored=396 threshold=10 reason=delegate of this repository repo=rad:z3WhBdHt1VVNyeQ61zpY66pNzuSrP
+###
+###   exit 0 trusted -- 1 untrusted -- 2 could not answer (unknown author, no data, usage)
+###
+### 'rad_topic' opens the topic tree of that work in one action: it mints the name from the
+### branch *class* and the description, resolves the clone and the freshest base, keeps '.worktrees/'
+### out of the main checkout's status and runs 'git worktree add' -- the sequence an agent otherwise
+### reassembles by hand every time it starts a topic:
+###
+###   bar rad_topic fix "crash on empty config"
+###   /home/ct/hermes_src/bar/.worktrees/fix-crash-on-empty-config  fix-crash-on-empty-config  base=rad/main  head=55d5924
+###
+### The name is '<class>-<description>'.  The class vocabulary is read from the branch matchers of
+### the 'git' module ('is_git_*_branch'), so bar's own classes and the gates it hangs off them stay
+### the one source of truth, and a topic's name says what kind of change it is from anywhere -- the
+### worktree, the branch and the patch head.  A name without a class is refused, never guessed.
+### <description> is slugified to '[a-z0-9._-]' and the whole name stays within 40 characters, the
+### limit the Hermes worktree machinery sanitises to; a description which cannot fit is refused, never
+### silently cut.
+###
+### The clone is the *main checkout* of the repository '--root' names, or the one the current
+### directory is in -- a linked worktree resolves to its clone, so the call works from inside any
+### topic.  The base is the clone's *trunk*: on this host the trunk is upstream plus the local work
+### which is not published yet, so branching off the remote tip would drop that work.  The 'rad'
+### remote (else 'origin') is therefore fetched first -- to *know* the relation -- and a trunk which
+### is behind upstream is refused, because updating the trunk is its own step with its own gate and
+### never a side effect of opening a topic.  '--base <ref>' overrides the base, '--no-fetch' skips
+### the fetch.
+###
+### Neither of the two rules above writes to the main checkout: the tree is created below
+### '<clone>/.worktrees/', kept out of 'git status' by a line in '.git/info/exclude' (never by the
+### tracked '.gitignore'), and 'git worktree add' does not touch the trunk's HEAD.
+###
+### 'rad_import' is the way in, not a question: on the toplevel of a git repository which is not on
+### radicle yet it runs 'rad init' (public, signing set up) and pushes every branch to the new
+### remote.  Once a 'rad' remote exists it does nothing but say so.
+###
+### Running 'rad', reading its tables back, the age of a last event, the COB store and the JSON
+### literals are shared with every other module of bar which talks to radicle and live in
+### Bar.d/radicle_lib, which this module requires: 'RAD_BIN' (the command to run instead of 'rad'),
+### the record separators and every 'rad_*' function come from there.
+###
+### 'RAD_STATE_MAX' is the default of '--max'.  Reading rad's tables back needs a character aware
+### shell; bar exports a UTF-8 'LC_ALL' whenever the system has one.
+###
+### The rules below are about 'rad', the radicle frontend and the repository it is used in.  Building
+### a radicle installation itself is not one of them (radicle is packaged; the tools below
+### 'tools/radicle_*' are their own thing).
+
+# helper-module: rad
+
+require radicle_lib
+
+# helper: rad_import | import a git repository into radicle: 'rad init' and push every branch to the new remote | rad_import | nothing; a notice when the repository is already on radicle
+## Imports the repository at the toplevel.  Not a question but the way in: it changes the repository
+## (a new remote, the branches pushed) and says what it did.
+rule rad_import: is_git_toplevel -
+
+# helper: rad_state | the radicle state of this checkout in one invocation | rad_state [--json] [--max <n>] | one '<section>  <counts>' line and the items per section; '--json' the same as one object
+## The radicle state of this checkout: repository, identity, patches, issues and the branches
+## which still carry local work.
+rule rad_state: -
+
+# helper: rad_patches | the patches filtered by state and author | rad_patches [--json] [--max <n>] [--state <one of open, draft, merged, archived, all>] [--author <one of ours, other, all>] | the patch section of 'rad_state', filtered; '--json' the same as one object
+## The patches of this checkout, by state and by author.
+rule rad_patches: -
+
+# helper: rad_trust | whether the author of an incoming Radicle issue or patch counts as a trusted source, that is a delegate or an identity with at least <threshold> authored commits | rad_trust --repo <rid-or-path> --author <did-or-nid-or-alias> [--threshold <n>] [--json] | one '<verdict> author=… delegate=… authored=… threshold=… reason=… repo=…' line, <verdict> one of trusted, untrusted, unknown; '--json' the same facts as one object
+## The trust verdict of the triage policy; exit 0 trusted, 1 untrusted, 2 could not answer.
+rule rad_trust: -
+
+# helper: rad_topic | open the topic tree of an incoming item: mint the '<class>-<description>' name, resolve the clone and the freshest base, keep '.worktrees/' out of 'git status' and create the worktree | rad_topic <class> <description> [--root <clone>] [--base <ref>] [--no-fetch] [--dry-run] [--json] | one '<path>  <branch>  base=<base>  head=<sha>' line; '--json' the same as one object
+## Creates '<clone>/.worktrees/<class>-<description>' on the branch of the same name; exit 0 created,
+## 1 refused (the tree or the branch exists, the name is too long), 2 could not answer (usage, an
+## unknown class, not a git repository, git failed).
+rule rad_topic: -
+
+# --- rad_import: getting a repository onto radicle ----------------------------------------------
+
 
 function rad_import ## import a git repository into radicle
 {
@@ -14,4 +171,1002 @@ function rad_import ## import a git repository into radicle
 }
 
 
-rule rad_import: is_git_toplevel -
+# --- the state of a checkout: rad_state and rad_patches -----------------------------------------
+
+declare -gx RAD_STATE_MAX="${RAD_STATE_MAX:-10}"   ## default of '--max': items printed per section
+
+declare -ga RAD_STATE_PATCHES=()   ## one record per patch, see 'rad_state_collect'
+declare -ga RAD_STATE_ISSUES=()    ## one record per issue, see 'rad_state_collect'
+declare -ga RAD_STATE_BRANCHES=()  ## one record per local branch, see 'rad_state_collect'
+declare -gA RAD_STATE_COB_TIME=()  ## '<type>:<id>' -> '<updated> <created> <kind>'
+declare -g RAD_STATE_RID="" RAD_STATE_NAME="" RAD_STATE_PATH=""
+declare -g RAD_STATE_ALIAS="" RAD_STATE_DID="" RAD_STATE_KNOWN="no"
+declare -g RAD_STATE_BRANCH="" RAD_STATE_COMMIT="" RAD_STATE_CANONICAL=""
+declare -g RAD_STATE_CANONICAL_COMMIT="" RAD_STATE_AHEAD="" RAD_STATE_BEHIND="" RAD_STATE_NOTCANONICAL=""
+declare -gi RAD_STATE_CUT=0        ## items the last text rendering elided
+declare -gi RAD_STATE_NOW=0        ## the timestamp the ages are relative to
+## - 0 when this shell counts characters, which reading rad's tables needs
+function rad_state_charwise
+{
+    ## 'rad' pads the cells of its tables by character, so the columns can only be cut at the same
+    ## offsets when the shell measures the same way.  That is the case in a UTF-8 locale, which bar
+    ## exports whenever the system has one; in a byte locale a cell holding a non ASCII character
+    ## shifts everything behind it and 'rad_state' says so instead of reporting it wrongly.
+    ## (A double width character -- CJK, emoji -- is one column to a character wise shell and two
+    ## to rad: such a title would shift the columns of its row too.)
+    local probe="…"
+    [[ "${#probe}" == 1 ]]
+}
+
+## <table> - the ids of the rows of a 'rad' table, one per line
+function rad_state_ids
+{
+    ## A state filter is answered with a table of the same shape and only the ids are taken from
+    ## it.  An empty result is 'Nothing to show.' or nothing at all -- that is no id, not an
+    ## error; box drawing characters without a header to cut by are an error (return 1).
+    local table="$1"
+    local ids
+    [[ "$table" == *│* ]] || return 0
+    ids="$(rad_table "$table" ID)" || return 1
+    [[ -n "$ids" ]] || return 0
+    printf '%s\n' "$ids"
+}
+
+## <newline separated ids> <id> - 0 when <id> is one of them
+function rad_state_has_id
+{
+    local ids="${1//$'\n'/ }"
+    [[ " $ids " == *" $2 "* ]]
+}
+
+## <ids> <description> <table> - as 'rad_state_ids', but a table it cannot cut is a diagnostic
+function rad_state_ids_checked
+{
+    local description="$1" table="$2"
+    local ids=""
+    ids="$(rad_state_ids "$table")" || {
+        error "cannot read what '$RAD_BIN $description' printed: a table without the expected columns"
+        return 1
+    }
+    printf '%s' "$ids"
+}
+
+## <description> <table> <column>.. - as 'rad_table', but a table it cannot cut is a diagnostic
+function rad_state_table_checked
+{
+    local description="$1" table="$2"
+    shift 2
+    local rows=""
+    ## 'Nothing to show.' and nothing at all are no rows, not an error; box drawing characters
+    ## without a header to cut by are.
+    [[ "$table" == *│* ]] || return 0
+    rows="$(rad_table "$table" "$@")" || {
+        error "cannot read what '$RAD_BIN $description' printed: a table without the expected columns"
+        return 1
+    }
+    printf '%s' "$rows"
+}
+
+## <cell> - an author cell of a table as one name ('ct_vibes  (you)' -> 'ct_vibes')
+function rad_state_author
+{
+    local cell="${1//$'\t'/ }"
+    while [[ "$cell" == *"  "* ]]; do
+        cell="${cell//  / }"
+    done
+    printf '%s' "${cell% (you)}"
+}
+
+## - collect the whole state into the 'RAD_STATE_*' variables
+function rad_state_collect
+{
+    ##   patch  id state own author head title updated created kind
+    ##   issue  id state own author labels assignees title updated created kind
+    ##   branch name commit ahead patch
+    ##
+    ## Returns 3 when there is no repository to report on (a radicle repository is a git
+    ## repository with a radicle identity), 1 when rad failed or its output was not understood.
+    local toplevel="" rid="" all="" ours="" draft="" merged="" archived="" closed="" solved=""
+    local myself="" inspected="" ref=""
+    local id="" title="" author="" head="" state="" own="" labels="" assignees=""
+    local draftids="" mergedids="" archivedids="" closedids="" solvedids="" rows=""
+    local -a heads=() headmap=()
+    local type="" name="" branch="" commit="" ahead="" patch="" full="" entry="" object=""
+    local updated="" kind=""
+
+    RAD_STATE_PATCHES=() RAD_STATE_ISSUES=() RAD_STATE_BRANCHES=() RAD_STATE_COB_TIME=()
+    RAD_STATE_CUT=0
+
+    if ! toplevel="$(git rev-parse --show-toplevel 2>/dev/null)"; then
+        error "not a git repository: 'bar rad_state' reports on a radicle checkout"
+        return 3
+    fi
+    RAD_STATE_NAME="${toplevel##*/}"
+    RAD_STATE_PATH="${toplevel/#"$HOME"/\~}"
+
+    inspected="$(cd "$toplevel" && rad_run inspect --rid)" || return $?
+    rid="${inspected##*$'\n'}"
+    RAD_STATE_RID="$rid"
+
+    RAD_STATE_ALIAS="" RAD_STATE_DID="" RAD_STATE_KNOWN="no"
+    myself="$(LC_ALL=C "$RAD_BIN" self 2>/dev/null)" || myself=""
+    if [[ -n "$myself" ]]; then
+        RAD_STATE_ALIAS="$(printf '%s\n' "$myself" | LC_ALL=C sed -n 's/^Alias[[:space:]]\{1,\}//p' | head -1)"
+        RAD_STATE_DID="$(printf '%s\n' "$myself" | LC_ALL=C sed -n 's/^DID[[:space:]]\{1,\}//p' | head -1)"
+        [[ -n "$RAD_STATE_DID" ]] && RAD_STATE_KNOWN="yes"
+    else
+        warn "'$RAD_BIN self' failed, the identity rad uses here stays unknown"
+    fi
+
+    RAD_STATE_BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null)" || RAD_STATE_BRANCH="HEAD"
+    RAD_STATE_COMMIT="$(git rev-parse --short HEAD 2>/dev/null)" || RAD_STATE_COMMIT=""
+    RAD_STATE_CANONICAL="" RAD_STATE_CANONICAL_COMMIT=""
+    RAD_STATE_AHEAD="" RAD_STATE_BEHIND="" RAD_STATE_NOTCANONICAL=""
+    for ref in refs/remotes/rad/main refs/remotes/rad/master; do
+        if git rev-parse --verify --quiet "$ref" >/dev/null 2>&1; then
+            RAD_STATE_CANONICAL="${ref#refs/remotes/}"
+            RAD_STATE_CANONICAL_COMMIT="$(git rev-parse --short "$ref")"
+            read -r RAD_STATE_BEHIND RAD_STATE_AHEAD <<<"$(git rev-list --left-right --count "$ref...HEAD" 2>/dev/null)" ||
+                RAD_STATE_BEHIND=""
+            RAD_STATE_NOTCANONICAL="$(git rev-list --count --branches --not "$ref" 2>/dev/null)" ||
+                RAD_STATE_NOTCANONICAL=""
+            break
+        fi
+    done
+
+    for type in patch issue; do
+        rad_cobs_time "$type" "$rid" RAD_STATE_COB_TIME
+    done
+
+    rad_state_charwise ||
+        warn "the shell does not count characters ('LC_ALL=${LC_ALL:-unset}'): cells with non ASCII characters may be cut wrongly"
+
+    # the patches: the states and our own ones as id sets, the rest from the table of '--all'
+    all="$(rad_run patch list --repo "$rid" --all)" || return $?
+    ours="$(rad_run patch list --repo "$rid" --all --authored)" || return $?
+    draft="$(rad_run patch list --repo "$rid" --draft)" || return $?
+    merged="$(rad_run patch list --repo "$rid" --merged)" || return $?
+    archived="$(rad_run patch list --repo "$rid" --archived)" || return $?
+    draftids="$(rad_state_ids_checked "patch list --draft" "$draft")" || return 1
+    mergedids="$(rad_state_ids_checked "patch list --merged" "$merged")" || return 1
+    archivedids="$(rad_state_ids_checked "patch list --archived" "$archived")" || return 1
+    ours="$(rad_state_ids_checked "patch list --all --authored" "$ours")" || return 1
+    rows="$(rad_state_table_checked "patch list --all" "$all" ID Title Author Head)" || return 1
+    while IFS="$RAD_US" read -r id title author head; do
+        [[ -n "$id" ]] || continue
+        own="other"
+        rad_state_has_id "$ours" "$id" && own="ours"
+        if rad_state_has_id "$draftids" "$id"; then
+            state="draft"
+        elif rad_state_has_id "$mergedids" "$id"; then
+            state="merged"
+        elif rad_state_has_id "$archivedids" "$id"; then
+            state="archived"
+        else
+            state="open"
+        fi
+        updated="" kind=""
+        read -r updated kind <<<"${RAD_STATE_COB_TIME["patch:$id"]:-}"
+        RAD_STATE_PATCHES+=( "$id${RAD_US}$state${RAD_US}$own${RAD_US}$(rad_state_author "$author")${RAD_US}$head${RAD_US}$title${RAD_US}$updated${RAD_US}$kind" )
+        heads+=( "$head${RAD_US}$id" )
+    done <<<"$rows"
+
+    # the heads resolved once, so that every local branch is compared without another git call
+    for entry in ${heads[@]+"${heads[@]}"}; do
+        full="$(git rev-parse --verify --quiet "${entry%%"$RAD_US"*}^{commit}" 2>/dev/null)" || continue
+        [[ -n "$full" ]] && headmap+=( "$full${RAD_US}${entry##*"$RAD_US"}" )
+    done
+
+    # the issues
+    all="$(rad_run issue list --repo "$rid" --all)" || return $?
+    closed="$(rad_run issue list --repo "$rid" --closed)" || return $?
+    solved="$(rad_run issue list --repo "$rid" --solved)" || return $?
+    closedids="$(rad_state_ids_checked "issue list --closed" "$closed")" || return 1
+    solvedids="$(rad_state_ids_checked "issue list --solved" "$solved")" || return 1
+    rows="$(rad_state_table_checked "issue list --all" "$all" ID Title Author Labels Assignees)" ||
+        return 1
+    while IFS="$RAD_US" read -r id title author labels assignees; do
+        [[ -n "$id" ]] || continue
+        own="other"
+        [[ "$author" == *"(you)"* ]] && own="ours"
+        if rad_state_has_id "$closedids" "$id"; then
+            state="closed"
+        elif rad_state_has_id "$solvedids" "$id"; then
+            state="solved"
+        else
+            state="open"
+        fi
+        updated="" kind=""
+        read -r updated kind <<<"${RAD_STATE_COB_TIME["issue:$id"]:-}"
+        RAD_STATE_ISSUES+=( "$id${RAD_US}$state${RAD_US}$own${RAD_US}$(rad_state_author "$author")${RAD_US}$labels${RAD_US}$assignees${RAD_US}$title${RAD_US}$updated${RAD_US}$kind" )
+    done <<<"$rows"
+
+    # the branches: one carries a patch when its tip is the head of one
+    while IFS="$RAD_RS" read -r branch commit; do
+        [[ -n "$branch" ]] || continue
+        ahead=""
+        if [[ -n "$RAD_STATE_CANONICAL" ]]; then
+            ahead="$(git rev-list --count "$RAD_STATE_CANONICAL..$branch" 2>/dev/null)" || ahead=""
+        fi
+        patch="-"
+        full="$(git rev-parse --verify --quiet "$commit^{commit}" 2>/dev/null)" || full=""
+        if [[ -n "$full" ]]; then
+            for entry in ${headmap[@]+"${headmap[@]}"}; do
+                [[ "${entry%%"$RAD_US"*}" == "$full" ]] || continue
+                patch="${entry##*"$RAD_US"}"
+                break
+            done
+        fi
+        RAD_STATE_BRANCHES+=( "$branch${RAD_US}$commit${RAD_US}$ahead${RAD_US}$patch" )
+    done < <(git for-each-ref --format="%(refname:short)${RAD_RS}%(objectname:short)" refs/heads)
+}
+
+## <shown> <total> - the elision of a cut section, nothing when every item is shown
+function rad_state_cut
+{
+    local shown="$1" total="$2"
+    (( shown < total )) || return 0
+    RAD_STATE_CUT=$(( RAD_STATE_CUT + total - shown ))
+    printf '  ... %d of %d elided (%s %s --max 0)\n' "$(( total - shown ))" "$total" \
+        "${BAR_CALLED_AS:-bar}" "${RULE_NAME:-rad_state}"
+}
+
+## - where the complete text of this run is written, see 'rad_state_complete_note'
+function rad_state_complete_file
+{
+    printf '%s' "${TMPDIR:-/tmp}/bar-rad_state.${RAD_STATE_RID//[!A-Za-z0-9]/_}.${RULE_NAME:-rad_state}.txt"
+}
+
+## <file> - say where the complete text went, after a section was cut
+function rad_state_complete_note
+{
+    printf 'complete  %s  (the same text, nothing elided)\n' "$1"
+}
+
+## <max> [<state> [<author>]] - the patch section as text
+function rad_state_text_patches
+{
+    local max="$1" select_state="${2:-all}" select_author="${3:-all}"
+    local total=${#RAD_STATE_PATCHES[@]} shown=0 ours=0 others=0
+    local open=0 draft=0 merged=0 archived=0
+    local entry="" id="" state="" own="" author="" head="" title="" updated="" kind="" suffix=""
+    local -a selected=()
+
+    for entry in ${RAD_STATE_PATCHES[@]+"${RAD_STATE_PATCHES[@]}"}; do
+        IFS="$RAD_US" read -r id state own author head title updated kind <<<"$entry"
+        if [[ "$own" == ours ]]; then
+            ours=$(( ours + 1 ))
+        else
+            others=$(( others + 1 ))
+        fi
+        case "$state" in
+        open) open=$(( open + 1 )) ;;
+        draft) draft=$(( draft + 1 )) ;;
+        merged) merged=$(( merged + 1 )) ;;
+        archived) archived=$(( archived + 1 )) ;;
+        esac
+        [[ "$select_state" == all || "$select_state" == "$state" ]] || continue
+        [[ "$select_author" == all || "$select_author" == "$own" ]] || continue
+        selected+=( "$entry" )
+    done
+
+    if [[ "$select_state" == all && "$select_author" == all ]]; then
+        printf 'patches   %d   ours %d  others %d   open %d  draft %d  merged %d  archived %d\n' \
+            "$total" "$ours" "$others" "$open" "$draft" "$merged" "$archived"
+    else
+        printf 'patches   %d of %d   ours %d  others %d   open %d  draft %d  merged %d  archived %d   (state %s, author %s)\n' \
+            "${#selected[@]}" "$total" "$ours" "$others" "$open" "$draft" "$merged" "$archived" \
+            "$select_state" "$select_author"
+    fi
+    for entry in ${selected[@]+"${selected[@]}"}; do
+        (( max == 0 || shown < max )) || break
+        IFS="$RAD_US" read -r id state own author head title updated kind <<<"$entry"
+        ## the author of a patch of ours is us, naming it again would only repeat the identity
+        ## line; for the others it says who to talk to
+        suffix=""
+        [[ "$own" == other && -n "$author" ]] && suffix="  [${author}]"
+        printf '  %s  %-8s %-5s  %-7s %-4s %s%s\n' "$id" "$state" "$own" "$head" \
+            "$(rad_age "$RAD_STATE_NOW" "$updated")" "$title" "$suffix"
+        shown=$(( shown + 1 ))
+    done
+    rad_state_cut "$shown" "${#selected[@]}"
+}
+
+## <max> - the issue section as text
+function rad_state_text_issues
+{
+    local max="$1"
+    local total=${#RAD_STATE_ISSUES[@]} shown=0 ours=0 others=0 open=0 closed=0 solved=0
+    local entry="" id="" state="" own="" author="" labels="" assignees="" title="" updated="" kind="" suffix=""
+
+    for entry in ${RAD_STATE_ISSUES[@]+"${RAD_STATE_ISSUES[@]}"}; do
+        IFS="$RAD_US" read -r id state own author labels assignees title updated kind <<<"$entry"
+        if [[ "$own" == ours ]]; then
+            ours=$(( ours + 1 ))
+        else
+            others=$(( others + 1 ))
+        fi
+        case "$state" in
+        open) open=$(( open + 1 )) ;;
+        closed) closed=$(( closed + 1 )) ;;
+        solved) solved=$(( solved + 1 )) ;;
+        esac
+    done
+    printf 'issues    %d   ours %d  others %d   open %d  closed %d  solved %d\n' \
+        "$total" "$ours" "$others" "$open" "$closed" "$solved"
+    for entry in ${RAD_STATE_ISSUES[@]+"${RAD_STATE_ISSUES[@]}"}; do
+        (( max == 0 || shown < max )) || break
+        IFS="$RAD_US" read -r id state own author labels assignees title updated kind <<<"$entry"
+        suffix=""
+        [[ -n "$labels" ]] && suffix+="  [${labels}]"
+        [[ -n "$assignees" ]] && suffix+="  [@${assignees}]"
+        printf '  %s  %-6s %-5s  %-4s %s%s\n' "$id" "$state" "$own" \
+            "$(rad_age "$RAD_STATE_NOW" "$updated")" "$title" "$suffix"
+        shown=$(( shown + 1 ))
+    done
+    rad_state_cut "$shown" "$total"
+}
+
+## <max> - the branch section as text
+function rad_state_text_branches
+{
+    local max="$1"
+    local total=${#RAD_STATE_BRANCHES[@]} shown=0 without=0
+    local entry="" name="" commit="" ahead="" patch=""
+
+    for entry in ${RAD_STATE_BRANCHES[@]+"${RAD_STATE_BRANCHES[@]}"}; do
+        IFS="$RAD_US" read -r name commit ahead patch <<<"$entry"
+        [[ "$patch" == "-" ]] && without=$(( without + 1 ))
+    done
+    printf 'branches  %d   no patch %d   %s commits not in %s\n' "$total" "$without" \
+        "${RAD_STATE_NOTCANONICAL:-?}" "${RAD_STATE_CANONICAL:-rad/main}"
+    for entry in ${RAD_STATE_BRANCHES[@]+"${RAD_STATE_BRANCHES[@]}"}; do
+        (( max == 0 || shown < max )) || break
+        IFS="$RAD_US" read -r name commit ahead patch <<<"$entry"
+        if [[ "$patch" == "-" ]]; then
+            patch="no patch"
+        else
+            patch="patch $patch"
+        fi
+        printf '  %-28s %-7s %-8s %s\n' "$name" "$commit" "${ahead:+ahead $ahead}" "$patch"
+        shown=$(( shown + 1 ))
+    done
+    rad_state_cut "$shown" "$total"
+}
+
+## - the repository, identity and head lines of the text form
+function rad_state_text_head
+{
+    printf 'repo      %s  %s  %s\n' "$RAD_STATE_NAME" "$RAD_STATE_RID" "$RAD_STATE_PATH"
+    if [[ "$RAD_STATE_KNOWN" == yes ]]; then
+        printf 'ident     %s  %s\n' "${RAD_STATE_ALIAS:-?}" "$RAD_STATE_DID"
+    else
+        printf 'ident     unknown  (rad self did not answer)\n'
+    fi
+    if [[ -n "$RAD_STATE_CANONICAL" ]]; then
+        printf 'head      %s %s   %s %s   ahead %s  behind %s  (as of the last fetch)\n' \
+            "$RAD_STATE_BRANCH" "$RAD_STATE_COMMIT" "$RAD_STATE_CANONICAL" \
+            "$RAD_STATE_CANONICAL_COMMIT" "${RAD_STATE_AHEAD:-?}" "${RAD_STATE_BEHIND:-?}"
+    else
+        printf 'head      %s %s   no rad/main as a base (run '\''git fetch rad'\'')\n' \
+            "$RAD_STATE_BRANCH" "$RAD_STATE_COMMIT"
+    fi
+}
+
+## <max> - the whole state as text, at most <max> items per section
+function rad_state_text
+{
+    local max="$1"
+    local file=""
+
+    RAD_STATE_CUT=0
+    rad_state_text_head
+    rad_state_text_patches "$max" all all
+    rad_state_text_issues "$max"
+    rad_state_text_branches "$max"
+    if (( max != 0 && RAD_STATE_CUT != 0 )); then
+        file="$(rad_state_complete_file)"
+        if rad_state_text 0 >"$file" 2>/dev/null; then
+            rad_state_complete_note "$file"
+        else
+            warn "could not write the complete text to $file"
+        fi
+    fi
+}
+
+## <state> <author> - the selected patches as one JSON object
+function rad_state_json_patches
+{
+    local select_state="$1" select_author="$2"
+    local entry="" id="" state="" own="" author="" head="" title=""
+    local updated="" kind="" joined="" object=""
+    local total=0 ours=0 others=0 open=0 draft=0 merged=0 archived=0
+
+    for entry in ${RAD_STATE_PATCHES[@]+"${RAD_STATE_PATCHES[@]}"}; do
+        IFS="$RAD_US" read -r id state own author head title updated kind <<<"$entry"
+        total=$(( total + 1 ))
+        if [[ "$own" == ours ]]; then
+            ours=$(( ours + 1 ))
+        else
+            others=$(( others + 1 ))
+        fi
+        case "$state" in
+        open) open=$(( open + 1 )) ;;
+        draft) draft=$(( draft + 1 )) ;;
+        merged) merged=$(( merged + 1 )) ;;
+        archived) archived=$(( archived + 1 )) ;;
+        esac
+        [[ "$select_state" == all || "$select_state" == "$state" ]] || continue
+        [[ "$select_author" == all || "$select_author" == "$own" ]] || continue
+        object="$(printf '{"id":%s,"state":%s,"author":%s,"ours":%s,"title":%s,"head":%s,"updated":%s,"age":%s,"last":%s}' \
+            "$(rad_json_string "$id")" "$(rad_json_string "$state")" \
+            "$(rad_json_string "$author")" "$(rad_json_flag "$([[ "$own" == ours ]] && printf yes || printf no)")" \
+            "$(rad_json_string "$title")" "$(rad_json_string "$head")" \
+            "$(rad_json_number "$updated")" \
+            "$(rad_json_string "$(rad_age "$RAD_STATE_NOW" "$updated")")" \
+            "$(rad_json_string "$kind")")"
+        joined+="${joined:+,}${object}"
+    done
+    printf '{"count":%d,"ours":%d,"others":%d,"open":%d,"draft":%d,"merged":%d,"archived":%d,"items":[%s]}' \
+        "$total" "$ours" "$others" "$open" "$draft" "$merged" "$archived" "$joined"
+}
+
+## - the issues as one JSON object
+function rad_state_json_issues
+{
+    local entry="" id="" state="" own="" author="" labels="" assignees="" title=""
+    local updated="" kind="" joined="" object=""
+    local total=0 ours=0 others=0 open=0 closed=0 solved=0
+
+    for entry in ${RAD_STATE_ISSUES[@]+"${RAD_STATE_ISSUES[@]}"}; do
+        IFS="$RAD_US" read -r id state own author labels assignees title updated kind <<<"$entry"
+        total=$(( total + 1 ))
+        if [[ "$own" == ours ]]; then
+            ours=$(( ours + 1 ))
+        else
+            others=$(( others + 1 ))
+        fi
+        case "$state" in
+        open) open=$(( open + 1 )) ;;
+        closed) closed=$(( closed + 1 )) ;;
+        solved) solved=$(( solved + 1 )) ;;
+        esac
+        object="$(printf '{"id":%s,"state":%s,"author":%s,"ours":%s,"labels":%s,"assignees":%s,"title":%s,"updated":%s,"age":%s,"last":%s}' \
+            "$(rad_json_string "$id")" "$(rad_json_string "$state")" \
+            "$(rad_json_string "$author")" "$(rad_json_flag "$([[ "$own" == ours ]] && printf yes || printf no)")" \
+            "$(rad_json_list "$labels")" "$(rad_json_list "$assignees")" \
+            "$(rad_json_string "$title")" "$(rad_json_number "$updated")" \
+            "$(rad_json_string "$(rad_age "$RAD_STATE_NOW" "$updated")")" \
+            "$(rad_json_string "$kind")")"
+        joined+="${joined:+,}${object}"
+    done
+    printf '{"count":%d,"ours":%d,"others":%d,"open":%d,"closed":%d,"solved":%d,"items":[%s]}' \
+        "$total" "$ours" "$others" "$open" "$closed" "$solved" "$joined"
+}
+
+## - the local branches as one JSON object
+function rad_state_json_branches
+{
+    local entry="" name="" commit="" ahead="" patch=""
+    local joined="" object=""
+    local total=0 without=0
+
+    for entry in ${RAD_STATE_BRANCHES[@]+"${RAD_STATE_BRANCHES[@]}"}; do
+        IFS="$RAD_US" read -r name commit ahead patch <<<"$entry"
+        total=$(( total + 1 ))
+        [[ "$patch" == "-" ]] && without=$(( without + 1 ))
+        if [[ "$patch" == "-" ]]; then
+            patch="null"
+        else
+            patch="$(rad_json_string "$patch")"
+        fi
+        object="$(printf '{"name":%s,"commit":%s,"ahead":%s,"patch":%s}' \
+            "$(rad_json_string "$name")" "$(rad_json_string "$commit")" \
+            "$(rad_json_number "$ahead")" "$patch")"
+        joined+="${joined:+,}${object}"
+    done
+    printf '{"count":%d,"without_patch":%d,"not_in_canonical":%s,"items":[%s]}' \
+        "$total" "$without" "$(rad_json_number "$RAD_STATE_NOTCANONICAL")" "$joined"
+}
+
+## <state> <author> - the complete state as one JSON object
+function rad_state_json
+{
+    printf '{"bar_rad":1,"repo":{"rid":%s,"name":%s,"path":%s},"identity":{"alias":%s,"did":%s,"known":%s},"head":{"branch":%s,"commit":%s,"canonical":%s,"canonical_commit":%s,"ahead":%s,"behind":%s},"select":{"state":%s,"author":%s},"patches":' \
+        "$(rad_json_string "$RAD_STATE_RID")" "$(rad_json_string "$RAD_STATE_NAME")" \
+        "$(rad_json_string "$RAD_STATE_PATH")" "$(rad_json_string "$RAD_STATE_ALIAS")" \
+        "$(rad_json_string "$RAD_STATE_DID")" "$(rad_json_flag "$RAD_STATE_KNOWN")" \
+        "$(rad_json_string "$RAD_STATE_BRANCH")" "$(rad_json_string "$RAD_STATE_COMMIT")" \
+        "$(rad_json_string "$RAD_STATE_CANONICAL")" "$(rad_json_string "$RAD_STATE_CANONICAL_COMMIT")" \
+        "$(rad_json_number "$RAD_STATE_AHEAD")" "$(rad_json_number "$RAD_STATE_BEHIND")" \
+        "$(rad_json_string "$1")" "$(rad_json_string "$2")"
+    rad_state_json_patches "$1" "$2"
+    printf ',"issues":'
+    rad_state_json_issues
+    printf ',"branches":'
+    rad_state_json_branches
+    printf '}\n'
+}
+
+## - the usage of both rules, on stderr
+function rad_state_usage
+{
+    printf 'usage: %s rad_state [--json] [--max <n>]\n' "${BAR_CALLED_AS:-bar}" >&2
+    printf '       %s rad_patches [--json] [--max <n>] [--state <open|draft|merged|archived|all>] [--author <ours|other|all>]\n' \
+        "${BAR_CALLED_AS:-bar}" >&2
+}
+
+## [--json] [--max <n>] - the whole state, see the module header
+function rad_state
+{
+    local json="" max="$RAD_STATE_MAX" arg="" i=0
+    local -a args=( ${RULE_ARGS[@]+"${RULE_ARGS[@]}"} )
+
+    while (( i < ${#args[@]} )); do
+        arg="${args[i]}"
+        case "$arg" in
+        -h | --help)
+            ## 'rad_state_usage' reports to stderr for a usage error; as the answer to '--help' the
+            ## same text is the output, so its stream is folded over.
+            rad_state_usage 2>&1
+            return 0
+            ;;
+        --json)
+            json=1
+            ;;
+        --max)
+            i=$(( i + 1 ))
+            max="${args[i]:-}"
+            ;;
+        *)
+            rad_state_usage
+            return 2
+            ;;
+        esac
+        i=$(( i + 1 ))
+    done
+    [[ "$max" =~ ^[0-9]+$ ]] || {
+        rad_state_usage
+        return 2
+    }
+    [[ -n "${BAR_AGENT_JSON:-}" ]] && json=1
+
+    is_command_installed "$RAD_BIN" || {
+        error "'$RAD_BIN' is not installed"
+        return 1
+    }
+    rad_state_collect || return $?
+    RAD_STATE_NOW="$(date +%s)"
+
+    if [[ -n "$json" ]]; then
+        rad_state_json all all
+    else
+        rad_state_text "$max"
+    fi
+}
+
+## [--json] [--max <n>] [--state <s>] [--author <a>] - the patches, see the module header
+function rad_patches
+{
+    local json="" max="$RAD_STATE_MAX" select_state="all" select_author="all" arg="" i=0
+    local -a args=( ${RULE_ARGS[@]+"${RULE_ARGS[@]}"} )
+
+    while (( i < ${#args[@]} )); do
+        arg="${args[i]}"
+        case "$arg" in
+        -h | --help)
+            rad_state_usage 2>&1
+            return 0
+            ;;
+        --json)
+            json=1
+            ;;
+        --max | --state | --author)
+            i=$(( i + 1 ))
+            case "$arg" in
+            --max) max="${args[i]:-}" ;;
+            --state) select_state="${args[i]:-}" ;;
+            --author) select_author="${args[i]:-}" ;;
+            esac
+            ;;
+        *)
+            rad_state_usage
+            return 2
+            ;;
+        esac
+        i=$(( i + 1 ))
+    done
+    case "$select_state" in
+    all | open | draft | merged | archived) ;;
+    *)
+        rad_state_usage
+        return 2
+        ;;
+    esac
+    case "$select_author" in
+    all | ours | other) ;;
+    *)
+        rad_state_usage
+        return 2
+        ;;
+    esac
+    [[ "$max" =~ ^[0-9]+$ ]] || {
+        rad_state_usage
+        return 2
+    }
+    [[ -n "${BAR_AGENT_JSON:-}" ]] && json=1
+
+    is_command_installed "$RAD_BIN" || {
+        error "'$RAD_BIN' is not installed"
+        return 1
+    }
+    rad_state_collect || return $?
+    RAD_STATE_NOW="$(date +%s)"
+
+    if [[ -n "$json" ]]; then
+        rad_state_json "$select_state" "$select_author"
+    else
+        local file=""
+        rad_state_text_head
+        rad_state_text_patches "$max" "$select_state" "$select_author"
+        if (( max != 0 && RAD_STATE_CUT != 0 )); then
+            file="$(rad_state_complete_file)"
+            if { rad_state_text_head; rad_state_text_patches 0 "$select_state" "$select_author"; } >"$file" 2>/dev/null; then
+                rad_state_complete_note "$file"
+            else
+                warn "could not write the complete text to $file"
+            fi
+        fi
+    fi
+}
+
+# --- minting the name: the classes bar defines, and the slug of a description --------------------
+
+function rad_classes ## - the branch classes bar defines, one '<class>-' prefix per line
+{
+    ## Read from the 'is_git_*_branch' rules of the git module, so the vocabulary has one source of
+    ## truth: the matcher 'fix-* fix/*' contributes the class 'fix-'.  Bar's matches are regexes, so
+    ## 'fix-*' is the prefix 'fix-' followed by anything; the slash forms ('fix/', 'release/') are
+    ## not classes of a *topic* here -- this host's layout puts a task id behind the slash
+    ## ('<slug>/<task-id>') -- and the bare trunks ('main', 'master', 'devel') have no prefix at all.
+    local module="${BAR_DIR:-}/git"
+    [[ -f "$module" ]] || return 1
+    LC_ALL=C sed -n "s/^rule is_git_[a-z]*_branch: 'git_branch_matches \(.*\)'\$/\1/p" "$module" |
+        LC_ALL=C tr ' ' '\n' |
+        LC_ALL=C sed -n 's/^\([a-z][a-z]*-\)\*$/\1/p' |
+        LC_ALL=C sort -u
+}
+
+function rad_slug ## <text> - the description as a name slug, empty when nothing is left
+{
+    printf '%s' "$1" |
+        LC_ALL=C tr '[:upper:]' '[:lower:]' |
+        LC_ALL=C sed -e 's/[^a-z0-9._-]\+/-/g' -e 's/--\+/-/g' -e 's/^[-._]\+//' -e 's/[-._]\+$//'
+}
+
+# --- rad_trust ------------------------------------------------------------------------------
+
+function rad_trust_usage ## [reason] - usage on stderr
+{
+    [[ -n "${1:-}" ]] && printf 'rad_trust: %s\n' "$1" >&2
+    printf 'usage: rad_trust --repo <rid|path> --author <did|nid|alias> [--threshold <n>] [--json]\n' >&2
+}
+
+function rad_trust ## see the module header
+{
+    ## Body of the 'rad_trust' rule: one verdict line and the exit code which carries it.  The
+    ## facts come from the backing tool, this function adds the policy (which is what the triage
+    ## skill would otherwise spell out per item).
+    local -a args=()
+    local raw arg
+    local json="" repo="" author="" threshold=""
+    local value
+
+    for raw in "$@"; do
+        if [[ "$raw" == --*=* ]]; then
+            args+=("${raw%%=*}" "${raw#*=}")
+        else
+            args+=("$raw")
+        fi
+    done
+    local -i i=0 count=${#args[@]}
+    while (( i < count )); do
+        arg="${args[i]}"
+        i=$(( i + 1 ))
+        case "$arg" in
+        -h | --help)
+            rad_trust_usage 2>&1
+            return 0
+            ;;
+        --json) json=1 ;;
+        --repo | --author | --threshold)
+            if (( i >= count )) || [[ -z "${args[i]}" ]]; then
+                rad_trust_usage "'$arg' needs a non-empty value"
+                return 2
+            fi
+            value="${args[i]}"
+            i=$(( i + 1 ))
+            case "$arg" in
+            --repo) repo="$value" ;;
+            --author) author="$value" ;;
+            --threshold) threshold="$value" ;;
+            esac
+            ;;
+        *)
+            rad_trust_usage "unknown argument '$arg'"
+            return 2
+            ;;
+        esac
+    done
+
+    [[ -n "${BAR_AGENT_JSON:-}" ]] && json=1
+    if [[ -z "$repo" || -z "$author" ]]; then
+        rad_trust_usage "both --repo and --author are required"
+        return 2
+    fi
+    if [[ -n "$threshold" && ! "$threshold" =~ ^[0-9]+$ ]]; then
+        rad_trust_usage "invalid --threshold '$threshold', want a non-negative number"
+        return 2
+    fi
+
+    local tool="${RAD_TRIAGE_FACTS:-$HOME/.hermes/docs/hermes_src/tools/radicle_triage/triage-facts}"
+    if [[ ! -x "$tool" ]]; then
+        printf 'rad_trust: the fact tool is missing or not executable: %s\n' "$tool" >&2
+        return 2
+    fi
+    if ! command -v jq >/dev/null 2>&1; then
+        printf 'rad_trust: jq is required to read the facts\n' >&2
+        return 2
+    fi
+
+    local -a cmd=("$tool" --repo "$repo" --author "$author")
+    [[ -n "$threshold" ]] && cmd+=(--threshold "$threshold")
+    ## The tool exits non-zero when it cannot answer (an unresolvable author is one of those), and
+    ## still prints the JSON which says why -- so the exit code is reported, never interpreted: an
+    ## empty answer is 'could not answer', anything else is read and the reason travels on.
+    local facts tool_rc=0
+    facts="$("${cmd[@]}" 2>/dev/null)" || tool_rc=$?
+    if [[ -z "$facts" ]]; then
+        printf 'rad_trust: %s gave no answer for %s (exit %s)\n' "${tool##*/}" "$repo" "$tool_rc" >&2
+        return 2
+    fi
+
+    ## One jq pass, so the text form and the machine form carry the same numbers.  An author the
+    ## repository cannot resolve is *not* an error of the tool: it has no data, and that is the
+    ## 'unknown' verdict (exit 2), never 'untrusted'.  The fields are joined with US (0x1f) and not
+    ## with a tab: an empty field has to survive the read, and IFS whitespace would collapse it.
+    local fields verdict author_name delegate authored thr reason rid
+    if ! fields="$(printf '%s' "$facts" | jq -r '[
+            (if .contributor == true then "trusted" elif .contributor == false then "untrusted" else "unknown" end),
+            (if .author == null then "-" else (.author.alias // .author.did // "-") end),
+            (if .author != null and .author.is_delegate == true then "yes" else "no" end),
+            ((.author.total_authored // "-") | tostring),
+            ((.threshold // "-") | tostring),
+            (([.reason, .error] | map(select(. != null and . != "")) | first // "-") | tostring | gsub("[[:cntrl:]]"; " ")),
+            ((.rid // "-") | tostring)
+        ] | join("\u001f")' 2>/dev/null)"; then
+        printf 'rad_trust: cannot read the facts of %s\n' "${tool##*/}" >&2
+        return 2
+    fi
+    IFS=$'\037' read -r verdict author_name delegate authored thr reason rid <<<"$fields"
+
+    if [[ -n "$json" ]]; then
+        printf '%s' "$facts" | jq -c --arg verdict "$verdict" \
+            '. + {bar_rad: 1, verdict: $verdict}' 2>/dev/null ||
+            printf '{"bar_rad":1,"verdict":%s}\n' "$(rad_json_string "$verdict")"
+    else
+        printf '%s author=%s delegate=%s authored=%s threshold=%s reason=%s repo=%s\n' \
+            "$verdict" "$author_name" "$delegate" "$authored" "$thr" "$reason" "$rid"
+    fi
+
+    case "$verdict" in
+    trusted) return 0 ;;
+    untrusted) return 1 ;;
+    *) return 2 ;;
+    esac
+}
+
+# --- rad_topic ------------------------------------------------------------------------------
+
+function rad_topic_usage ## [reason] - usage on stderr
+{
+    [[ -n "${1:-}" ]] && printf 'rad_topic: %s\n' "$1" >&2
+    printf 'usage: rad_topic <class> <description> [--root <clone>] [--base <ref>] [--no-fetch] [--dry-run] [--json]\n' >&2
+}
+
+function rad_topic_json ## <root> <name> <path> <base> <head> <fetched> - one object
+{
+    printf '{"bar_rad":1,"action":"topic","root":%s,"name":%s,"path":%s,"branch":%s,"base":%s,"head":%s,"fetched":%s}\n' \
+        "$(rad_json_string "$1")" \
+        "$(rad_json_string "$2")" \
+        "$(rad_json_string "$3")" \
+        "$(rad_json_string "$2")" \
+        "$(rad_json_string "$4")" \
+        "$(rad_json_string "$5")" \
+        "$(rad_json_flag "$6")"
+}
+
+function rad_topic ## see the module header
+{
+    ## Body of the 'rad_topic' rule.  Nothing is created before the class, the name, the clone,
+    ## the base and the collisions have all been resolved, so a refusal leaves no half-made tree.
+    local -a args=()
+    local raw arg
+    local json="" root="" base="" fetch="yes" dry="" class="" description=""
+    local -a classes=()
+    local value line known="" slug name name_len wanted
+    local tree main_tree remote="" branch="" fetched="none" behind="" head out err
+
+    for raw in "$@"; do
+        if [[ "$raw" == --*=* ]]; then
+            args+=("${raw%%=*}" "${raw#*=}")
+        else
+            args+=("$raw")
+        fi
+    done
+    local -i i=0 count=${#args[@]}
+    while (( i < count )); do
+        arg="${args[i]}"
+        i=$(( i + 1 ))
+        case "$arg" in
+        -h | --help)
+            rad_topic_usage 2>&1
+            return 0
+            ;;
+        --json) json=1 ;;
+        --dry-run) dry=1 ;;
+        --no-fetch) fetch="" ;;
+        --root | --base)
+            if (( i >= count )) || [[ -z "${args[i]}" ]]; then
+                rad_topic_usage "'$arg' needs a non-empty value"
+                return 2
+            fi
+            value="${args[i]}"
+            i=$(( i + 1 ))
+            case "$arg" in
+            --root) root="$value" ;;
+            --base) base="$value" ;;
+            esac
+            ;;
+        -*)
+            rad_topic_usage "unknown argument '$arg'"
+            return 2
+            ;;
+        *)
+            if [[ -z "$class" ]]; then
+                class="$arg"
+            elif [[ -z "$description" ]]; then
+                description="$arg"
+            else
+                rad_topic_usage "unexpected argument '$arg'"
+                return 2
+            fi
+            ;;
+        esac
+    done
+
+    [[ -n "${BAR_AGENT_JSON:-}" ]] && json=1
+    if [[ -z "$class" || -z "$description" ]]; then
+        rad_topic_usage "a class and a description are required"
+        return 2
+    fi
+
+    while IFS= read -r line; do
+        classes+=("$line")
+    done < <(rad_classes)
+    if (( ${#classes[@]} == 0 )); then
+        printf 'rad_topic: cannot read the branch classes from %s\n' "${BAR_DIR:-?}/git" >&2
+        return 2
+    fi
+    wanted="${class%-}-"
+    for line in "${classes[@]}"; do
+        [[ "$line" == "$wanted" ]] && known=yes
+    done
+    if [[ -z "$known" ]]; then
+        rad_topic_usage "unknown class '$class', want one of: ${classes[*]}"
+        return 2
+    fi
+
+    slug="$(rad_slug "$description")"
+    if [[ -z "$slug" ]]; then
+        rad_topic_usage "the description '$description' has no usable character"
+        return 2
+    fi
+    name="${wanted}${slug}"
+    name_len=${#name}
+    if (( name_len > 40 )); then
+        printf 'rad_topic: the name is %d characters, at most 40 are allowed: %s -- shorten the description\n' \
+            "$name_len" "$name" >&2
+        return 1
+    fi
+
+    ## The clone: always the *main* checkout, also when the caller sits inside a topic tree.
+    if [[ -n "$root" ]]; then
+        if ! tree="$(git -C "$root" rev-parse --show-toplevel 2>/dev/null)"; then
+            rad_topic_usage "'$root' is not a git repository"
+            return 2
+        fi
+    elif ! tree="$(git rev-parse --show-toplevel 2>/dev/null)"; then
+        rad_topic_usage "not inside a git repository, pass --root <clone>"
+        return 2
+    fi
+    main_tree="$(git -C "$tree" worktree list --porcelain 2>/dev/null |
+        LC_ALL=C awk '/^worktree / { print $2; exit }')"
+    [[ -n "$main_tree" ]] || main_tree="$tree"
+
+    ## The base: the clone's trunk -- upstream *plus* the local work, so branching off the remote
+    ## tip would drop everything this host has not published yet.  The remote is fetched first to
+    ## *know* the relation; a trunk which is behind upstream is refused, because updating the trunk
+    ## is its own step with its own gate.
+    if [[ -n "$base" ]]; then
+        :
+    else
+        branch="$(git -C "$main_tree" symbolic-ref --quiet --short HEAD 2>/dev/null || true)"
+        if git -C "$main_tree" remote get-url rad >/dev/null 2>&1; then
+            remote="rad"
+        elif git -C "$main_tree" remote get-url origin >/dev/null 2>&1; then
+            remote="origin"
+        fi
+        if [[ -n "$remote" && -n "$fetch" ]]; then
+            if git -C "$main_tree" fetch --quiet --no-tags "$remote" >/dev/null 2>&1; then
+                fetched="yes"
+            else
+                fetched="no"
+                printf 'rad_topic: could not fetch %s, the relation to the trunk is stale\n' "$remote" >&2
+            fi
+        fi
+        if [[ "$fetched" == "yes" && -n "$remote" && -n "$branch" ]] &&
+            git -C "$main_tree" rev-parse --verify --quiet "refs/remotes/$remote/$branch" >/dev/null; then
+            behind="$(git -C "$main_tree" rev-list --count "refs/heads/$branch..refs/remotes/$remote/$branch" 2>/dev/null || true)"
+            if [[ -n "$behind" && "$behind" != "0" ]]; then
+                printf 'rad_topic: the trunk %s is %s commit(s) behind %s/%s -- update the trunk first (fetch, merge upstream into it, run its gate) or name the base with --base\n' \
+                    "$branch" "$behind" "$remote" "$branch" >&2
+                return 1
+            fi
+        fi
+        if [[ -n "$branch" ]]; then
+            base="$branch"
+        else
+            base="HEAD"
+        fi
+    fi
+
+    local wt_dir="$main_tree/.worktrees"
+    local wt_path="$wt_dir/$name"
+    if [[ -e "$wt_path" ]]; then
+        printf 'rad_topic: the tree already exists: %s\n' "$wt_path" >&2
+        return 1
+    fi
+    if git -C "$main_tree" show-ref --verify --quiet "refs/heads/$name"; then
+        printf 'rad_topic: the branch already exists: %s\n' "$name" >&2
+        return 1
+    fi
+
+    if [[ -n "$dry" ]]; then
+        if [[ -n "$json" ]]; then
+            rad_topic_json "$main_tree" "$name" "$wt_path" "$base" "-" "$fetched"
+        else
+            printf '%s  %s  base=%s\n' "$wt_path" "$name" "$base"
+        fi
+        return 0
+    fi
+
+    rad_exclude_worktrees "$main_tree"
+    mkdir -p "$wt_dir" 2>/dev/null || {
+        printf 'rad_topic: cannot create %s\n' "$wt_dir" >&2
+        return 2
+    }
+    if ! err="$(git -C "$main_tree" worktree add --quiet "$wt_path" -b "$name" "$base" 2>&1)"; then
+        printf 'rad_topic: git worktree add failed: %s\n' "${err:-unknown error}" >&2
+        return 2
+    fi
+    head="$(git -C "$wt_path" rev-parse --short HEAD 2>/dev/null || printf '-')"
+
+    if [[ -n "$json" ]]; then
+        rad_topic_json "$main_tree" "$name" "$wt_path" "$base" "$head" "$fetched"
+    else
+        out="$(printf '%s  %s  base=%s  head=%s' "$wt_path" "$name" "$base" "$head")"
+        printf '%s\n' "$out"
+    fi
+    return 0
+}

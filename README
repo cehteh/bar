@@ -1371,37 +1371,34 @@ MODULE API/RULES
         'contrib/update-ethers.sh' for automatically discover and maintain '/etc/ethers'. Waits
         for the host to become reachable. Fails when it is not reachable.
 
-  rad - Support for the radicle p2p git frontend
-
-    Functions:
-
-      rad_import import a git repository into radicle
-
-  radicle - managing a radicle installation itself
-
-    Functions:
-
-      radicle_update [HEAD|TAG]
-        Updates the users radicle installation to [HEAD|TAG] or the latest stable
-
-      update_radicle_desktop [HEAD|TAG]
-        Build radicle-desktop, [HEAD|TAG] or the latest stable
-
-  radstate - Radicle repository state: what this checkout is, what it carries and what is still local.
+  rad - The radicle domain of bar: what this checkout is, what it carries, whether the author of an
+    incoming item may be trusted, how a topic starts -- and how a repository gets onto radicle in
+    the first place.
     
-    One invocation answers the questions an agent asks before it touches a radicle repository:
-    which repository is this (RID, name, path), which identity does 'rad' use here, how the
-    patches stand (how many, by state, ours against others), how the issues stand (state, labels,
-    when something happened last) and which local branches still carry commits no patch exposes.
+    Five helpers, all served by the backing library Bar.d/radicle_lib (running 'rad', reading its
+    padded tables back, the age of a last event, the node storage, the '.worktrees/' exclusion and
+    the JSON literals):
     
-      bar radstate [--json] [--max <n>]                     the whole state, one screen
-      bar radstate_patches [--state <s>] [--author <a>] [--json] [--max <n>]
-                                                            only the patches, filtered
+      bar rad_state [--json] [--max <n>]                     the whole state, one screen
+      bar rad_patches [--state <s>] [--author <a>] [--json] [--max <n>]
+                                                             only the patches, filtered
+      bar rad_trust --repo <rid> --author <who>              is that author a trusted source
+      bar rad_topic <class> "<description>"                  open the topic tree of an item
+      bar rad_import                                         import this repository into radicle
     
-    Nothing here goes to the network: 'rad patch/issue list' answer from the local node storage
-    and the divergence is measured against 'rad/main' as the last 'git fetch rad' left it, which
-    the 'head' line names.  Syncing is the caller's business ('rad sync', 'git fetch rad'): this
-    helper reports what is there and says how old it is.
+    Every helper answers '-h' or '--help' with its usage on stdout and exit 0.
+    
+    'rad_state' answers the questions an agent asks before it touches a radicle repository: which
+    repository is this (RID, name, path), which identity does 'rad' use here, how the patches stand
+    (how many, by state, ours against others), how the issues stand (state, labels, when something
+    happened last) and which local branches still carry commits no patch exposes.  'rad_patches' is
+    the patch section of that report, filtered by state and by author.
+    
+    Nothing there goes to the network: 'rad patch/issue list' answer from the local node storage and
+    the divergence is measured against 'rad/main' as the last 'git fetch rad' left it, which the
+    'head' line names.  Syncing is the caller's business ('rad sync', 'git fetch rad'): this helper
+    reports what is there and says how old it is.  'rad_topic' is the one exception -- it fetches the
+    radicle remote (else 'origin') to *know* how the base relates to upstream, see below.
     
     SOURCES
     
@@ -1418,12 +1415,13 @@ MODULE API/RULES
                                 '$(rad path)/storage/<RID>' with 'git for-each-ref'
       git for-each-ref/rev-list the current branch, the local branches and their distance from
                                 'refs/remotes/rad/main' or 'refs/remotes/rad/master'
+      git ls-remote/log/branch  'rad_topic': the trunk on both sides and the commits in between
     
     OUTPUT
     
       Text: one header line per section -- '<section>  <counts>' -- then one line per item, the
       free text last so that nothing has to be padded.  Ages are short ('6m', '2h', '1y') and are
-      those of the last event.  '--json': one object with 'bar_radstate': 1, the complete data,
+      those of the last event.  '--json': one object marked with 'bar_rad': 1, the complete data,
       never elided.
       At most '--max' items per section (default 10, '--max 0' lists all).  A section which is
       cut states exactly how much ('n of N elided'), and when anything was cut the complete text
@@ -1440,78 +1438,108 @@ MODULE API/RULES
       3  no data: not a git repository, or no radicle repository here
       1  could not answer: 'rad' is missing or failed, or its output was not understood
     
-    'RADSTATE_RAD' names the command to run instead of 'rad' (the tests point it at a fake),
-    'RADSTATE_MAX' is the default of '--max'.  Reading rad's tables back needs a character aware
+    'rad_trust' answers whether the author of an incoming issue or patch counts as a *trusted
+    source* for the triage policy (`incoming-issue-triage` §3): a delegate of that repository, or an
+    identity with at least <threshold> authored commits.  The numbers come from the fact tool
+    'tools/radicle_triage/triage-facts' (delegates from the identity document, the commits an
+    identity authored as its own NID from the COB commits, plus the code commits of the humans
+    behind its patches); this helper is the one action which turns them into the verdict and the exit
+    code, so the question costs no agent turn and no prose:
+    
+      bar rad_trust --repo rad:z3WhBdHt… --author cehteh
+      trusted author=cehteh delegate=yes authored=396 threshold=10 reason=delegate of this repository repo=rad:z3WhBdHt1VVNyeQ61zpY66pNzuSrP
+    
+      exit 0 trusted -- 1 untrusted -- 2 could not answer (unknown author, no data, usage)
+    
+    'rad_topic' opens the topic tree of that work in one action: it mints the name from the
+    branch *class* and the description, resolves the clone and the freshest base, keeps '.worktrees/'
+    out of the main checkout's status and runs 'git worktree add' -- the sequence an agent otherwise
+    reassembles by hand every time it starts a topic:
+    
+      bar rad_topic fix "crash on empty config"
+      /home/ct/hermes_src/bar/.worktrees/fix-crash-on-empty-config  fix-crash-on-empty-config  base=rad/main  head=55d5924
+    
+    The name is '<class>-<description>'.  The class vocabulary is read from the branch matchers of
+    the 'git' module ('is_git_*_branch'), so bar's own classes and the gates it hangs off them stay
+    the one source of truth, and a topic's name says what kind of change it is from anywhere -- the
+    worktree, the branch and the patch head.  A name without a class is refused, never guessed.
+    <description> is slugified to '[a-z0-9._-]' and the whole name stays within 40 characters, the
+    limit the Hermes worktree machinery sanitises to; a description which cannot fit is refused, never
+    silently cut.
+    
+    The clone is the *main checkout* of the repository '--root' names, or the one the current
+    directory is in -- a linked worktree resolves to its clone, so the call works from inside any
+    topic.  The base is the clone's *trunk*: on this host the trunk is upstream plus the local work
+    which is not published yet, so branching off the remote tip would drop that work.  The 'rad'
+    remote (else 'origin') is therefore fetched first -- to *know* the relation -- and a trunk which
+    is behind upstream is refused, because updating the trunk is its own step with its own gate and
+    never a side effect of opening a topic.  '--base <ref>' overrides the base, '--no-fetch' skips
+    the fetch.
+    
+    Neither of the two rules above writes to the main checkout: the tree is created below
+    '<clone>/.worktrees/', kept out of 'git status' by a line in '.git/info/exclude' (never by the
+    tracked '.gitignore'), and 'git worktree add' does not touch the trunk's HEAD.
+    
+    'rad_import' is the way in, not a question: on the toplevel of a git repository which is not on
+    radicle yet it runs 'rad init' (public, signing set up) and pushes every branch to the new
+    remote.  Once a 'rad' remote exists it does nothing but say so.
+    
+    Running 'rad', reading its tables back, the age of a last event, the COB store and the JSON
+    literals are shared with every other module of bar which talks to radicle and live in
+    Bar.d/radicle_lib, which this module requires: 'RAD_BIN' (the command to run instead of 'rad'),
+    the record separators and every 'rad_*' function come from there.
+    
+    'RAD_STATE_MAX' is the default of '--max'.  Reading rad's tables back needs a character aware
     shell; bar exports a UTF-8 'LC_ALL' whenever the system has one.
     
-    The rules below are about 'rad', the radicle frontend and the repository it is used in.
-    Building a radicle installation itself is Bar.d/radicle.
+    The rules below are about 'rad', the radicle frontend and the repository it is used in.  Building
+    a radicle installation itself is not one of them (radicle is packaged; the tools below
+    'tools/radicle_*' are their own thing).
 
     Variables:
 
-      RADSTATE_RAD (gx)
-        the command to use instead of 'rad'
-        Default: ${RADSTATE_RAD:-rad}
-
-      RADSTATE_MAX (gx)
+      RAD_STATE_MAX (gx)
         default of '--max': items printed per section
-        Default: ${RADSTATE_MAX:-10}
+        Default: ${RAD_STATE_MAX:-10}
 
-      RADSTATE_PATCHES (ga)
-        one record per patch, see 'radstate_collect'
+      RAD_STATE_PATCHES (ga)
+        one record per patch, see 'rad_state_collect'
         Default: ()
 
-      RADSTATE_ISSUES (ga)
-        one record per issue, see 'radstate_collect'
+      RAD_STATE_ISSUES (ga)
+        one record per issue, see 'rad_state_collect'
         Default: ()
 
-      RADSTATE_BRANCHES (ga)
-        one record per local branch, see 'radstate_collect'
+      RAD_STATE_BRANCHES (ga)
+        one record per local branch, see 'rad_state_collect'
         Default: ()
 
-      RADSTATE_COB_TIME (gA)
+      RAD_STATE_COB_TIME (gA)
         '<type>:<id>' -> '<updated> <created> <kind>'
         Default: ()
 
-      RADSTATE_CUT (gi)
+      RAD_STATE_CUT (gi)
         items the last text rendering elided
         Default: 0
 
-      RADSTATE_NOW (gi)
+      RAD_STATE_NOW (gi)
         the timestamp the ages are relative to
         Default: 0
 
     Functions:
+
+      rad_import import a git repository into radicle
         'rad' pads the cells of its tables by character, so the columns can only be cut at the same
         offsets when the shell measures the same way.  That is the case in a UTF-8 locale, which bar
         exports whenever the system has one; in a byte locale a cell holding a non ASCII character
-        shifts everything behind it and 'radstate' says so instead of reporting it wrongly.
+        shifts everything behind it and 'rad_state' says so instead of reporting it wrongly.
         (A double width character -- CJK, emoji -- is one column to a character wise shell and two
         to rad: such a title would shift the columns of its row too.)
-        '│ ●  a1bd13a  title  ...  │' -> 'a1bd13a  title  ...'.  The marker cell is a single token
-        ('●' or '✓', whatever rad prints there) and is dropped: the columns behind it then start at
-        the same offset in the header line and in every row, which is what 'radstate_table' cuts by.
-        A column starts where a run of two or more spaces ends and content follows (plus the first
-        one): the two spaces are the separator between two cells, the padding of a cell is never
-        part of its neighbour.  Neither a name nor a value is needed for this, the header line
-        carries the layout itself.
-        The columns are located by name in the header line (see 'radstate_columns' for where a
-        column starts), then every row is cut at the same offsets -- up to where the next column
-        begins, so that a requested cell never carries the ones behind it.  Cut and not split: a
-        cell may itself contain two spaces (a truncated author reads 'ct_vibes  (you)'), which
-        splitting on whitespace would tear apart.  Every requested name has to exist in the table,
-        otherwise this returns 1 and the caller reports that rad's output could not be understood.
         A state filter is answered with a table of the same shape and only the ids are taken from
         it.  An empty result is 'Nothing to show.' or nothing at all -- that is no id, not an
         error; box drawing characters without a header to cut by are an error (return 1).
         'Nothing to show.' and nothing at all are no rows, not an error; box drawing characters
         without a header to cut by are.
-        Fails with 1 and a diagnostic on stderr when rad failed, with 3 when the failure was that
-        there is no radicle repository: stderr is folded into the output so both can be told apart.
-        The kind and the time of the last event of every patch and issue, into 'RADSTATE_COB_TIME'.
-        Every namespace of the node storage keeps a copy of a COB, so the newest commit over all of
-        them is the last event and its subject names its kind ('Comment', 'Merge revision', ...).
-        A storage which is not there is not an error, the times stay empty then.
           patch  id state own author head title updated created kind
           issue  id state own author labels assignees title updated created kind
           branch name commit ahead patch
@@ -1519,6 +1547,232 @@ MODULE API/RULES
         repository with a radicle identity), 1 when rad failed or its output was not understood.
         the author of a patch of ours is us, naming it again would only repeat the identity
         line; for the others it says who to talk to
+        'rad_state_usage' reports to stderr for a usage error; as the answer to '--help' the
+        same text is the output, so its stream is folded over.
+
+      rad_classes - the branch classes bar defines, one '<class>-' prefix per line
+        Read from the 'is_git_*_branch' rules of the git module, so the vocabulary has one source of
+        truth: the matcher 'fix-* fix/*' contributes the class 'fix-'.  Bar's matches are regexes, so
+        'fix-*' is the prefix 'fix-' followed by anything; the slash forms ('fix/', 'release/') are
+        not classes of a *topic* here -- this host's layout puts a task id behind the slash
+        ('<slug>/<task-id>') -- and the bare trunks ('main', 'master', 'devel') have no prefix at all.
+
+      rad_slug <text>
+        the description as a name slug, empty when nothing is left
+
+      rad_trust_usage [reason]
+        usage on stderr
+
+      rad_trust see the module header
+        Body of the 'rad_trust' rule: one verdict line and the exit code which carries it.  The
+        facts come from the backing tool, this function adds the policy (which is what the triage
+        skill would otherwise spell out per item).
+        The tool exits non-zero when it cannot answer (an unresolvable author is one of those), and
+        still prints the JSON which says why -- so the exit code is reported, never interpreted: an
+        empty answer is 'could not answer', anything else is read and the reason travels on.
+        One jq pass, so the text form and the machine form carry the same numbers.  An author the
+        repository cannot resolve is *not* an error of the tool: it has no data, and that is the
+        'unknown' verdict (exit 2), never 'untrusted'.  The fields are joined with US (0x1f) and not
+        with a tab: an empty field has to survive the read, and IFS whitespace would collapse it.
+
+      rad_topic_usage [reason]
+        usage on stderr
+
+      rad_topic_json <root> <name> <path> <base> <head> <fetched>
+        one object
+
+      rad_topic see the module header
+        Body of the 'rad_topic' rule.  Nothing is created before the class, the name, the clone,
+        the base and the collisions have all been resolved, so a refusal leaves no half-made tree.
+        The clone: always the *main* checkout, also when the caller sits inside a topic tree.
+        The base: the clone's trunk -- upstream *plus* the local work, so branching off the remote
+        tip would drop everything this host has not published yet.  The remote is fetched first to
+        *know* the relation; a trunk which is behind upstream is refused, because updating the trunk
+        is its own step with its own gate.
+
+    Rules:
+
+      rad_import
+        Imports the repository at the toplevel.  Not a question but the way in: it changes the repository
+        (a new remote, the branches pushed) and says what it did.
+
+      rad_state
+        The radicle state of this checkout: repository, identity, patches, issues and the branches
+        which still carry local work.
+
+      rad_patches
+        The patches of this checkout, by state and by author.
+
+      rad_trust
+        The trust verdict of the triage policy; exit 0 trusted, 1 untrusted, 2 could not answer.
+
+      rad_topic
+        Creates '<clone>/.worktrees/<class>-<description>' on the branch of the same name; exit 0 created,
+        1 refused (the tree or the branch exists, the name is too long), 2 could not answer (usage, an
+        unknown class, not a git repository, git failed).
+
+  rad_rules - The rules of the 'rad' module which everything else may depend on before a rulefile is read:
+    the cheap guards of a radicle checkout and the hook into 'activate'.
+    
+    'bar' requires every '*_rules' file on every invocation, so what lives here is a predicate or a
+    hook and nothing else: the heavy bodies, the tables and the rendering are in 'Bar.d/rad' and
+    'Bar.d/radicle_lib', which are loaded when a 'rad_*' rule actually runs.  A '_rules' file which
+    carries neither a clause nor a guard is dead weight parsed on every run.
+    
+      is_rad_available   the command bar runs ('RAD_BIN', else 'rad') is here at all
+      is_rad_repository  that command answers for this checkout ('rad inspect --rid')
+      is_rad_toplevel    we are at the toplevel of such a repository
+      rad_activate       keep '.worktrees/' out of 'git status' (hooked into 'activate')
+    
+    The predicates answer about the same command the helpers run -- 'RAD_BIN' when it is set, 'rad'
+    otherwise -- without pulling the library in for it.  A predicate answers *itself*: it is 0 or 1
+    and a missing command is a 1, not a skip.  A rule which only wants the gate writes it with a
+    question mark ('is_rad_repository? something') and is skipped when it does not hold.
+    
+    The predicates are deliberately *not* registered as repertoire helpers: a helper answers a
+    retrieval question with an output, a predicate prints nothing and is only ever the dependency of
+    another rule ('Bar.d/helpers_rules' documents that split).
+    
+    CONSIDERED AND NOT WIRED -- nothing consumes them yet; each becomes a clause here when something
+    does:
+    
+      'rad sync --announce' in a publish hook -- measured on this host: every 'git push rad' and
+        every 'rad patch edit' syncs with the seeds by itself ('Synced with 3 seed(s)') and a push
+        announces the repository ('rad ls' flips 'local' to 'public'), so such a hook would only
+        repeat what the push already did and pay a network round trip for it;
+      a 'fetch_resources' clause ('git fetch rad') -- it would put the network on a path which
+        'lints' runs through on every invocation;
+      an 'agent' clause failing when 'a local branch carries commits no patch exposes' -- true for
+        every commit in progress, far too noisy for the check an agent runs after each change.
+
+    Rules:
+
+      is_rad_available
+        Succeeds when the command bar runs is available: 'RAD_BIN' when it is set, else 'rad'.
+
+      is_rad_repository
+        Succeeds when that command answers for this checkout, that is when it is a radicle repository.
+        A missing command is a *no* here, not a skip and not the 127 of a shell that cannot find it.
+
+      is_rad_toplevel
+        Succeeds when we are at the toplevel of a radicle repository.
+
+      rad_activate
+        Maintain a radicle checkout for bar: keep '.worktrees/' -- where 'rad_topic' puts the topic trees
+        -- out of 'git status', through '.git/info/exclude'.  Setup, not a question: it writes the line
+        once and is silent when it is already there.
+
+  radicle_lib - Shared radicle plumbing: run 'rad', read what it prints, and emit the JSON literals.
+    
+    The radicle domains of bar -- the state of a checkout, the flow around an incoming item, the way
+    a repository gets onto radicle (all of them 'rad_*' rules of Bar.d/rad) -- ask the same small
+    questions about the tool and its data.  The answers live here once, named after the command they
+    belong to:
+    
+      rad_run                run '$RAD_BIN' and carry its answer and its exit code
+      rad_path               where the node keeps its storage ('rad path')
+      rad_cobs_time          when and how the last event of a patch or issue happened, read from
+                             'refs/namespaces/*/refs/cobs/xyz.radicle.<type>' below that storage
+      rad_age                an epoch as a short age ('6m', '2h', '3d', '1y')
+      rad_line/rad_columns/rad_table
+                             cut the padded, boxed tables 'rad' prints by the names of their
+                             columns
+      rad_exclude_worktrees  keep '<clone>/.worktrees/' out of 'git status'
+      rad_json_string/_number/_list/_flag
+                             the JSON literals of every '--json' form
+    
+    This module defines no rules.  It is the backing library of the 'rad' word, required by the
+    module which carries those rules ('Bar.d/rad') -- a rule name like 'rad_state' makes
+    'rule_autoload' look for a module 'rad_lib', which this file is not: the library of the radicle
+    domain is named after the protocol, not after the word.  Nothing here goes to the network and
+    nothing guesses: a function which cannot answer returns non-zero ('rad_run' tells 'no radicle
+    repository here' (3) from 'rad failed' (1), see there), and the callers own their diagnostics.
+    
+    'RAD_BIN' names the command to run instead of 'rad' (the tests point it at a fake).
+    'RAD_US' is the field separator of the records these functions return and take
+    ('rad_table' hands its cells over that way, US for the same reason Bar.d/helpers_rules uses it:
+    a field may be empty and a space would collapse it), and 'RAD_RS' is the field separator
+    of a 'git for-each-ref' line.  Reading rad's tables back needs a character aware shell; bar
+    exports a UTF-8 'LC_ALL' whenever the system has one.
+
+    Variables:
+
+      RAD_BIN (gx)
+        the command to use instead of 'rad'
+        Default: ${RAD_BIN:-rad}
+
+      RAD_US (gr)
+        the field separator of the records 'rad_table' returns
+        Default: $'\037'
+
+      RAD_RS (gr)
+        the field separator of a 'git for-each-ref' line
+        Default: $'\011'
+
+    Functions:
+
+      rad_run <args>..
+        run '$RAD_BIN' and print what it wrote
+        Fails with 1 and a diagnostic on stderr when rad failed, with 3 when the failure was that
+        there is no radicle repository: stderr is folded into the output so both can be told apart.
+
+      rad_path - the radicle home of this node, empty when 'rad path' does not answer
+        Memoized: the COB reader asks for it once per object type, and every caller within one run
+        wants the same answer.
+
+      rad_cobs_time <type> <rid> <array>
+        when and how the last event of every <type> happened
+        The kind and the time of the last event of every patch and issue into the associative
+        array <array> named by the caller, as '<type>:<id>' -> '<updated> <kind>'.  Every namespace
+        of the node storage keeps a copy of a COB, so the newest commit over all of them is the
+        last event and its subject names its kind ('Comment', 'Merge revision', ...).  A storage
+        which is not there is not an error, the times stay empty then.
+
+      rad_age <now> <epoch>
+        a short age ('6m', '2h', '3d', '1y'), '-' when there is no epoch
+
+      rad_line <line>
+        a table line without the box edges, the state marker cell and the padding
+        '│ ●  a1bd13a  title  ...  │' -> 'a1bd13a  title  ...'.  The marker cell is a single token
+        ('●' or '✓', whatever rad prints there) and is dropped: the columns behind it then start at
+        the same offset in the header line and in every row, which is what 'rad_table' cuts by.
+
+      rad_columns <header>
+        the start offset of every column of a normalized table header
+        A column starts where a run of two or more spaces ends and content follows (plus the first
+        one): the two spaces are the separator between two cells, the padding of a cell is never
+        part of its neighbour.  Neither a name nor a value is needed for this, the header line
+        carries the layout itself.  The offsets are space separated.
+
+      rad_table <table> <column>..
+        the named cells of every row of a 'rad' table, US separated
+        The columns are located by name in the header line (see 'rad_columns' for where a column
+        starts), then every row is cut at the same offsets -- up to where the next column begins,
+        so that a requested cell never carries the ones behind it.  Cut and not split: a cell may
+        itself contain two spaces (a truncated author reads 'ct_vibes  (you)'), which splitting on
+        whitespace would tear apart.  Every requested name has to exist in the table, otherwise
+        this returns 1 and the caller reports that rad's output could not be understood.
+
+      rad_exclude_worktrees <clone>
+        keep '<clone>/.worktrees/' out of 'git status'
+        The line goes into '.git/info/exclude', never into a tracked '.gitignore': the main checkout
+        has to stay byte-identical, and a tree which exists is not a fact about the project.
+
+      rad_json_string <text>
+        a JSON string literal
+        Backslash, quote and tab are escaped, the remaining control characters cannot be
+        represented in the literals bar emits and are dropped.
+
+      rad_json_number <value>
+        the value as a JSON number, 'null' when there is none
+
+      rad_json_list <text>
+        the comma separated text as a JSON array of strings
+        Empty entries and the spaces around them are dropped, so an unset field is an empty array
+        and not an array holding nothing.
+
+      rad_json_flag <text>
+        'true', 'false' or 'null' for a yes/no/unset field
 
   release - Rules for software releases
     

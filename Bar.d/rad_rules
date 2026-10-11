@@ -1,0 +1,59 @@
+# -*- mode: sh; sh-shell: bash -*-
+# vim: set ft=bash:
+# shellcheck shell=bash
+# shellcheck disable=SC2016  # the rule dependencies are single quoted so that they survive verbatim
+
+### The rules of the 'rad' module which everything else may depend on before a rulefile is read:
+### the cheap guards of a radicle checkout and the hook into 'activate'.
+###
+### 'bar' requires every '*_rules' file on every invocation, so what lives here is a predicate or a
+### hook and nothing else: the heavy bodies, the tables and the rendering are in 'Bar.d/rad' and
+### 'Bar.d/radicle_lib', which are loaded when a 'rad_*' rule actually runs.  A '_rules' file which
+### carries neither a clause nor a guard is dead weight parsed on every run.
+###
+###   is_rad_available   the command bar runs ('RAD_BIN', else 'rad') is here at all
+###   is_rad_repository  that command answers for this checkout ('rad inspect --rid')
+###   is_rad_toplevel    we are at the toplevel of such a repository
+###   rad_activate       keep '.worktrees/' out of 'git status' (hooked into 'activate')
+###
+### The predicates answer about the same command the helpers run -- 'RAD_BIN' when it is set, 'rad'
+### otherwise -- without pulling the library in for it.  A predicate answers *itself*: it is 0 or 1
+### and a missing command is a 1, not a skip.  A rule which only wants the gate writes it with a
+### question mark ('is_rad_repository? something') and is skipped when it does not hold.
+###
+### The predicates are deliberately *not* registered as repertoire helpers: a helper answers a
+### retrieval question with an output, a predicate prints nothing and is only ever the dependency of
+### another rule ('Bar.d/helpers_rules' documents that split).
+###
+### CONSIDERED AND NOT WIRED -- nothing consumes them yet; each becomes a clause here when something
+### does:
+###
+###   'rad sync --announce' in a publish hook -- measured on this host: every 'git push rad' and
+###     every 'rad patch edit' syncs with the seeds by itself ('Synced with 3 seed(s)') and a push
+###     announces the repository ('rad ls' flips 'local' to 'public'), so such a hook would only
+###     repeat what the push already did and pay a network round trip for it;
+###   a 'fetch_resources' clause ('git fetch rad') -- it would put the network on a path which
+###     'lints' runs through on every invocation;
+###   an 'agent' clause failing when 'a local branch carries commits no patch exposes' -- true for
+###     every commit in progress, far too noisy for the check an agent runs after each change.
+
+## Succeeds when the command bar runs is available: 'RAD_BIN' when it is set, else 'rad'.
+rule is_rad_available: -- 'is_command_installed "${RAD_BIN:-rad}"'
+
+## Succeeds when that command answers for this checkout, that is when it is a radicle repository.
+## A missing command is a *no* here, not a skip and not the 127 of a shell that cannot find it.
+rule is_rad_repository: --conclusive !is_rad_available -- 'false'
+rule is_rad_repository: -- '"${RAD_BIN:-rad}" inspect --rid >/dev/null 2>&1'
+
+## Succeeds when we are at the toplevel of a radicle repository.
+rule is_rad_toplevel: --conclusive !is_rad_repository -- 'false'
+rule is_rad_toplevel: 'require git_lib' -- '[[ "$(git_toplevel)" = "$PWD" ]]'
+
+## Maintain a radicle checkout for bar: keep '.worktrees/' -- where 'rad_topic' puts the topic trees
+## -- out of 'git status', through '.git/info/exclude'.  Setup, not a question: it writes the line
+## once and is silent when it is already there.
+rule rad_activate: is_rad_repository? 'require radicle_lib' -- 'rad_exclude_worktrees "$(git rev-parse --show-toplevel)"'
+
+# 'activate' is documented as "maintainer curated githooks and other setup to use bar in a checked
+# out repository"; keeping a radicle checkout workable for bar is that other setup.
+rule activate: is_rad_repository? rad_activate

@@ -4,9 +4,10 @@
 
 ### Shared radicle plumbing: run 'rad', read what it prints, and emit the JSON literals.
 ###
-### The two radicle domains of bar -- the state of a checkout (Bar.d/radstate) and the flow around
-### an incoming item (Bar.d/radicle) -- ask the same small questions about the tool and its data.
-### The answers live here once, named after the command they belong to:
+### The radicle domains of bar -- the state of a checkout, the flow around an incoming item, the way
+### a repository gets onto radicle (all of them 'rad_*' rules of Bar.d/rad) -- ask the same small
+### questions about the tool and its data.  The answers live here once, named after the command they
+### belong to:
 ###
 ###   rad_run                run '$RAD_BIN' and carry its answer and its exit code
 ###   rad_path               where the node keeps its storage ('rad path')
@@ -20,23 +21,23 @@
 ###   rad_json_string/_number/_list/_flag
 ###                          the JSON literals of every '--json' form
 ###
-### This module defines no rules.  It is the backing library of the 'radicle' word -- what
-### 'rule_autoload' finds for a 'radicle_*' rule -- and is required by the modules which use it.
-###
-### Nothing here goes to the network and nothing guesses: a function which cannot answer returns
-### non-zero ('rad_run' tells 'no radicle repository here' (3) from 'rad failed' (1), see there),
-### and the callers own their diagnostics.
+### This module defines no rules.  It is the backing library of the 'rad' word, required by the
+### module which carries those rules ('Bar.d/rad') -- a rule name like 'rad_state' makes
+### 'rule_autoload' look for a module 'rad_lib', which this file is not: the library of the radicle
+### domain is named after the protocol, not after the word.  Nothing here goes to the network and
+### nothing guesses: a function which cannot answer returns non-zero ('rad_run' tells 'no radicle
+### repository here' (3) from 'rad failed' (1), see there), and the callers own their diagnostics.
 ###
 ### 'RAD_BIN' names the command to run instead of 'rad' (the tests point it at a fake).
-### 'RADSTATE_US' is the field separator of the records these functions return and take
+### 'RAD_US' is the field separator of the records these functions return and take
 ### ('rad_table' hands its cells over that way, US for the same reason Bar.d/helpers_rules uses it:
-### a field may be empty and a space would collapse it), and 'RADSTATE_RS' is the field separator
+### a field may be empty and a space would collapse it), and 'RAD_RS' is the field separator
 ### of a 'git for-each-ref' line.  Reading rad's tables back needs a character aware shell; bar
 ### exports a UTF-8 'LC_ALL' whenever the system has one.
 
 declare -gx RAD_BIN="${RAD_BIN:-rad}"  ## the command to use instead of 'rad'
-declare -gr RADSTATE_US=$'\037'        ## the field separator of the records 'rad_table' returns
-declare -gr RADSTATE_RS=$'\011'        ## the field separator of a 'git for-each-ref' line
+declare -gr RAD_US=$'\037'        ## the field separator of the records 'rad_table' returns
+declare -gr RAD_RS=$'\011'        ## the field separator of a 'git for-each-ref' line
 
 # --- running rad --------------------------------------------------------------------------------
 
@@ -80,11 +81,11 @@ function rad_cobs_time ## <type> <rid> <array> - when and how the last event of 
     radpath="$(rad_path)" || radpath=""
     storage="$radpath/storage/${rid#rad:}"
     [[ -n "$radpath" && -d "$storage" ]] || return 0
-    while IFS="$RADSTATE_RS" read -r id updated kind; do
+    while IFS="$RAD_RS" read -r id updated kind; do
         [[ -n "$id" ]] || continue
         iset "${target}[$type:$id]" "$updated $kind"
     done < <(git --git-dir="$storage" for-each-ref --sort=-committerdate \
-        --format="%(committerdate:unix)${RADSTATE_RS}%(subject)${RADSTATE_RS}%(refname:lstrip=4)" \
+        --format="%(committerdate:unix)${RAD_RS}%(subject)${RAD_RS}%(refname:lstrip=4)" \
         "refs/namespaces/*/refs/cobs/xyz.radicle.$type/*" 2>/dev/null |
         LC_ALL=C awk -F'\t' '
             {
@@ -236,7 +237,7 @@ function rad_table ## <table> <column>.. - the named cells of every row of a 'ra
             if (( start == 0 )); then
                 row="$cell"
             else
-                row+="${RADSTATE_US}${cell}"
+                row+="${RAD_US}${cell}"
             fi
         done
         printf '%s\n' "$row"
