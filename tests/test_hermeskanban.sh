@@ -575,17 +575,25 @@ check "$RC" "0" "AC12: the helper resolves and runs from another project"
 # AC13 determinism
 # --------------------------------------------------------------------------------------------
 echo "--- AC13 determinism ---"
-kanban --status ready
-first="$OUT"
-kanban --status ready
-check "$OUT" "$first" "AC13: two listings of the same question agree"
-
-# the wall clock and the age of the oldest ready card move between two runs; every other number
-# must not
+# The clock moves between two runs, and a card's age is the clock's, not the board's: the listing
+# carries one age per card, so it is normalized away -- everything else (order, id, state,
+# assignee, priority, dependencies, whether a run is in flight, the title) must be identical.
 settle() {
     sed -E -e 's/^as of: .*/as of: X/' -e 's/\(([0-9]+[dhms])+, [0-9]+s\)/(age)/' \
+        -e 's/((triage|todo|scheduled|ready|running|blocked|review|done) +)[0-9]+[dhms]+ +/\1AGE /' \
         -e 's/"now":[0-9]+/"now":0/' -e 's/"age_seconds":[0-9]+/"age_seconds":0/'
 }
+
+kanban --status ready
+first="$(printf '%s' "$OUT" | settle)"
+# Normalizing the age must not hide its disappearance: the column is pinned by shape, once.
+if printf '%s\n' "$OUT" | grep -qE '(triage|todo|scheduled|ready|running|blocked|review|done) +[0-9]+[dhms]'; then
+    pass "AC13: the card listing carries an age per card (normalized away below)"
+else
+    fail "AC13: the card listing carries no age per card"
+fi
+kanban --status ready
+check "$(printf '%s' "$OUT" | settle)" "$first" "AC13: two listings of the same question agree"
 kanban --json
 first="$(printf '%s' "$OUT" | settle)"
 kanban --json
