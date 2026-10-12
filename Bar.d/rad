@@ -102,7 +102,16 @@
 ### comment of the thread).  This helper reads those blocks back from the node storage and returns
 ### only the entries a trusted source wrote:
 ###
-###   bar rad_comment_metadata <item> --query label [--repo <rid|path>] [--trust <spec>].. [--last] [--json]
+###   bar rad_comment_metadata <item> [--query <key>].. [--repo <rid|path>] [--trust <spec>].. [--last] [--json]
+###
+### The form is '*<key>:<value>' and the vocabulary is open: a key is a word of letters, digits, '_'
+### and '-' which starts with a letter, and *any* key is read back -- what a key means is the
+### caller's business, and only the keys with a registered effect ('label', 'assign', 'unassign')
+### are ever applied (see the write layer below).  The block ends at the first line which is not a
+### marker, so a marker quoted inside a reply is prose, and a value is a single word -- anything else
+### is dropped, never handed back half cut.  '--query' names the keys to answer for and repeats;
+### with no '--query' at all the answer carries every key a comment proposes, and every line names
+### its own key.
 ###
 ### '<item>' is the issue or patch the question is about, short or full -- one item only, not the
 ### whole repository: the ref listing is a single call, the chains (the ops and their payloads) are
@@ -111,7 +120,11 @@
 ###
 ### '--trust' takes 'did:<did|nid>' (that identity, named) and 'contributor(<n>)' (an identity with
 ### at least <n> authored commits); with no '--trust' only the **delegates** are trusted, which is
-### the narrow default.  '--last' keeps only the newest block per item, which is what applies it.
+### the narrow default.  '--last' keeps the newest block *per key* -- the last record of the chain
+### order, not of the hash order: two markers written in the same second are ordered by where they
+### sit in the chain (parent before child), which is what makes 'the newest block' mean what it says.
+### A block which is the newest word on two keys answers for both, and a newer block nobody can be
+### attributed to is skipped, so an older trusted block still applies.
 ### The trust facts come from the same tool 'rad_trust' uses ('tools/radicle_triage/triage-facts').
 ### A delegate's maintenance command reads the trusted proposals back and applies them -- the labels
 ### and assignments themselves still need that delegate's own key.
@@ -1051,23 +1064,26 @@ function rad_metadata_mail_nid ## <mail> - the NID 'rad' writes into a COB op's 
 
 function rad_metadata_marks ## <body> - the marker lines at the very start of <body>
 {
-    ## One '<mark>US<value>' record per line of the block.  The block starts at the comment and ends
-    ## at the first line which is not a marker: a marker quoted inside a reply is prose, not a
-    ## proposal.  A value is a single word -- a label name, a DID, an alias -- and a line which
-    ## carries more is dropped rather than handed back half cut.
-    local body="$1" line mark value
+    ## One '<key>US<value>' record per line of the block.  A marker is '*<key>:<value>' with the key
+    ## a word of letters, digits, '_' and '-', starting with a letter -- the '<key>:<value>' header
+    ## form and no fixed vocabulary: what a key *means* is the caller's business (this reads any key
+    ## back, and only the keys with a registered effect are ever applied).  The block starts at the
+    ## comment and ends at the first line which is not a marker: a marker quoted inside a reply is
+    ## prose, not a proposal.  A value is a single word -- a label name, a DID, an alias -- and a
+    ## line which carries more is dropped rather than handed back half cut.
+    local body="$1" line rest key value
     while IFS= read -r line; do
-        case "$line" in
-        '*label:'*) mark=label; value="${line#'*label:'}" ;;
-        '*assign:'*) mark=assign; value="${line#'*assign:'}" ;;
-        '*unassign:'*) mark=unassign; value="${line#'*unassign:'}" ;;
-        *) break ;;
-        esac
+        [[ "$line" == '*'* ]] || break
+        rest="${line#\*}"
+        [[ "$rest" == *:* ]] || break
+        key="${rest%%:*}"
+        [[ "$key" =~ ^[A-Za-z][A-Za-z0-9_-]*$ ]] || break
+        value="${rest#*:}"
         value="${value#"${value%%[![:space:]]*}"}"
         value="${value%"${value##*[![:space:]]}"}"
         [[ -n "$value" ]] || continue
         [[ "$value" == *[[:space:]]* ]] && continue
-        printf '%s%s%s\n' "$mark" "$RAD_US" "$value"
+        printf '%s%s%s\n' "$key" "$RAD_US" "$value"
     done <<<"$body"
 }
 
@@ -1105,6 +1121,109 @@ function rad_metadata_authored ## <rid> <nid> - the commits that identity author
     return 0
 }
 
+## The trust table of one 'rad_comment_metadata' run.  'Who is trusted' is one question with one
+## answer: the forward read and the '--last' walk both have to ask it, and a caller must not be able
+## to get a different verdict out of the two paths.  Set up once per run, read by 'rad_metadata_trust'.
+declare -gA RAD_COMMENT_METADATA_DELEGATES=()
+declare -gA RAD_COMMENT_METADATA_NAMED=()
+declare -gA RAD_COMMENT_METADATA_ASSIGNED=()
+declare -ga RAD_COMMENT_METADATA_THRESHOLDS=()
+declare -g RAD_METADATA_TRUST=""
+
+function rad_metadata_trust ## <rid> <nid> - the verdict for one identity, in 'RAD_METADATA_TRUST'
+{
+    ## Empty when the identity is not trusted: a delegate, an identity named with '--trust did:…',
+    ## one of the item's assignees, or an identity whose authored commits reach one of the
+    ## 'contributor(<n>)' thresholds.  An identity which is not of the radicle system at all ('z6M…')
+    ## is never trusted -- there is nothing to authenticate such an op against.
+    local rid="$1" mdid="$2" authored n
+    RAD_METADATA_TRUST=""
+    [[ "$mdid" == z6M* ]] || return 0
+    if [[ -n "${RAD_COMMENT_METADATA_DELEGATES[$mdid]:-}" ]]; then
+        RAD_METADATA_TRUST=delegate
+    elif [[ -n "${RAD_COMMENT_METADATA_NAMED[$mdid]:-}" ]]; then
+        RAD_METADATA_TRUST=named
+    elif [[ -n "${RAD_COMMENT_METADATA_ASSIGNED[$mdid]:-}" ]]; then
+        RAD_METADATA_TRUST=assignee
+    else
+        rad_metadata_authored "$rid" "$mdid"
+        authored="$RAD_METADATA_AUTHORED_VALUE"
+        if [[ "$authored" =~ ^[0-9]+$ ]]; then
+            for n in ${RAD_COMMENT_METADATA_THRESHOLDS[@]+"${RAD_COMMENT_METADATA_THRESHOLDS[@]}"}; do
+                if (( authored >= n )); then
+                    RAD_METADATA_TRUST="contributor($n)"
+                    break
+                fi
+            done
+        fi
+    fi
+    return 0
+}
+
+function rad_metadata_body ## <storage> <op> <type> <subject> - the body of one op of that COB
+{
+    ## Only the op kinds which can carry a body are opened ('Comment', 'Edit comment', 'Create
+    ## issue', 'Edit root'), and the payload is the blob 'rad' names '0'.  An op of another COB can
+    ## stand in this chain (rad chains a COB onto the identity commits), so the op has to declare the
+    ## type the ref carries -- else a foreign comment would be reported against this item.
+    ##
+    ## Returns 1 when this op carries no body of that type; the caller skips it either way.
+    local storage="$1" op="$2" type="$3" subject="$4"
+    local body manifest optype
+    case "$subject" in
+    Comment | 'Edit comment' | 'Create issue' | 'Edit root') ;;
+    *) return 1 ;;
+    esac
+    body="$(git --git-dir="$storage" show "$op:0" 2>/dev/null | jq -r '.body // empty' 2>/dev/null)" || body=""
+    [[ -n "$body" ]] || return 1
+    manifest="$(git --git-dir="$storage" show "$op:manifest" 2>/dev/null)" || manifest=""
+    if [[ -n "$manifest" ]]; then
+        optype="$(printf '%s' "$manifest" | jq -r '.typeName // empty' 2>/dev/null)" || optype=""
+        if [[ -n "$optype" && "$optype" != "xyz.radicle.$type" ]]; then
+            return 1
+        fi
+    fi
+    printf '%s' "$body"
+}
+
+function rad_comment_metadata_ref ## <storage> <item> - the one COB the item names
+{
+    ## The ref listing is a single call and it is what says which COB the id names.  A COB lives in
+    ## every namespace which replicated it, so it is keyed by type and id and only the newest tip is
+    ## kept -- else every op would be read once per copy.
+    ##
+    ## Sets RAD_COMMENT_METADATA_REF/_TYPE/_ID.  Returns 3 when the node holds no such issue or
+    ## patch, 2 when the id matches more than one.
+    local storage="$1" item="$2"
+    local epoch ref type id key
+    local -A newest_ref=()
+    RAD_COMMENT_METADATA_REF=""
+    RAD_COMMENT_METADATA_TYPE=""
+    RAD_COMMENT_METADATA_ID=""
+    while IFS="$RAD_RS" read -r epoch ref; do
+        [[ -n "$ref" ]] || continue
+        type="${ref#*refs/cobs/xyz.radicle.}"; type="${type%%/*}"
+        id="${ref##*/}"
+        [[ "$id" == "$item"* ]] || continue
+        key="$type:$id"
+        [[ -n "${newest_ref[$key]:-}" ]] && continue
+        newest_ref[$key]="$ref"
+    done < <(git --git-dir="$storage" for-each-ref --sort=-committerdate \
+        --format="%(committerdate:unix)${RAD_RS}%(refname)" \
+        'refs/namespaces/*/refs/cobs/xyz.radicle.issue/*' \
+        'refs/namespaces/*/refs/cobs/xyz.radicle.patch/*' 2>/dev/null)
+
+    (( ${#newest_ref[@]} )) || return 3
+    (( ${#newest_ref[@]} == 1 )) || return 2      ## an issue and a patch share the prefix
+
+    for key in "${!newest_ref[@]}"; do
+        RAD_COMMENT_METADATA_REF="${newest_ref[$key]}"
+        RAD_COMMENT_METADATA_TYPE="${key%%:*}"
+        RAD_COMMENT_METADATA_ID="${key#*:}"
+    done
+    return 0
+}
+
 function rad_comment_metadata_assignees ## <storage> <ref> - the item's current assignees
 {
     ## The newest 'assign' op of the chain carries the whole set (a radicle op is the new value of
@@ -1127,72 +1246,34 @@ function rad_comment_metadata_assignees ## <storage> <ref> - the item's current 
     return 0
 }
 
-function rad_comment_metadata_collect ## <storage> <item> - the marker lines of one item
+function rad_comment_metadata_collect ## <storage> <ref> <type> <id> - the marker lines of one item
 {
-    ## Reads the chain of the one item asked for, never the whole repository: the ref listing is a
-    ## single call (it is what says which COB the id names), the ops and their payloads are opened
-    ## for that COB alone.  A COB lives in every namespace which replicated it, so it is keyed by
-    ## type and id and only the newest tip is walked -- else every op would be read once per copy.
-    ## Only the op kinds which can carry a body are opened ('Comment', 'Edit comment', 'Create
-    ## issue', 'Edit root'), and the payload is the blob 'rad' names '0'.
-    ##
-    ## Returns 3 when the node holds no such issue or patch, 2 when the id matches more than one.
-    local storage="$1" item="$2"
-    local key ref type id op mail iso epoch subject body manifest optype mark value
+    ## Reads the chain of the one item the ref names -- never the whole repository: the ops and their
+    ## payloads are opened for that COB alone ('rad_comment_metadata_ref' is what resolved which one
+    ## it is).  Answers oldest first, and inside one second in chain order: the records are laid down
+    ## in the order the chain is walked and the sort keeps that order (see below).
+    local storage="$1" ref="$2" type="$3" id="$4"
+    local op mail iso epoch subject body key value
     local -A newest_ref=()
 
     RAD_COMMENT_METADATA=()
-    while IFS="$RAD_RS" read -r epoch ref; do
-        [[ -n "$ref" ]] || continue
-        type="${ref#*refs/cobs/xyz.radicle.}"; type="${type%%/*}"
-        id="${ref##*/}"
-        [[ "$id" == "$item"* ]] || continue
-        key="$type:$id"
-        [[ -n "${newest_ref[$key]:-}" ]] && continue
-        newest_ref[$key]="$ref"
-    done < <(git --git-dir="$storage" for-each-ref --sort=-committerdate \
-        --format="%(committerdate:unix)${RAD_RS}%(refname)" \
-        'refs/namespaces/*/refs/cobs/xyz.radicle.issue/*' \
-        'refs/namespaces/*/refs/cobs/xyz.radicle.patch/*' 2>/dev/null)
+    while IFS="$RAD_RS" read -r op mail iso epoch subject; do
+        body="$(rad_metadata_body "$storage" "$op" "$type" "$subject")" || continue
+        while IFS="$RAD_US" read -r key value; do
+            [[ -n "$key" && -n "$value" ]] || continue
+            RAD_COMMENT_METADATA+=( "$epoch${RAD_US}$iso${RAD_US}$type${RAD_US}${id:0:7}${RAD_US}$op${RAD_US}${mail%%@*}${RAD_US}$(rad_metadata_mail_nid "$mail")${RAD_US}$key${RAD_US}$value" )
+        done < <(rad_metadata_marks "$body")
+    done < <(git --git-dir="$storage" log --reverse --topo-order \
+        --format="%H${RAD_RS}%ae${RAD_RS}%aI${RAD_RS}%at${RAD_RS}%s" "$ref" 2>/dev/null)
 
-    (( ${#newest_ref[@]} )) || return 3
-    (( ${#newest_ref[@]} == 1 )) || return 2      ## an issue and a patch share the prefix
-
-    for key in "${!newest_ref[@]}"; do
-        ref="${newest_ref[$key]}"
-        type="${key%%:*}"
-        id="${key#*:}"
-        rad_comment_metadata_assignees "$storage" "$ref"
-        while IFS="$RAD_RS" read -r op mail iso epoch subject; do
-            case "$subject" in
-            Comment | 'Edit comment' | 'Create issue' | 'Edit root') ;;
-            *) continue ;;
-            esac
-            body="$(git --git-dir="$storage" show "$op:0" 2>/dev/null | jq -r '.body // empty' 2>/dev/null)" || body=""
-            [[ -n "$body" ]] || continue
-            ## An op of another COB can stand in this chain (rad chains a COB onto the identity
-            ## commits), so the op has to declare the type the ref carries -- else a foreign
-            ## comment would be reported against this item.
-            manifest="$(git --git-dir="$storage" show "$op:manifest" 2>/dev/null)" || manifest=""
-            if [[ -n "$manifest" ]]; then
-                optype="$(printf '%s' "$manifest" | jq -r '.typeName // empty' 2>/dev/null)" || optype=""
-                if [[ -n "$optype" && "$optype" != "xyz.radicle.$type" ]]; then
-                    continue
-                fi
-            fi
-            while IFS="$RAD_US" read -r mark value; do
-                [[ -n "$mark" && -n "$value" ]] || continue
-                RAD_COMMENT_METADATA+=( "$epoch${RAD_US}$iso${RAD_US}$type${RAD_US}${id:0:7}${RAD_US}$op${RAD_US}${mail%%@*}${RAD_US}$(rad_metadata_mail_nid "$mail")${RAD_US}$mark${RAD_US}$value" )
-            done < <(rad_metadata_marks "$body")
-        done < <(git --git-dir="$storage" log --reverse --format="%H${RAD_RS}%ae${RAD_RS}%aI${RAD_RS}%at${RAD_RS}%s" "$ref" 2>/dev/null)
-    done
-
-    ## Chronological, the item and the op as the tie break -- two ops of one second are ordered, so
-    ## '--last' has something to point at.
+    ## Chronological, and inside one second in *chain order*: the records were laid down as the chain
+    ## was walked (parent first), so a stable sort on the epoch keeps two markers written in the same
+    ## second in the order they were written.  The op sha is deliberately *not* a tie break -- it
+    ## would order a pair by hash, and '--last' would point at the wrong one of the two.
     if (( ${#RAD_COMMENT_METADATA[@]} > 1 )); then
         local sorted
         sorted="$(printf '%s\n' "${RAD_COMMENT_METADATA[@]}" |
-            LC_ALL=C sort -t"$RAD_US" -k1,1n -k3,3 -k4,4 -k5,5)" || sorted=""
+            LC_ALL=C sort -s -t"$RAD_US" -k1,1n)" || sorted=""
         RAD_COMMENT_METADATA=()
         while IFS= read -r line; do
             [[ -n "$line" ]] && RAD_COMMENT_METADATA+=( "$line" )
@@ -1200,15 +1281,102 @@ function rad_comment_metadata_collect ## <storage> <item> - the marker lines of 
     fi
 }
 
+function rad_comment_metadata_newest ## <storage> <rid> <ref> <type> <id> <key>.. - the newest block per key
+{
+    ## The '--last' walk: newest op first, and it stops as soon as every requested key has its newest
+    ## *trusted* entry -- so the common case opens one payload instead of the whole chain.  The walk
+    ## skips a marker whose author is not attributable, and that is not a stopper: an older trusted
+    ## block still applies, else one comment by a passer-by would freeze an item's state.
+    ##
+    ## 'The newest block carrying that key, taken whole' is meant per key: every line of a key it
+    ## found is returned (a comment proposing two labels is one application), and a key nobody asked
+    ## for is left alone.  No <key> at all asks for *every* key, which is what the forward read
+    ## answers; then the walk cannot stop early, because a key may first appear anywhere in the chain.
+    ##
+    ## Answers in the shape the forward read answers in -- oldest first, one
+    ## '<epoch>US<iso>US<type>US<id>US<op>US<alias>US<did>US<trust>US<key>US<value>' per line.
+    local storage="$1" rid="$2" ref="$3" type="$4" id="$5"
+    shift 5
+    local -a wanted=( "$@" ) chain=() order=() lines=()
+    local all=""
+    local -A is_wanted=() have=() chosen=() answered=()
+    local -i left=${#wanted[@]} n i
+    local key want line op mail iso epoch subject body mdid trust
+
+    if (( ${#wanted[@]} == 0 )); then
+        all=1
+    else
+        for key in "${wanted[@]}"; do
+            is_wanted["$key"]=1
+        done
+    fi
+
+    while IFS="$RAD_RS" read -r op mail iso epoch subject; do
+        [[ -n "$op" ]] || continue
+        chain+=( "$op${RAD_US}$mail${RAD_US}$iso${RAD_US}$epoch${RAD_US}$subject" )
+    done < <(git --git-dir="$storage" log --reverse --topo-order \
+        --format="%H${RAD_RS}%ae${RAD_RS}%aI${RAD_RS}%at${RAD_RS}%s" "$ref" 2>/dev/null)
+
+    ## Walked in the order the forward read *ends* in -- newest epoch first, and inside one second the
+    ## chain's last position -- so 'the newest block' is the last record of that answer and not merely
+    ## the tip of the chain.  A chain whose dates are not monotone (an op replayed with an older
+    ## clock) would otherwise let the two paths point at different records.
+    while IFS= read -r n; do
+        [[ -n "$n" ]] && order+=( "$n" )
+    done < <(
+        for (( i = 0; i < ${#chain[@]}; i++ )); do
+            IFS="$RAD_US" read -r _ _ _ epoch _ <<<"${chain[i]}"
+            printf '%s%s%s\n' "$epoch" "$RAD_US" "$i"
+        done | LC_ALL=C sort -t"$RAD_US" -k1,1nr -k2,2nr | cut -d"$RAD_US" -f2
+    )
+
+    for n in ${order[@]+"${order[@]}"}; do
+        (( left > 0 )) || [[ -n "$all" ]] || break
+        IFS="$RAD_US" read -r op mail iso epoch subject <<<"${chain[n]}"
+        body="$(rad_metadata_body "$storage" "$op" "$type" "$subject")" || continue
+        mdid="$(rad_metadata_mail_nid "$mail")"
+        rad_metadata_trust "$rid" "$mdid"
+        trust="$RAD_METADATA_TRUST"
+        [[ -n "$trust" ]] || continue
+        ## The markers of this op.  A key nobody has answered yet is answered by this op -- with
+        ## every line of the key it carries, so a comment proposing two labels is one application --
+        ## and a key a *newer* op already answered is not answered again here.
+        lines=() answered=()
+        while IFS="$RAD_US" read -r key want; do
+            [[ -n "$key" && -n "$want" ]] || continue
+            [[ -z "$all" && -z "${is_wanted[$key]:-}" ]] && continue
+            lines+=( "$key${RAD_US}$want" )
+            [[ -n "${have[$key]:-}" ]] && continue
+            have["$key"]=1
+            answered["$key"]=1
+            [[ -z "${is_wanted[$key]:-}" ]] || left=$(( left - 1 ))
+        done < <(rad_metadata_marks "$body")
+        (( ${#answered[@]} )) || continue
+        for line in ${lines[@]+"${lines[@]}"}; do
+            key="${line%%"$RAD_US"*}"
+            [[ -n "${answered[$key]:-}" ]] || continue
+            chosen["$n"]+="$epoch${RAD_US}$iso${RAD_US}$type${RAD_US}${id:0:7}${RAD_US}$op${RAD_US}${mail%%@*}${RAD_US}$mdid${RAD_US}$trust${RAD_US}$key${RAD_US}${line#*"$RAD_US"}"$'\n'
+        done
+    done
+
+    ## Oldest first, like the forward read: the chain position decides the order, never the date --
+    ## an add and its undo land in the same second routinely (the walk above is newest first).
+    for (( i = ${#order[@]} - 1; i >= 0; i-- )); do
+        n="${order[i]}"
+        printf '%s' "${chosen["$n"]:-}"
+    done
+    return 0
+}
+
 function rad_comment_metadata_json ## - the whole answer as one object
 {
     ## Complete, never elided: the entries the filter kept, oldest first.
-    local entry epoch iso type id op alias did trust value first=""
+    local entry epoch iso type id op alias did trust key value first=""
     local -a entries=()
     if (( ${#RAD_COMMENT_METADATA_TRUSTED[@]} )); then
-        while IFS="$RAD_US" read -r epoch iso type id op alias did trust value; do
+        while IFS="$RAD_US" read -r epoch iso type id op alias did trust key value; do
             [[ -n "$value" ]] || continue
-            entries+=( "{\"item\":$(json_string "$type"),\"id\":$(json_string "$id"),\"op\":$(json_string "$op"),\"author\":$(json_string "$alias"),\"did\":$(json_string "did:key:$did"),\"trust\":$(json_string "$trust"),\"date\":$(json_string "$iso"),\"value\":$(json_string "$value")}" )
+            entries+=( "{\"item\":$(json_string "$type"),\"key\":$(json_string "$key"),\"id\":$(json_string "$id"),\"op\":$(json_string "$op"),\"author\":$(json_string "$alias"),\"did\":$(json_string "did:key:$did"),\"trust\":$(json_string "$trust"),\"date\":$(json_string "$iso"),\"value\":$(json_string "$value")}" )
         done <<<"$(printf '%s\n' "${RAD_COMMENT_METADATA_TRUSTED[@]}")"
     fi
     for entry in "${entries[@]}"; do
@@ -1230,20 +1398,22 @@ function rad_comment_metadata_json ## - the whole answer as one object
 function rad_comment_metadata_usage ## [reason] - usage on stderr
 {
     [[ -n "${1:-}" ]] && printf 'rad_comment_metadata: %s\n' "$1" >&2
-    printf 'usage: rad_comment_metadata <item> --query <label|assign|unassign> [--repo <rid|path>] [--trust <spec>].. [--last] [--json]\n' >&2
+    printf 'usage: rad_comment_metadata <item> [--query <key>].. [--repo <rid|path>] [--trust <spec>].. [--last] [--json]\n' >&2
     printf '       <item> the issue or patch (short or full id) the question is about\n' >&2
+    printf '       <key>  one proposal key to answer for, repeatable; no key at all answers for every\n' >&2
+    printf '              key a comment proposes.  The keys with an effect are label, assign, unassign\n' >&2
     printf '       <spec> one of did:<did|nid>, contributor(<n>); the delegates and the identities\n' >&2
     printf '              the item is assigned to are trusted without a spec\n' >&2
+    printf '       --last the newest block per key, which is what applies it\n' >&2
 }
 
 function rad_comment_metadata ## see the module header
 {
-    local -a args=() specs=() thresholds=() parts=()
-    local raw arg value json="" repo="" query="" last="" item="" item_rc=0
-    local toplevel="" rid="" radpath="" storage="" delegates="" line did spec
-    local epoch iso type id op alias mdid trust mark authored n
-    local -A is_delegate=() is_named=() is_assignee=()
-    local -a trusted=() kept=()
+    local -a args=() specs=() parts=() queries=()
+    local raw arg value json="" repo="" last="" item="" item_rc=0
+    local toplevel="" rid="" radpath="" storage="" delegates="" line did spec key
+    local epoch iso type id op alias mdid trust n
+    local -a trusted=()
     local -i i=0
 
     for raw in "$@"; do
@@ -1273,7 +1443,13 @@ function rad_comment_metadata ## see the module header
             value="${args[i]}"
             i=$(( i + 1 ))
             case "$arg" in
-            --query) query="$value" ;;
+            --query)
+                if [[ ! "$value" =~ ^[A-Za-z][A-Za-z0-9_-]*$ ]]; then
+                    rad_comment_metadata_usage "invalid --query '$value': a key is a word of letters, digits, '_' and '-'"
+                    return 2
+                fi
+                queries+=( "$value" )
+                ;;
             --repo) repo="$value" ;;
             --trust)
                 local part
@@ -1304,11 +1480,6 @@ function rad_comment_metadata ## see the module header
         rad_comment_metadata_usage "the item is required: an issue or patch id, short or full"
         return 2
     fi
-    case "$query" in
-    label | assign | unassign) ;;
-    "") rad_comment_metadata_usage "--query is required" ; return 2 ;;
-    *) rad_comment_metadata_usage "unknown --query '$query', want label, assign or unassign" ; return 2 ;;
-    esac
     if ! command -v jq >/dev/null 2>&1; then
         printf 'rad_comment_metadata: jq is required to read the op payloads\n' >&2
         return 2
@@ -1367,32 +1538,37 @@ function rad_comment_metadata ## see the module header
     fi
 
     ## Who is trusted: the delegates answer from the identity document, 'did:' names one identity and
-    ## 'contributor(<n>)' is decided from the authored commits the fact tool counts.
+    ## 'contributor(<n>)' is decided from the authored commits the fact tool counts.  The table is
+    ## module state, because the '--last' walk asks the same question from its own loop.
+    RAD_COMMENT_METADATA_DELEGATES=()
+    RAD_COMMENT_METADATA_NAMED=()
+    RAD_COMMENT_METADATA_ASSIGNED=()
+    RAD_COMMENT_METADATA_THRESHOLDS=()
     delegates="$(rad_run inspect "$rid" --delegates)" || return $?
     while IFS= read -r line; do
         did="${line%% *}"
         [[ -n "$did" ]] || continue
-        is_delegate["$(rad_metadata_nid "$did")"]=1
+        RAD_COMMENT_METADATA_DELEGATES["$(rad_metadata_nid "$did")"]=1
     done <<<"$delegates"
 
     for spec in "${specs[@]}"; do
         case "$spec" in
-        did:*) is_named["$(rad_metadata_nid "$spec")"]=1 ;;
+        did:*) RAD_COMMENT_METADATA_NAMED["$(rad_metadata_nid "$spec")"]=1 ;;
         'contributor('*')')
             n="${spec#'contributor('}"; n="${n%')'}"
-            thresholds+=( "$n" )
+            RAD_COMMENT_METADATA_THRESHOLDS+=( "$n" )
             ;;
         esac
     done
 
     ## An asked-for contributor threshold needs the facts command: without it every count reads
     ## 'unknown', which would answer 'nothing is trusted' where the operator asked for trust.
-    if (( ${#thresholds[@]} )) && [[ -z "${RAD_TRUST_CMD:-}" ]]; then
+    if (( ${#RAD_COMMENT_METADATA_THRESHOLDS[@]} )) && [[ -z "${RAD_TRUST_CMD:-}" ]]; then
         rad_comment_metadata_usage "'--trust contributor(<n>)' needs RAD_TRUST_CMD: the command which answers the authored commits"
         return 2
     fi
 
-    rad_comment_metadata_collect "$storage" "$item"
+    rad_comment_metadata_ref "$storage" "$item"
     item_rc=$?
     if (( item_rc != 0 )); then
         case "$item_rc" in
@@ -1406,63 +1582,42 @@ function rad_comment_metadata ## see the module header
             ;;
         esac
     fi
+    rad_comment_metadata_assignees "$storage" "$RAD_COMMENT_METADATA_REF"
 
     ## The item's assignees are a trust source of their own: assigning an issue to a contributor
     ## makes that contributor's proposals count -- so the same query can answer differently before
     ## and after an assignment.  That is the design: trust is read when it is asked for, never
     ## stored, and it is always an identity of the radicle system ('z6M…') which carries it.
     for did in ${RAD_COMMENT_METADATA_ASSIGNEES[@]+"${RAD_COMMENT_METADATA_ASSIGNEES[@]}"}; do
-        is_assignee["$did"]=1
+        RAD_COMMENT_METADATA_ASSIGNED["$did"]=1
     done
 
-    RAD_COMMENT_METADATA_TRUSTED=()
-    while IFS="$RAD_US" read -r epoch iso type id op alias mdid mark value; do
-        [[ "$mark" == "$query" ]] || continue
-        ## No radicle identity in the op's author (a git-only author, or a mail which is not
-        ## '<alias>@<nid>'): there is nothing to authenticate against, so the proposal is dropped
-        ## -- silently, like every other proposal which is not trusted.
-        [[ "$mdid" == z6M* ]] || continue
-        trust=""
-        if [[ -n "${is_delegate[$mdid]:-}" ]]; then
-            trust=delegate
-        elif [[ -n "${is_named[$mdid]:-}" ]]; then
-            trust=named
-        elif [[ -n "${is_assignee[$mdid]:-}" ]]; then
-            trust=assignee
-        else
-            rad_metadata_authored "$rid" "$mdid"
-            authored="$RAD_METADATA_AUTHORED_VALUE"
-            if [[ "$authored" =~ ^[0-9]+$ ]]; then
-                for n in "${thresholds[@]}"; do
-                    if (( authored >= n )); then
-                        trust="contributor($n)"
-                        break
-                    fi
-                done
-            fi
-        fi
-        [[ -n "$trust" ]] || continue
-        trusted+=( "$epoch${RAD_US}$iso${RAD_US}$type${RAD_US}$id${RAD_US}$op${RAD_US}$alias${RAD_US}$mdid${RAD_US}$trust${RAD_US}$value" )
-    done <<<"$(printf '%s\n' "${RAD_COMMENT_METADATA[@]:-}")"
-
-    if [[ -n "$last" ]] && (( ${#trusted[@]} )); then
-        ## The newest block per item -- keyed on the *op*, not on the record: a comment which
-        ## proposes two labels is one block and has to come back as the pair it is.
-        local -A newest_op=()
-        for line in "${trusted[@]}"; do
-            IFS="$RAD_US" read -r epoch iso type id op alias mdid trust value <<<"$line"
-            newest_op["$type:$id"]="$op"
-        done
-        for line in "${trusted[@]}"; do
-            IFS="$RAD_US" read -r epoch iso type id op alias mdid trust value <<<"$line"
-            if [[ "${newest_op["$type:$id"]:-}" == "$op" ]]; then
-                kept+=( "$line" )
-            fi
-        done
-        trusted=( ${kept[@]+"${kept[@]}"} )
-    fi
-    RAD_COMMENT_METADATA_QUERY="$query"
+    RAD_COMMENT_METADATA_QUERY="${queries[*]}"
     RAD_COMMENT_METADATA_RID="$rid"
+    RAD_COMMENT_METADATA_TRUSTED=()
+    if [[ -n "$last" ]]; then
+        ## '--last' is the newest block *per key* and it is answered from the tip of the chain
+        ## backwards: what applies is known without reading what it superseded.
+        while IFS="$RAD_US" read -r epoch iso type id op alias mdid trust key value; do
+            [[ -n "$value" ]] || continue
+            trusted+=( "$epoch${RAD_US}$iso${RAD_US}$type${RAD_US}$id${RAD_US}$op${RAD_US}$alias${RAD_US}$mdid${RAD_US}$trust${RAD_US}$key${RAD_US}$value" )
+        done < <(rad_comment_metadata_newest "$storage" "$rid" "$RAD_COMMENT_METADATA_REF" \
+            "$RAD_COMMENT_METADATA_TYPE" "$RAD_COMMENT_METADATA_ID" ${queries[@]+"${queries[@]}"})
+    else
+        rad_comment_metadata_collect "$storage" "$RAD_COMMENT_METADATA_REF" \
+            "$RAD_COMMENT_METADATA_TYPE" "$RAD_COMMENT_METADATA_ID"
+        while IFS="$RAD_US" read -r epoch iso type id op alias mdid key value; do
+            [[ -n "$value" ]] || continue
+            (( ${#queries[@]} == 0 )) || [[ " ${queries[*]} " == *" $key "* ]] || continue
+            ## No radicle identity in the op's author (a git-only author, or a mail which is not
+            ## '<alias>@<nid>'): there is nothing to authenticate against, so the proposal is dropped
+            ## -- silently, like every other proposal which is not trusted.
+            rad_metadata_trust "$rid" "$mdid"
+            trust="$RAD_METADATA_TRUST"
+            [[ -n "$trust" ]] || continue
+            trusted+=( "$epoch${RAD_US}$iso${RAD_US}$type${RAD_US}$id${RAD_US}$op${RAD_US}$alias${RAD_US}$mdid${RAD_US}$trust${RAD_US}$key${RAD_US}$value" )
+        done <<<"$(printf '%s\n' "${RAD_COMMENT_METADATA[@]:-}")"
+    fi
     RAD_COMMENT_METADATA_TRUSTED=( ${trusted[@]+"${trusted[@]}"} )
 
     if [[ -n "$json" ]]; then
@@ -1471,9 +1626,9 @@ function rad_comment_metadata ## see the module header
     fi
     (( ${#trusted[@]} )) || return 0      ## nothing trusted is an answer, not a failure
     for line in "${trusted[@]}"; do
-        IFS="$RAD_US" read -r epoch iso type id op alias mdid trust value <<<"$line"
+        IFS="$RAD_US" read -r epoch iso type id op alias mdid trust key value <<<"$line"
         printf '%s item=%s:%s author=%s did=did:key:%s trust=%s date=%s value=%s\n' \
-            "$query" "$type" "$id" "$alias" "$mdid" "$trust" "$iso" "$value"
+            "$key" "$type" "$id" "$alias" "$mdid" "$trust" "$iso" "$value"
     done
 }
 

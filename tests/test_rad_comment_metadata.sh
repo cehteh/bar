@@ -30,6 +30,14 @@
 #   AC18 the parsing edges: CRLF, indented/quoted markers, prose before the block, quotes/unicode
 #        in a value, a marker at the end of the body without a trailing newline
 #   AC19 a node without 'rad' reports the missing tool (not missing storage)
+#   AC20 the key form is open ('*<key>:<value>'): any key is read back -- keys with no registered
+#        effect included -- and the bounds of a key end the block like any other non-marker line
+#   AC21 '--query' is optional (no key at all answers every key) and repeatable; every line names
+#        its own key
+#   AC22 two markers of one second come back in chain order, not in hash order; '--last' is the
+#        last record also when the smaller sha is the newer one
+#   AC23 '--last' is per key (a key nobody asked for is not answered), and a newest block nobody can
+#        be attributed to is skipped so that an older trusted block still applies
 
 set -euo pipefail
 
@@ -214,6 +222,54 @@ EDGES_TIP="$(op "$DELEGATE_NID" issue "$EDGES" "Comment" \
     '{"body":"*label:eof","type":"comment"}' \
     "$EDGES_TIP" "delegate" "$DELEGATE_NID" "2026-10-11T10:21:00+02:00")"
 
+# -- a fifth issue: the generic '<key>:<value>' form and the bounds of a key ----------------------
+KEYS="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+KEYS_ID="${KEYS:0:7}"
+KEYS_TIP="$(op "$DELEGATE_NID" issue "$KEYS" "Create issue" \
+    '{"body":"*issue:5555555\n*Note:hello\n*label:seen\nthe key form is the open one","type":"issue","title":"any key"}' \
+    "" "delegate" "$DELEGATE_NID" "2026-10-11T10:22:00+02:00")"
+# a key which does not start with a letter is no marker: the block ends at that line
+KEYS_TIP="$(op "$DELEGATE_NID" issue "$KEYS" "Comment" \
+    '{"body":"*9bad:no\n*label:after-digits","type":"comment"}' \
+    "$KEYS_TIP" "delegate" "$DELEGATE_NID" "2026-10-11T10:23:00+02:00")"
+# and neither is a key carrying a character outside the charset, or no key at all
+KEYS_TIP="$(op "$DELEGATE_NID" issue "$KEYS" "Comment" \
+    '{"body":"*weird.key:v\n*label:after-dot","type":"comment"}' \
+    "$KEYS_TIP" "delegate" "$DELEGATE_NID" "2026-10-11T10:24:00+02:00")"
+KEYS_TIP="$(op "$DELEGATE_NID" issue "$KEYS" "Comment" \
+    '{"body":"*:novalue\n*label:after-keyless","type":"comment"}' \
+    "$KEYS_TIP" "delegate" "$DELEGATE_NID" "2026-10-11T10:25:00+02:00")"
+# an empty value and one carrying whitespace are dropped, and the block goes on
+KEYS_TIP="$(op "$DELEGATE_NID" issue "$KEYS" "Comment" \
+    '{"body":"*label:\n*label:two words\n*label:after-empty","type":"comment"}' \
+    "$KEYS_TIP" "delegate" "$DELEGATE_NID" "2026-10-11T10:26:00+02:00")"
+
+# -- a sixth issue: two marker ops in one second, in the opposite order than their hashes ---------
+ORDER="cccccccccccccccccccccccccccccccccccccccc"
+ORDER_ID="${ORDER:0:7}"
+ORDER_TIP="$(op "$DELEGATE_NID" issue "$ORDER" "Create issue" \
+    '{"body":"*label:ordering-filler\none block, so that the item is not empty","type":"issue","title":"ordering"}' \
+    "" "delegate" "$DELEGATE_NID" "2026-10-11T10:27:00+02:00")"
+# The defect this pins: two markers written in the same second were ordered by their op sha.  So the
+# fixture has to be one where the hash order is the *reverse* of the chain order -- the newer record
+# with the smaller sha -- else it would pass either way.  The nonce varies the payload until a pair
+# is found (and the loop is bounded: not finding one is a broken fixture, and says so).
+ORDER_A=""
+ORDER_B=""
+nonce=0
+while (( nonce < 60 )); do
+    ORDER_A="$(op "$DELEGATE_NID" issue "$ORDER" "Comment" \
+        "{\"body\":\"*label:first\nnonce $nonce\",\"type\":\"comment\"}" \
+        "$ORDER_TIP" "delegate" "$DELEGATE_NID" "2026-10-11T10:28:00+02:00")"
+    ORDER_B="$(op "$DELEGATE_NID" issue "$ORDER" "Comment" \
+        "{\"body\":\"*label:second\nnonce $nonce\",\"type\":\"comment\"}" \
+        "$ORDER_A" "delegate" "$DELEGATE_NID" "2026-10-11T10:28:00+02:00")"
+    if [[ "$ORDER_B" < "$ORDER_A" ]]; then
+        break
+    fi
+    nonce=$(( nonce + 1 ))
+done
+
 # -- the patch: a delegate comment carries a marker, and the tricky bodies -----------------------
 PATCH_TIP="$(op "$DELEGATE_NID" patch "$PATCH" "Initial revision" \
     '{"type":"revision","description":"a patch","oid":"0000000000000000000000000000000000000000","base":"1111111111111111111111111111111111111111"}' \
@@ -336,12 +392,12 @@ run "$PROJECT" rad_comment_metadata
 check "$RC" 2 "no item, no query"
 err "$PROJECT" rad_comment_metadata
 contains "$OUT" "usage: rad_comment_metadata <item>" "and it says how to call it"
-run "$PROJECT" rad_comment_metadata "$ISSUE_ID"
-check "$RC" 2 "no query"
 run "$PROJECT" rad_comment_metadata "$ISSUE_ID" "$PATCH_ID" --query label
 check "$RC" 2 "two items"
-run "$PROJECT" rad_comment_metadata "$ISSUE_ID" --query bogus
-check "$RC" 2 "an unknown query"
+run "$PROJECT" rad_comment_metadata "$ISSUE_ID" --query "9bad"
+check "$RC" 2 "a key which cannot stand at the start of a marker"
+run "$PROJECT" rad_comment_metadata "$ISSUE_ID" --query "weird.key"
+check "$RC" 2 "a key carrying a character no marker can carry"
 run "$PROJECT" rad_comment_metadata "$ISSUE_ID" --query label --trust "somebody"
 check "$RC" 2 "an unknown trust spec"
 run "$PROJECT" rad_comment_metadata "$ISSUE_ID" --query label --trust "contributor(x)"
@@ -445,6 +501,84 @@ RC=0
 OUT="$(cd "$PROJECT" && RAD_BIN=/nonexistent/rad RAD_TRUST_CMD="$FACTS" "$BAR" rad_comment_metadata "$ISSUE_ID" --query label 2>&1 >/dev/null)" || RC=$?
 check "$RC" 1 "exit 1"
 contains "$OUT" "is not installed" "and it names the missing tool, not the storage"
+echo
+
+echo "AC20 the key form is open: any key is read back, and the bounds of a key end the block"
+run "$PROJECT" rad_comment_metadata "$KEYS_ID"
+check "$RC" 0 "exit 0"
+check "$(lines_of "$OUT")" 4 "four proposals: issue, Note and two labels"
+contains "$OUT" "issue item=issue:$KEYS_ID" "a key with no registered effect is read back"
+contains "$OUT" "value=5555555" "and carries its value"
+contains "$OUT" "Note item=issue:$KEYS_ID" "a key is read as it is written (a capital letter is a key too)"
+run "$PROJECT" rad_comment_metadata "$KEYS_ID" --query Note
+check "$(lines_of "$OUT")" 1 "asking for that key answers for it alone"
+absent "$OUT" "value=seen" "…and no other key leaks into the answer"
+run "$PROJECT" rad_comment_metadata "$KEYS_ID" --query label
+check "$(lines_of "$OUT")" 2 "two label blocks of that item"
+contains "$OUT" "value=after-empty" "an empty value and one with whitespace are dropped, the block goes on"
+absent "$OUT" "value=after-digits" "a key not starting with a letter is no marker: the block ends"
+absent "$OUT" "value=after-dot" "so is a key with a character outside the charset"
+absent "$OUT" "value=after-keyless" "and so is a line without a key at all"
+echo
+
+echo "AC21 '--query' is optional and repeatable"
+run "$PROJECT" rad_comment_metadata "$ISSUE_ID"
+check "$RC" 0 "no --query at all answers every key"
+check "$(lines_of "$OUT")" 5 "the issue's four labels, its assign and no untrusted one"
+contains "$OUT" "assign item=issue:$ISSUE_ID" "the line names its own key, not the query"
+contains "$OUT" "label item=issue:$ISSUE_ID" "…for every key of the block"
+run "$PROJECT" rad_comment_metadata "$ISSUE_ID" --query label --query unassign
+check "$RC" 0 "two keys in one call exit 0"
+check "$(lines_of "$OUT")" 4 "four labels and no unassign on the issue"
+run "$PROJECT" rad_comment_metadata "$PATCH_ID" --query label --query unassign
+check "$(lines_of "$OUT")" 3 "the patch's two labels and its one unassign"
+run "$PROJECT" rad_comment_metadata "$ISSUE_ID" --query label --query label
+check "$(lines_of "$OUT")" 4 "a key asked for twice is not answered twice"
+echo
+
+echo "AC22 two markers of one second come back in chain order, not in hash order"
+check "$(git --git-dir="$STORAGE" show -s --format=%at "$ORDER_A")" \
+    "$(git --git-dir="$STORAGE" show -s --format=%at "$ORDER_B")" \
+    "the fixture really holds the two ops in one second"
+if [[ "$ORDER_B" < "$ORDER_A" ]]; then
+    pass "and the newer op really carries the smaller sha (as the defect needs)"
+else
+    fail "the fixture could not be built: the newer op's sha is not the smaller one"
+fi
+run "$PROJECT" rad_comment_metadata "$ORDER_ID" --query label
+FIRST_AT="$(printf '%s\n' "$OUT" | grep -n "value=first" | cut -d: -f1)"
+SECOND_AT="$(printf '%s\n' "$OUT" | grep -n "value=second" | cut -d: -f1)"
+if (( ${FIRST_AT:-0} > 0 && ${FIRST_AT:-0} < ${SECOND_AT:-0} )); then
+    pass "the answer is in chain order (the older marker first, line $FIRST_AT then $SECOND_AT)"
+else
+    fail "the answer is not in chain order (first at line ${FIRST_AT:-none}, second at ${SECOND_AT:-none})"
+fi
+run "$PROJECT" rad_comment_metadata "$ORDER_ID" --query label --last
+check "$(lines_of "$OUT")" 1 "one marker is the newest"
+contains "$OUT" "value=second" "--last takes the last record of the chain, not the smallest op sha"
+run "$PROJECT" rad_comment_metadata "$ORDER_ID" --query label --last --json
+check "$(printf '%s' "$OUT" | jq -r '.entries[0].op')" "$ORDER_B" "and it is that op which is named"
+echo
+
+echo "AC23 '--last' is per key, and a newest block nobody can be attributed to is skipped"
+run "$PROJECT" rad_comment_metadata "$PATCH_ID" --query label --last
+check "$(lines_of "$OUT")" 1 "the patch's newest label block is one label"
+contains "$OUT" "value=improvement" "the edited body is the newest word"
+absent "$OUT" "value=ct_vibes" "the unassign of that same block is not applied by a label query"
+run "$PROJECT" rad_comment_metadata "$PATCH_ID" --query unassign --last
+check "$(lines_of "$OUT")" 1 "…but it is answered when it is asked for"
+contains "$OUT" "value=ct_vibes" "with its own value"
+run "$PROJECT" rad_comment_metadata "$KEYS_ID" --query label --last
+check "$(lines_of "$OUT")" 1 "the newest label of the key fixture"
+contains "$OUT" "value=after-empty" "which is the last block carrying that key"
+run "$PROJECT" rad_comment_metadata "$KEYS_ID" --query label --query issue --last
+check "$RC" 0 "two keys, one call"
+check "$(lines_of "$OUT")" 2 "each key answers with its own newest block"
+check "$(printf '%s\n' "$OUT" | grep -n "issue item=" | cut -d: -f1)" 1 "in chain order: the description's key first"
+run "$PROJECT" rad_comment_metadata "$THIRD_ID" --query label --last
+check "$(lines_of "$OUT")" 1 "the newest op of that item has no radicle identity"
+contains "$OUT" "value=wip" "so the older trusted block still applies"
+absent "$OUT" "value=done" "and the op nobody can be attributed to is never applied"
 echo
 
 echo

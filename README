@@ -1598,7 +1598,16 @@ MODULE API/RULES
     comment of the thread).  This helper reads those blocks back from the node storage and returns
     only the entries a trusted source wrote:
     
-      bar rad_comment_metadata <item> --query label [--repo <rid|path>] [--trust <spec>].. [--last] [--json]
+      bar rad_comment_metadata <item> [--query <key>].. [--repo <rid|path>] [--trust <spec>].. [--last] [--json]
+    
+    The form is '*<key>:<value>' and the vocabulary is open: a key is a word of letters, digits, '_'
+    and '-' which starts with a letter, and *any* key is read back -- what a key means is the
+    caller's business, and only the keys with a registered effect ('label', 'assign', 'unassign')
+    are ever applied (see the write layer below).  The block ends at the first line which is not a
+    marker, so a marker quoted inside a reply is prose, and a value is a single word -- anything else
+    is dropped, never handed back half cut.  '--query' names the keys to answer for and repeats;
+    with no '--query' at all the answer carries every key a comment proposes, and every line names
+    its own key.
     
     '<item>' is the issue or patch the question is about, short or full -- one item only, not the
     whole repository: the ref listing is a single call, the chains (the ops and their payloads) are
@@ -1607,7 +1616,11 @@ MODULE API/RULES
     
     '--trust' takes 'did:<did|nid>' (that identity, named) and 'contributor(<n>)' (an identity with
     at least <n> authored commits); with no '--trust' only the **delegates** are trusted, which is
-    the narrow default.  '--last' keeps only the newest block per item, which is what applies it.
+    the narrow default.  '--last' keeps the newest block *per key* -- the last record of the chain
+    order, not of the hash order: two markers written in the same second are ordered by where they
+    sit in the chain (parent before child), which is what makes 'the newest block' mean what it says.
+    A block which is the newest word on two keys answers for both, and a newer block nobody can be
+    attributed to is skipped, so an older trusted block still applies.
     The trust facts come from the same tool 'rad_trust' uses ('tools/radicle_triage/triage-facts').
     A delegate's maintenance command reads the trusted proposals back and applies them -- the labels
     and assignments themselves still need that delegate's own key.
@@ -1761,10 +1774,13 @@ MODULE API/RULES
 
       rad_metadata_marks <body>
         the marker lines at the very start of <body>
-        One '<mark>US<value>' record per line of the block.  The block starts at the comment and ends
-        at the first line which is not a marker: a marker quoted inside a reply is prose, not a
-        proposal.  A value is a single word -- a label name, a DID, an alias -- and a line which
-        carries more is dropped rather than handed back half cut.
+        One '<key>US<value>' record per line of the block.  A marker is '*<key>:<value>' with the key
+        a word of letters, digits, '_' and '-', starting with a letter -- the '<key>:<value>' header
+        form and no fixed vocabulary: what a key *means* is the caller's business (this reads any key
+        back, and only the keys with a registered effect are ever applied).  The block starts at the
+        comment and ends at the first line which is not a marker: a marker quoted inside a reply is
+        prose, not a proposal.  A value is a single word -- a label name, a DID, an alias -- and a
+        line which carries more is dropped rather than handed back half cut.
 
       rad_metadata_authored <rid> <nid>
         the commits that identity authored, '-' when unknown
@@ -1779,6 +1795,29 @@ MODULE API/RULES
         An identity whose count cannot be read is not trusted -- say so, else a broken facts
         command looks exactly like a contributor who is below the threshold.
 
+      rad_metadata_trust <rid> <nid>
+        the verdict for one identity, in 'RAD_METADATA_TRUST'
+        Empty when the identity is not trusted: a delegate, an identity named with '--trust did:…',
+        one of the item's assignees, or an identity whose authored commits reach one of the
+        'contributor(<n>)' thresholds.  An identity which is not of the radicle system at all ('z6M…')
+        is never trusted -- there is nothing to authenticate such an op against.
+
+      rad_metadata_body <storage> <op> <type> <subject>
+        the body of one op of that COB
+        Only the op kinds which can carry a body are opened ('Comment', 'Edit comment', 'Create
+        issue', 'Edit root'), and the payload is the blob 'rad' names '0'.  An op of another COB can
+        stand in this chain (rad chains a COB onto the identity commits), so the op has to declare the
+        type the ref carries -- else a foreign comment would be reported against this item.
+        Returns 1 when this op carries no body of that type; the caller skips it either way.
+
+      rad_comment_metadata_ref <storage> <item>
+        the one COB the item names
+        The ref listing is a single call and it is what says which COB the id names.  A COB lives in
+        every namespace which replicated it, so it is keyed by type and id and only the newest tip is
+        kept -- else every op would be read once per copy.
+        Sets RAD_COMMENT_METADATA_REF/_TYPE/_ID.  Returns 3 when the node holds no such issue or
+        patch, 2 when the id matches more than one.
+
       rad_comment_metadata_assignees <storage> <ref>
         the item's current assignees
         The newest 'assign' op of the chain carries the whole set (a radicle op is the new value of
@@ -1786,20 +1825,38 @@ MODULE API/RULES
         that one read, not one read per op.  Only identities of the radicle system count here: an
         assignee which is not a DID/NID is dropped like any other entry without identity.
 
-      rad_comment_metadata_collect <storage> <item>
+      rad_comment_metadata_collect <storage> <ref> <type> <id>
         the marker lines of one item
-        Reads the chain of the one item asked for, never the whole repository: the ref listing is a
-        single call (it is what says which COB the id names), the ops and their payloads are opened
-        for that COB alone.  A COB lives in every namespace which replicated it, so it is keyed by
-        type and id and only the newest tip is walked -- else every op would be read once per copy.
-        Only the op kinds which can carry a body are opened ('Comment', 'Edit comment', 'Create
-        issue', 'Edit root'), and the payload is the blob 'rad' names '0'.
-        Returns 3 when the node holds no such issue or patch, 2 when the id matches more than one.
-        An op of another COB can stand in this chain (rad chains a COB onto the identity
-        commits), so the op has to declare the type the ref carries -- else a foreign
-        comment would be reported against this item.
-        Chronological, the item and the op as the tie break -- two ops of one second are ordered, so
-        '--last' has something to point at.
+        Reads the chain of the one item the ref names -- never the whole repository: the ops and their
+        payloads are opened for that COB alone ('rad_comment_metadata_ref' is what resolved which one
+        it is).  Answers oldest first, and inside one second in chain order: the records are laid down
+        in the order the chain is walked and the sort keeps that order (see below).
+        Chronological, and inside one second in *chain order*: the records were laid down as the chain
+        was walked (parent first), so a stable sort on the epoch keeps two markers written in the same
+        second in the order they were written.  The op sha is deliberately *not* a tie break -- it
+        would order a pair by hash, and '--last' would point at the wrong one of the two.
+
+      rad_comment_metadata_newest <storage> <rid> <ref> <type> <id> <key>..
+        the newest block per key
+        The '--last' walk: newest op first, and it stops as soon as every requested key has its newest
+        *trusted* entry -- so the common case opens one payload instead of the whole chain.  The walk
+        skips a marker whose author is not attributable, and that is not a stopper: an older trusted
+        block still applies, else one comment by a passer-by would freeze an item's state.
+        'The newest block carrying that key, taken whole' is meant per key: every line of a key it
+        found is returned (a comment proposing two labels is one application), and a key nobody asked
+        for is left alone.  No <key> at all asks for *every* key, which is what the forward read
+        answers; then the walk cannot stop early, because a key may first appear anywhere in the chain.
+        Answers in the shape the forward read answers in -- oldest first, one
+        '<epoch>US<iso>US<type>US<id>US<op>US<alias>US<did>US<trust>US<key>US<value>' per line.
+        Walked in the order the forward read *ends* in -- newest epoch first, and inside one second the
+        chain's last position -- so 'the newest block' is the last record of that answer and not merely
+        the tip of the chain.  A chain whose dates are not monotone (an op replayed with an older
+        clock) would otherwise let the two paths point at different records.
+        The markers of this op.  A key nobody has answered yet is answered by this op -- with
+        every line of the key it carries, so a comment proposing two labels is one application --
+        and a key a *newer* op already answered is not answered again here.
+        Oldest first, like the forward read: the chain position decides the order, never the date --
+        an add and its undo land in the same second routinely (the walk above is newest first).
 
       rad_comment_metadata_json - the whole answer as one object
         Complete, never elided: the entries the filter kept, oldest first.
@@ -1819,18 +1876,19 @@ MODULE API/RULES
         the wrong answer for the operator to chase.
         Which repository: an explicit one (RID or path), else the checkout this runs in.
         Who is trusted: the delegates answer from the identity document, 'did:' names one identity and
-        'contributor(<n>)' is decided from the authored commits the fact tool counts.
+        'contributor(<n>)' is decided from the authored commits the fact tool counts.  The table is
+        module state, because the '--last' walk asks the same question from its own loop.
         An asked-for contributor threshold needs the facts command: without it every count reads
         'unknown', which would answer 'nothing is trusted' where the operator asked for trust.
         The item's assignees are a trust source of their own: assigning an issue to a contributor
         makes that contributor's proposals count -- so the same query can answer differently before
         and after an assignment.  That is the design: trust is read when it is asked for, never
         stored, and it is always an identity of the radicle system ('z6M…') which carries it.
+        '--last' is the newest block *per key* and it is answered from the tip of the chain
+        backwards: what applies is known without reading what it superseded.
         No radicle identity in the op's author (a git-only author, or a mail which is not
         '<alias>@<nid>'): there is nothing to authenticate against, so the proposal is dropped
         -- silently, like every other proposal which is not trusted.
-        The newest block per item -- keyed on the *op*, not on the record: a comment which
-        proposes two labels is one block and has to come back as the pair it is.
 
       rad_topic_usage [reason]
         usage on stderr
