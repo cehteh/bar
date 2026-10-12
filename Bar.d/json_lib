@@ -4,7 +4,7 @@
 
 ### The JSON literals of bar's machine readable output: one escaping rule for every '--json' form.
 ###
-### The JSON forms of the helpers -- 'kanban_state --json', 'rad_state --json', 'sourcetree_state
+### The JSON forms of the helpers -- 'hermes_kanban --json', 'rad_state --json', 'sourcetree_state
 ### --json', 'hermes_logs --json', 'helpers --json', the report of 'bar check' -- are assembled from
 ### string, number, boolean and array literals.  Writing one of them is one small piece of policy
 ### and it belongs in one place:
@@ -36,7 +36,7 @@
 ### WHY THE SETTERS EXIST
 ###
 ### A command substitution forks a subshell, and a listing quotes a dozen fields per record:
-### 'kanban_state' measured 800 ms for 90 cards when every field forked and 90 ms when none did.
+### 'hermes_kanban' measured 800 ms for 90 cards when every field forked and 90 ms when none did.
 ### A caller which quotes many fields asks for the literal in a variable with the setters and never
 ### forks; a caller with one or two fields asks for the printed form.  Both forms are one
 ### implementation -- 'json_string' calls 'json_set_string' -- so the rule above cannot drift.
@@ -44,7 +44,7 @@
 ### This module is a library: no rules, no helpers and therefore no helper module header of its own
 ### (a lib is not a repertoire module, see Bar.d/helpers_rules).  A module whose '--json' form needs
 ### literal says 'require json_lib'; where a field is not a JSON literal but module policy -- the
-### yes/no/unset rule of rad, the flag list of sourcetree, the control characters 'kanban_state'
+### yes/no/unset rule of rad, the flag list of sourcetree, the control characters 'hermes_kanban'
 ### replaces by a space instead of dropping them -- that policy stays in the module, which asks
 ### these functions for the literal and keeps only the decision.
 
@@ -53,7 +53,7 @@ function json_set_string ## <var> <text> - put the JSON string literal of <text>
     ## The escaping rule of every '--json' form of bar.  Backslash and quote first (so the escapes
     ## they introduce are not escaped again), then the tab -- which is the one control character
     ## worth carrying, an indented line is common in a log -- and finally every other control
-    ## character, dropped with the same pattern substitution 'kanban_state' uses: no 'tr', so no
+    ## character, dropped with the same pattern substitution 'hermes_kanban' uses: no 'tr', so no
     ## subshell per field.
     local text="${2:-}"
     text="${text//\\/\\\\}"
