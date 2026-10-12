@@ -1,0 +1,949 @@
+# -*- mode: sh; sh-shell: bash -*-
+# vim: set ft=bash:
+# shellcheck shell=bash
+# shellcheck disable=SC2016
+
+### The Hermes Kanban board state digest -- the board questions in one call
+###
+### Hermes Kanban board state: what the local board holds right now, bounded.
+###
+### 'hermeskanban' answers the board questions that otherwise cost several turns of hand written
+### sqlite -- and that 'hermes kanban' refuses to answer at all inside a worker context -- by
+### reading the board database directly: the counts by status together with how stale the oldest
+### ready card is and how many runs are live (the summary, which lists no card); the cards matching
+### a filter, one per line, with their dependencies and their live run; why a blocked card is
+### blocked; and what a card's runs did.
+###
+###   hermeskanban                              the bounded summary digest, no card listed
+###   hermeskanban --status blocked             the blocked cards, one line each, with the reason
+###   hermeskanban --assignee default           the cards of one agent, highest priority first
+###   hermeskanban --parent t_deadbeef          the children of one card
+###   hermeskanban --runs t_deadbeef            the runs of one card, newest first
+###   hermeskanban --json                       the same numbers as one JSON object
+###
+### A listing is bounded by '--limit' (default 50) and prints the exact elision counts plus the path
+### of a file holding every matching card whenever it elides anything; the summary always fits in
+### six lines.  Nothing but the answer goes to stdout.
+###
+### EXIT CODES: 0 answered (a filter matching no card is an answer, not a failure), 2 usage error,
+### 3 the board could not be read (no database, not a Kanban database, 'sqlite3' missing), 4 the
+### card asked for ('--id', '--parent', '--runs') does not exist.
+###
+### An option is nothing without its value: '--status' with nothing after it is a usage error like
+### any other, and so is an empty value ('--id ""'), which would otherwise name no card and quietly
+### answer as though the option had not been given at all.
+###
+### The board is resolved the way the kernel resolves it: '--db', then '--board', else
+### '$HERMES_KANBAN_DB', '$HERMES_KANBAN_BOARD' or '<root>/kanban/current', finally the default
+### board.  '<root>' is '$HERMES_KANBAN_HOME' or '~/.hermes'; a named board lives in
+### '<root>/kanban/boards/<slug>/kanban.db'.  The first line of the summary names the board after
+### the database it read: 'default', the slug of a named board, or 'custom' for anything else.
+
+# helper-module: hermeskanban
+
+require json_lib
+
+# --- board resolution ---------------------------------------------------------------------------
+
+function hermeskanban_root ## - '$HERMES_KANBAN_HOME' or '~/.hermes'
+{
+    printf '%s' "${HERMES_KANBAN_HOME:-$HOME/.hermes}"
+}
+
+function hermeskanban_db_default ## - the database the kernel would resolve for this caller
+{
+    local root board
+    root="$(hermeskanban_root)"
+    if [[ -n "${HERMES_KANBAN_DB:-}" ]]; then
+        printf '%s' "$HERMES_KANBAN_DB"
+        return 0
+    fi
+    board="${HERMES_KANBAN_BOARD:-}"
+    if [[ -z "$board" && -f "$root/kanban/current" ]]; then
+        board="$(head -n 1 "$root/kanban/current" 2>/dev/null || true)"
+    fi
+    if [[ -n "$board" && "$board" != default ]]; then
+        printf '%s' "$root/kanban/boards/$board/kanban.db"
+    else
+        printf '%s' "$root/kanban.db"
+    fi
+}
+
+function hermeskanban_db_path ## <db option> <board option> - the path the explicit options resolve to
+{
+    local db="$1" board="$2" root
+    root="$(hermeskanban_root)"
+    if [[ -n "$db" ]]; then
+        printf '%s' "$db"
+    elif [[ -z "$board" ]]; then
+        hermeskanban_db_default
+    elif [[ "$board" == default ]]; then
+        printf '%s' "$root/kanban.db"
+    else
+        printf '%s' "$root/kanban/boards/$board/kanban.db"
+    fi
+}
+
+function hermeskanban_board_name ## <board option> - the board slug for the output header
+{
+    local root="$1" name="$2" rest
+    if [[ -n "$name" ]]; then
+        printf '%s' "$name"
+        return 0
+    fi
+    case "$HERMESKANBAN_DB_PATH" in
+    "$root/kanban.db") printf 'default' ;;
+    "$root/kanban/boards/"*/kanban.db)
+        rest="${HERMESKANBAN_DB_PATH#"$root/kanban/boards/"}"
+        printf '%s' "${rest%/kanban.db}"
+        ;;
+    *) printf 'custom' ;;
+    esac
+}
+
+# --- sqlite access ------------------------------------------------------------------------------
+
+function hermeskanban_sql ## <sql> - run one query, print its rows with US separated fields
+{
+    ## '-readonly' keeps a board the caller may not write untouched; the second attempt covers a
+    ## WAL database whose shared memory sidecar the kernel has not materialised yet.  A failure of
+    ## both is a failure to read the board, which the caller turns into exit code 3.
+    local sql="$1" rc=0 out=""
+    out="$(sqlite3 -readonly -batch -noheader -cmd '.timeout 3000' -separator $'\037' \
+        "$HERMESKANBAN_DB_PATH" "$sql" 2>/dev/null)" || rc=$?
+    if (( rc != 0 )); then
+        out="$(sqlite3 -batch -noheader -cmd '.timeout 3000' -separator $'\037' \
+            "$HERMESKANBAN_DB_PATH" "$sql")" || return 1
+    fi
+    printf '%s' "$out"
+}
+
+function hermeskanban_quote ## <value> - a SQL single quoted literal
+{
+    printf "'%s'" "${1//\'/\'\'}"
+}
+
+function hermeskanban_in_list ## <value..> - a quoted, comma joined SQL literal list
+{
+    local out="" value
+    for value in "$@"; do
+        [[ -n "$value" ]] || continue
+        out+="${out:+,}$(hermeskanban_quote "$value")"
+    done
+    printf '%s' "$out"
+}
+
+function hermeskanban_project_id ## <id-or-slug> - the project id, or the argument unchanged
+{
+    ## '<root>/projects.db' maps a slug to its id; without it (or without that project) the
+    ## argument is taken as an id verbatim, so a board database alone is enough to filter.
+    local want="$1" db id=""
+    db="$(hermeskanban_root)/projects.db"
+    if [[ -f "$db" ]]; then
+        id="$(sqlite3 -readonly -batch -noheader -cmd '.timeout 3000' "$db" \
+            "select id from projects where id = $(hermeskanban_quote "$want") \
+             or slug = $(hermeskanban_quote "$want") limit 1;" 2>/dev/null || true)"
+    fi
+    printf '%s' "${id:-$want}"
+}
+
+# --- formatting ---------------------------------------------------------------------------------
+
+function hermeskanban_json ## <text> - sets HERMESKANBAN_JSON to <text> as a JSON string literal
+{
+    ## Sets a global instead of printing: a command substitution would fork a subshell for every
+    ## field of every record, which is what makes a listing of a hundred cards take a second
+    ## (measured 800 ms for 90 cards before this, 90 ms after).  The escaping and the 'into a
+    ## variable' form are 'json_set_string'; what stays local is kanban's own policy -- every
+    ## control character becomes a space instead of being dropped, so a title keeps its word
+    ## boundaries ('title with\na newline' reads 'title with a newline').
+    local text="${1:-}"
+    text="${text//[[:cntrl:]]/ }"
+    json_set_string HERMESKANBAN_JSON "$text"
+}
+
+function hermeskanban_json_number_or_null ## <number|''> - sets HERMESKANBAN_JSON to a JSON number, or 'null'
+{
+    ## The argument shape is kanban's (a run id or a duration as sqlite3 prints it, '' for none),
+    ## the literal is 'json_set_number'.
+    json_set_number HERMESKANBAN_JSON "${1:-}"
+}
+
+function hermeskanban_duration ## <seconds> - '3d4h', '5h12m', '12m30s' or '45s'
+{
+    local -i s="${1:-0}"
+    (( s < 0 )) && s=0
+    if (( s >= 86400 )); then
+        printf '%dd%dh' "$(( s / 86400 ))" "$(( (s % 86400) / 3600 ))"
+    elif (( s >= 3600 )); then
+        printf '%dh%dm' "$(( s / 3600 ))" "$(( (s % 3600) / 60 ))"
+    elif (( s >= 60 )); then
+        printf '%dm%ds' "$(( s / 60 ))" "$(( s % 60 ))"
+    else
+        printf '%ds' "$s"
+    fi
+}
+
+function hermeskanban_stamp ## <epoch> - a local 'YYYY-MM-DD HH:MM:SS', '-' for 0
+{
+    local -i ts="${1:-0}"
+    if (( ts > 0 )); then
+        date -d "@$ts" '+%Y-%m-%d %H:%M:%S'
+    else
+        printf -- '-'
+    fi
+}
+
+function hermeskanban_truncate ## <text> <max> - <text>, shortened to <max> bytes with a '...' tail
+{
+    local text="$1"
+    local -i max="${2:-0}"
+    if (( max > 0 && ${#text} > max )); then
+        printf '%s...' "${text:0:max}"
+    else
+        printf '%s' "$text"
+    fi
+}
+
+# --- the record views ---------------------------------------------------------------------------
+
+## Every view reads one snapshot of the board into HERMESKANBAN_ROWS (US separated fields) and renders it
+## twice from that single array, which is what makes the text and the JSON form carry the same
+## numbers.
+
+function hermeskanban_card_sql ## <where clauses..> - the SELECT of one card record
+{
+    local where="" clause
+    for clause in "$@"; do
+        where+="${where:+ and }$clause"
+    done
+    printf '%s' "
+select t.id, t.status, coalesce(t.assignee, ''), t.priority, t.created_at,
+       coalesce(t.current_run_id, 0),
+       coalesce((select count(*) from task_links l join tasks p on p.id = l.parent_id
+                 where l.child_id = t.id and p.status not in ('done', 'archived')), 0),
+       coalesce((select count(*) from task_links l where l.parent_id = t.id), 0),
+       coalesce(t.block_kind, ''),
+       replace(replace(coalesce((select case when json_valid(e.payload)
+                                    then coalesce(json_extract(e.payload, '\$.reason'), '') end
+                             from task_events e where e.task_id = t.id and e.kind = 'blocked'
+                             order by e.id desc limit 1), ''), char(10), ' '), char(13), ' '),
+       replace(replace(coalesce(t.last_failure_error, ''), char(10), ' '), char(13), ' '),
+       replace(replace(t.title, char(10), ' '), char(13), ' ')
+from tasks t
+where ${where:-1}
+order by t.priority desc, t.created_at, t.id"
+}
+
+function hermeskanban_card_field ## <record> <index, 1 based> - one field of a card record
+{
+    local -a f=()
+    local -i zero="${2:-1}"
+    IFS=$'\037' read -r -a f <<<"$1"
+    (( zero > 0 )) || zero=1
+    zero=$(( zero - 1 ))
+    printf '%s' "${f[zero]:-}"
+}
+
+function hermeskanban_card_reason ## <kind> <reason> <error> - why a blocked card is blocked
+{
+    if [[ -n "${2:-}" ]]; then
+        printf '%s' "$2"
+    elif [[ -n "${3:-}" ]]; then
+        printf '%s' "$3"
+    else
+        printf 'no reason recorded'
+    fi
+}
+
+function hermeskanban_card_line ## <record> <reason budget, 0 = full> - one card as one text line
+{
+    ## The record is split once, here: a 'read' per field would fork a subshell per field and cost
+    ## a hundred milliseconds over a listing (measured on a 90 card answer).
+    local record="$1"
+    local -i budget="${2:-0}"
+    local -a f=()
+    local id status assignee runtext reason kind error title
+    local -i priority created uparents children age
+    IFS=$'\037' read -r -a f <<<"$record"
+    id="${f[0]:-}"
+    status="${f[1]:-}"
+    assignee="${f[2]:-}"
+    priority="${f[3]:-0}"
+    created="${f[4]:-0}"
+    runtext="${f[5]:-0}"
+    uparents="${f[6]:-0}"
+    children="${f[7]:-0}"
+    kind="${f[8]:-}"
+    reason="${f[9]:-}"
+    error="${f[10]:-}"
+    title="${f[11]:-}"
+    age=$(( HERMESKANBAN_NOW - created ))
+    (( age < 0 )) && age=0
+    [[ "$runtext" == 0 ]] && runtext='-' || runtext="#$runtext"
+    if [[ -z "$assignee" ]]; then
+        assignee='-'
+    fi
+    printf '%s  %s  %s  %s  p%s  deps:%su/%sd  run:%s  %s' \
+        "$id" "$status" "$(hermeskanban_duration "$age")" "$assignee" "$priority" \
+        "$uparents" "$children" "$runtext" "$title"
+    if [[ "$status" == blocked ]]; then
+        reason="$(hermeskanban_card_reason "$kind" "$reason" "$error")"
+        if (( budget > 0 && ${#reason} > budget )); then
+            HERMESKANBAN_TRIMMED=1
+        fi
+        reason="$(hermeskanban_truncate "$reason" "$budget")"
+        printf '  | blocked%s: %s' "${kind:+[$kind]}" "$reason"
+    fi
+}
+
+function hermeskanban_gather_cards ## <where clauses..> - load every matching card into HERMESKANBAN_ROWS
+{
+    local line
+    HERMESKANBAN_ROWS=()
+    while IFS= read -r line; do
+        [[ -n "$line" ]] || continue
+        HERMESKANBAN_ROWS+=("$line")
+    done <<<"$(hermeskanban_sql "$(hermeskanban_card_sql "$@")")"
+}
+
+function hermeskanban_card_exists ## <task-id> - 0 when the card is on the board
+{
+    [[ "$(hermeskanban_sql "select 1 from tasks where id = $(hermeskanban_quote "$1") limit 1;")" == 1 ]]
+}
+
+function hermeskanban_write_all ## <suffix> <budget> - write every record, print the path of the file
+{
+    ## The complete, untruncated answer: the convention is that whatever the screen leaves out is
+    ## retrievable from a file whose path is printed next to the elision counts.  Written through a
+    ## temporary name so a reader never sees a half written file.
+    local suffix="$1" budget="$2" dir file tmp record
+    dir="${TMPDIR:-/tmp}"
+    file="$dir/hermeskanban-${HERMESKANBAN_BOARD_NAME}-${suffix}.txt"
+    tmp="$file.$$"
+    {
+        for record in ${HERMESKANBAN_ROWS[@]+"${HERMESKANBAN_ROWS[@]}"}; do
+            hermeskanban_record_line "$record" "$budget"
+            printf '\n'
+        done
+    } >"$tmp"
+    mv -f "$tmp" "$file"
+    printf '%s' "$file"
+}
+
+## The renderer a view uses for one record; 'hermeskanban_write_all' calls it through this indirection so
+## the elision file and the screen share one implementation.
+HERMESKANBAN_RENDERER=hermeskanban_card_line
+
+function hermeskanban_record_line ## <record> <budget> - one record through the active renderer
+{
+    "$HERMESKANBAN_RENDERER" "$1" "$2"
+}
+
+# --- the summary --------------------------------------------------------------------------------
+
+## The statuses of the default workflow, in board order: always printed, zeros included, so a
+## consumer can index the line and two runs never disagree about which statuses exist.
+HERMESKANBAN_STATUS_ORDER=('triage' 'todo' 'scheduled' 'ready' 'running' 'blocked' 'review' 'done')
+
+function hermeskanban_gather_status_counts
+{
+    local status count name
+    local -A seen=()
+    while IFS=$'\037' read -r status count; do
+        [[ -n "$status" ]] || continue
+        seen["$status"]="$count"
+    done <<<"$(hermeskanban_sql "select status, count(*) from tasks group by status;")"
+    HERMESKANBAN_PAIRS=()
+    HERMESKANBAN_TOTAL=0
+    for name in "${HERMESKANBAN_STATUS_ORDER[@]}"; do
+        HERMESKANBAN_PAIRS+=("$name:${seen[$name]:-0}")
+        HERMESKANBAN_TOTAL=$(( HERMESKANBAN_TOTAL + ${seen[$name]:-0} ))
+    done
+}
+
+function hermeskanban_status_count ## <status> - the count of one status, 0 when it is not a status
+{
+    local pair
+    for pair in ${HERMESKANBAN_PAIRS[@]+"${HERMESKANBAN_PAIRS[@]}"}; do
+        if [[ "${pair%:*}" == "$1" ]]; then
+            printf '%s' "${pair#*:}"
+            return 0
+        fi
+    done
+    printf '0'
+}
+
+function hermeskanban_gather_summary
+{
+    local row
+    HERMESKANBAN_NOW="$(date +%s)"
+    hermeskanban_gather_status_counts
+    HERMESKANBAN_ACTIVE_RUNS="$(hermeskanban_sql "select count(*) from task_runs where status = 'running';")"
+    HERMESKANBAN_OLDEST_ID=""
+    HERMESKANBAN_OLDEST_CREATED=0
+    row="$(hermeskanban_sql "select id, created_at from tasks where status = 'ready' \
+                       order by created_at, id limit 1;")"
+    if [[ -n "$row" ]]; then
+        HERMESKANBAN_OLDEST_ID="${row%%$'\037'*}"
+        HERMESKANBAN_OLDEST_CREATED="${row#*$'\037'}"
+    fi
+    HERMESKANBAN_OLDEST_AGE=""
+    if [[ -n "$HERMESKANBAN_OLDEST_ID" ]]; then
+        HERMESKANBAN_OLDEST_AGE=$(( HERMESKANBAN_NOW - HERMESKANBAN_OLDEST_CREATED ))
+        (( HERMESKANBAN_OLDEST_AGE < 0 )) && HERMESKANBAN_OLDEST_AGE=0
+    fi
+}
+
+function hermeskanban_summary_text
+{
+    local parts="" pair
+    for pair in "${HERMESKANBAN_PAIRS[@]}"; do
+        parts+="${parts:+, }${pair%:*}: ${pair#*:}"
+    done
+    printf 'board: %s (%s)\n' "$HERMESKANBAN_BOARD_NAME" "$HERMESKANBAN_DB_PATH"
+    printf 'as of: %s %s\n' "$(hermeskanban_stamp "$HERMESKANBAN_NOW")" "$(date '+%z')"
+    printf 'tasks: %s (%s)\n' "$HERMESKANBAN_TOTAL" "$parts"
+    printf 'waiting: ready %s, blocked %s, scheduled %s\n' \
+        "$(hermeskanban_status_count ready)" "$(hermeskanban_status_count blocked)" \
+        "$(hermeskanban_status_count scheduled)"
+    if [[ -n "$HERMESKANBAN_OLDEST_ID" ]]; then
+        printf 'oldest ready: %s (%s, %ss)\n' "$HERMESKANBAN_OLDEST_ID" \
+            "$(hermeskanban_duration "$HERMESKANBAN_OLDEST_AGE")" "$HERMESKANBAN_OLDEST_AGE"
+    else
+        printf 'oldest ready: none\n'
+    fi
+    printf 'active runs: %s\n' "$HERMESKANBAN_ACTIVE_RUNS"
+}
+
+function hermeskanban_summary_json
+{
+    local parts="" pair
+    for pair in "${HERMESKANBAN_PAIRS[@]}"; do
+        hermeskanban_json "${pair%:*}"
+        parts+="${parts:+,}$HERMESKANBAN_JSON:${pair#*:}"
+    done
+    hermeskanban_json "$HERMESKANBAN_BOARD_NAME"
+    local board_json="$HERMESKANBAN_JSON"
+    hermeskanban_json "$HERMESKANBAN_DB_PATH"
+    printf '{"bar_hermeskanban":1,"mode":"summary","board":%s,"db":%s,"now":%s,"tasks":%s,' \
+        "$board_json" "$HERMESKANBAN_JSON" "$HERMESKANBAN_NOW" "$HERMESKANBAN_TOTAL"
+    printf '"by_status":{%s},' "$parts"
+    printf '"ready":%s,"blocked":%s,"scheduled":%s,"active_runs":%s,' \
+        "$(hermeskanban_status_count ready)" "$(hermeskanban_status_count blocked)" \
+        "$(hermeskanban_status_count scheduled)" "$HERMESKANBAN_ACTIVE_RUNS"
+    if [[ -n "$HERMESKANBAN_OLDEST_ID" ]]; then
+        hermeskanban_json "$HERMESKANBAN_OLDEST_ID"
+        printf '"oldest_ready":{"id":%s,"age_seconds":%s,"created_at":%s}}\n' \
+            "$HERMESKANBAN_JSON" "$HERMESKANBAN_OLDEST_AGE" "$HERMESKANBAN_OLDEST_CREATED"
+    else
+        printf '"oldest_ready":null}\n'
+    fi
+}
+
+# --- the listing --------------------------------------------------------------------------------
+
+function hermeskanban_list_view ## <json> <limit> - the matching cards, oldest of one priority first
+{
+    local json="$1" limit="$2"
+    local -i matched="${#HERMESKANBAN_ROWS[@]}" printed=0 limit_n=0
+    local reason_budget=120 file="" record
+    HERMESKANBAN_TRIMMED=0
+    if [[ -n "$limit" ]]; then
+        limit_n="$limit"
+    fi
+    printed="$matched"
+    if (( limit_n > 0 && limit_n < matched )); then
+        printed="$limit_n"
+    fi
+    if [[ -n "$json" ]]; then
+        hermeskanban_list_json "$printed" "$limit_n"
+        return 0
+    fi
+    if (( printed < matched )); then
+        reason_budget=0
+        file="$(hermeskanban_write_all cards 0)"
+    fi
+    local -i i=0
+    while (( i < printed )); do
+        hermeskanban_card_line "${HERMESKANBAN_ROWS[i]}" "$reason_budget"
+        printf '\n'
+        i=$(( i + 1 ))
+    done
+    if (( HERMESKANBAN_TRIMMED )); then
+        file="$(hermeskanban_write_all cards 0)"
+    fi
+    if (( printed < matched )); then
+        printf '(%s of %s cards)\n' "$printed" "$matched"
+    else
+        printf '(%s cards)\n' "$matched"
+    fi
+    if [[ -n "$file" ]]; then
+        printf 'all %s cards: %s\n' "$matched" "$file"
+    fi
+}
+
+function hermeskanban_list_json ## <printed> <limit> - the listing as one JSON object
+{
+    local -i printed="$1" limit_n="$2" matched="${#HERMESKANBAN_ROWS[@]}" i=0
+    local -i truncated=0
+    local -a f=()
+    local record id status assignee priority created runtext uparents children kind reason error title
+    local -i age
+    local card_json="" card out=""
+    (( printed < matched )) && truncated=1
+    while (( i < printed )); do
+        record="${HERMESKANBAN_ROWS[i]}"
+        IFS=$'\037' read -r -a f <<<"$record"
+        id="${f[0]:-}"
+        status="${f[1]:-}"
+        assignee="${f[2]:-}"
+        priority="${f[3]:-0}"
+        created="${f[4]:-0}"
+        runtext="${f[5]:-0}"
+        uparents="${f[6]:-0}"
+        children="${f[7]:-0}"
+        kind="${f[8]:-}"
+        reason="${f[9]:-}"
+        error="${f[10]:-}"
+        title="${f[11]:-}"
+        age=$(( HERMESKANBAN_NOW - created ))
+        (( age < 0 )) && age=0
+        hermeskanban_json "$id"
+        card="{\"id\":$HERMESKANBAN_JSON"
+        hermeskanban_json "$status"
+        card+=",\"status\":$HERMESKANBAN_JSON"
+        hermeskanban_json "$assignee"
+        card+=",\"assignee\":$HERMESKANBAN_JSON"
+        card+=",\"priority\":$priority"
+        hermeskanban_json "$title"
+        card+=",\"title\":$HERMESKANBAN_JSON"
+        card+=",\"created_at\":$created,\"age_seconds\":$age"
+        card+=",\"unfinished_parents\":$uparents,\"children\":$children"
+        hermeskanban_json_number_or_null "$runtext"
+        card+=",\"run_id\":$HERMESKANBAN_JSON"
+        if [[ "$status" == blocked ]]; then
+            hermeskanban_json "$kind"
+            card+=",\"blocked\":{\"kind\":$HERMESKANBAN_JSON"
+            hermeskanban_json "$(hermeskanban_card_reason "$kind" "$reason" "$error")"
+            card+=",\"reason\":$HERMESKANBAN_JSON}"
+        else
+            card+=",\"blocked\":null"
+        fi
+        card+="}"
+        card_json+="${card_json:+,}$card"
+        i=$(( i + 1 ))
+    done
+    out="{"
+    hermeskanban_json "$HERMESKANBAN_BOARD_NAME"
+    out+="\"bar_hermeskanban\":1,\"mode\":\"list\",\"board\":$HERMESKANBAN_JSON"
+    hermeskanban_json "$HERMESKANBAN_DB_PATH"
+    out+=",\"db\":$HERMESKANBAN_JSON,\"now\":$HERMESKANBAN_NOW"
+    out+=",\"matched\":$matched,\"printed\":$printed,\"limit\":$limit_n"
+    out+=",\"truncated\":$([[ "$truncated" == 1 ]] && printf true || printf false)"
+    out+=",\"cards\":[$card_json]}"
+    printf '%s\n' "$out"
+}
+
+# --- the runs of one card -----------------------------------------------------------------------
+
+function hermeskanban_runs_sql ## <task-id> - the SELECT of one run record
+{
+    printf '%s' "
+select r.id, r.status, coalesce(r.outcome, ''), r.started_at, coalesce(r.ended_at, 0),
+       coalesce(r.profile, ''),
+       replace(replace(coalesce(r.summary, ''), char(10), ' '), char(13), ' '),
+       replace(replace(coalesce(r.error, ''), char(10), ' '), char(13), ' ')
+from task_runs r
+where r.task_id = $(hermeskanban_quote "$1")
+order by r.started_at desc, r.id desc"
+}
+
+function hermeskanban_gather_runs ## <task-id> - load the runs of a card into HERMESKANBAN_ROWS
+{
+    local line
+    HERMESKANBAN_ROWS=()
+    while IFS= read -r line; do
+        [[ -n "$line" ]] || continue
+        HERMESKANBAN_ROWS+=("$line")
+    done <<<"$(hermeskanban_sql "$(hermeskanban_runs_sql "$1")")"
+}
+
+function hermeskanban_runs_count_failed
+{
+    local record
+    local -a f=()
+    HERMESKANBAN_FAILED=0
+    for record in ${HERMESKANBAN_ROWS[@]+"${HERMESKANBAN_ROWS[@]}"}; do
+        IFS=$'\037' read -r -a f <<<"$record"
+        case "${f[2]:-}" in
+        crashed | timed_out | failed | spawn_failed | gave_up) HERMESKANBAN_FAILED=$(( HERMESKANBAN_FAILED + 1 )) ;;
+        esac
+    done
+}
+
+function hermeskanban_run_line ## <record> <budget> - one run as one text line
+{
+    local record="$1"
+    local -a f=()
+    local id status outcome profile summary error
+    local -i started ended duration
+    IFS=$'\037' read -r -a f <<<"$record"
+    id="${f[0]:-0}"
+    status="${f[1]:-}"
+    outcome="${f[2]:-}"
+    started="${f[3]:-0}"
+    ended="${f[4]:-0}"
+    profile="${f[5]:-}"
+    summary="${f[6]:-}"
+    error="${f[7]:-}"
+    duration=$(( (ended > 0 ? ended : HERMESKANBAN_NOW) - started ))
+    (( duration < 0 )) && duration=0
+    printf '  #%s  %-9s %-11s %s -> %s  %s  %s' \
+        "$id" "$status" "${outcome:--}" "$(hermeskanban_stamp "$started")" \
+        "$(hermeskanban_stamp "$ended")" "$(hermeskanban_duration "$duration")" "${profile:--}"
+    if [[ -n "$error" ]]; then
+        printf '  | %s' "$(hermeskanban_truncate "$error" 100)"
+    elif [[ -n "$summary" ]]; then
+        printf '  | %s' "$(hermeskanban_truncate "$summary" 100)"
+    fi
+}
+
+function hermeskanban_runs_view ## <task-id> <json> <limit> - the runs of one card, newest first
+{
+    local task_id="$1" json="$2" limit="$3"
+    local row record
+    local -i matched printed=0 limit_n=0
+    local status workspace_kind workspace_path branch title file=""
+    row="$(hermeskanban_sql "select t.status, coalesce(t.workspace_kind, ''), \
+                              coalesce(t.workspace_path, ''), coalesce(t.branch_name, ''), \
+                              replace(replace(t.title, char(10), ' '), char(13), ' ') \
+                       from tasks t where t.id = $(hermeskanban_quote "$task_id") limit 1;")"
+    if [[ -z "$row" ]]; then
+        printf 'hermeskanban: no card %s on board %s\n' "$task_id" "$HERMESKANBAN_BOARD_NAME" >&2
+        return 4
+    fi
+    status="$(hermeskanban_card_field "$row" 1)"
+    workspace_kind="$(hermeskanban_card_field "$row" 2)"
+    workspace_path="$(hermeskanban_card_field "$row" 3)"
+    branch="$(hermeskanban_card_field "$row" 4)"
+    title="$(hermeskanban_card_field "$row" 5)"
+    hermeskanban_gather_runs "$task_id"
+    hermeskanban_runs_count_failed
+    matched="${#HERMESKANBAN_ROWS[@]}"
+    if [[ -n "$limit" ]]; then
+        limit_n="$limit"
+    fi
+    printed="$matched"
+    if (( limit_n > 0 && limit_n < matched )); then
+        printed="$limit_n"
+    fi
+    if [[ -n "$json" ]]; then
+        hermeskanban_runs_json "$task_id" "$status" "$workspace_kind" "$workspace_path" "$branch" \
+            "$title" "$printed" "$limit_n"
+        return 0
+    fi
+    printf 'runs for %s (%s) %s\n' "$task_id" "$status" "$title"
+    local -i i=0
+    while (( i < printed )); do
+        hermeskanban_run_line "${HERMESKANBAN_ROWS[i]}" 0
+        printf '\n'
+        i=$(( i + 1 ))
+    done
+    printf 'workspace: %s %s%s\n' "${workspace_kind:--}" "${workspace_path:--}" \
+        "${branch:+ (branch $branch)}"
+    printf 'failed: %s\n' "$HERMESKANBAN_FAILED"
+    if (( printed < matched )); then
+        HERMESKANBAN_RENDERER=hermeskanban_run_line
+        file="$(hermeskanban_write_all runs 0)"
+        HERMESKANBAN_RENDERER=hermeskanban_card_line
+        printf '(%s of %s runs)\n' "$printed" "$matched"
+        printf 'all %s runs: %s\n' "$matched" "$file"
+    else
+        printf '(%s runs)\n' "$matched"
+    fi
+}
+
+function hermeskanban_runs_json ## <task-id> <status> <kind> <path> <branch> <title> <printed> <limit>
+{
+    local task_id="$1" status="$2" kind="$3" path="$4" branch="$5" title="$6"
+    local -i printed="$7" limit_n="$8" matched="${#HERMESKANBAN_ROWS[@]}" i=0
+    local -i truncated=0
+    local -a f=()
+    local record id run_status outcome profile summary error
+    local run_status_json outcome_json profile_json summary_json error_json
+    local -i started ended duration
+    local runs_json="" run out=""
+    (( printed < matched )) && truncated=1
+    while (( i < printed )); do
+        record="${HERMESKANBAN_ROWS[i]}"
+        IFS=$'\037' read -r -a f <<<"$record"
+        id="${f[0]:-0}"
+        run_status="${f[1]:-}"
+        outcome="${f[2]:-}"
+        started="${f[3]:-0}"
+        ended="${f[4]:-0}"
+        profile="${f[5]:-}"
+        summary="${f[6]:-}"
+        error="${f[7]:-}"
+        duration=$(( (ended > 0 ? ended : HERMESKANBAN_NOW) - started ))
+        (( duration < 0 )) && duration=0
+        hermeskanban_json "$run_status"
+        run_status_json="$HERMESKANBAN_JSON"
+        hermeskanban_json "$outcome"
+        outcome_json="$HERMESKANBAN_JSON"
+        hermeskanban_json "$profile"
+        profile_json="$HERMESKANBAN_JSON"
+        hermeskanban_json "$summary"
+        summary_json="$HERMESKANBAN_JSON"
+        hermeskanban_json "$error"
+        error_json="$HERMESKANBAN_JSON"
+        run="{\"id\":$id"
+        run+=",\"status\":$run_status_json"
+        run+=",\"outcome\":$outcome_json"
+        run+=",\"started_at\":$started,\"ended_at\":$ended,\"duration_seconds\":$duration"
+        run+=",\"profile\":$profile_json"
+        run+=",\"summary\":$summary_json"
+        run+=",\"error\":$error_json}"
+        runs_json+="${runs_json:+,}$run"
+        i=$(( i + 1 ))
+    done
+    out="{"
+    hermeskanban_json "$HERMESKANBAN_BOARD_NAME"
+    out+="\"bar_hermeskanban\":1,\"mode\":\"runs\",\"board\":$HERMESKANBAN_JSON"
+    hermeskanban_json "$HERMESKANBAN_DB_PATH"
+    out+=",\"db\":$HERMESKANBAN_JSON,\"now\":$HERMESKANBAN_NOW"
+    hermeskanban_json "$task_id"
+    out+=",\"task\":{\"id\":$HERMESKANBAN_JSON"
+    hermeskanban_json "$status"
+    out+=",\"status\":$HERMESKANBAN_JSON"
+    hermeskanban_json "$title"
+    out+=",\"title\":$HERMESKANBAN_JSON"
+    hermeskanban_json "$kind"
+    out+=",\"workspace_kind\":$HERMESKANBAN_JSON"
+    hermeskanban_json "$path"
+    out+=",\"workspace_path\":$HERMESKANBAN_JSON"
+    hermeskanban_json "$branch"
+    out+=",\"branch\":$HERMESKANBAN_JSON}"
+    out+=",\"matched\":$matched,\"printed\":$printed,\"limit\":$limit_n"
+    out+=",\"truncated\":$([[ "$truncated" == 1 ]] && printf true || printf false)"
+    out+=",\"failed\":$HERMESKANBAN_FAILED,\"runs\":[$runs_json]}"
+    printf '%s\n' "$out"
+}
+
+# --- usage --------------------------------------------------------------------------------------
+
+function hermeskanban_help ## - the usage text, on stdout
+{
+    cat <<'HERMESKANBAN_USAGE'
+usage: hermeskanban [--json] [--board <slug>|--db <path>] [<selector>..] [--limit <n>|--all]
+       hermeskanban --runs <task-id> [--json] [--limit <n>]
+
+  no selector          the summary: counts by status, the waiting totals (ready, blocked,
+                       scheduled), the age of the oldest ready card, the number of live runs
+  --status <s>[,<s>]   cards in those statuses (triage, todo, scheduled, ready, running,
+                       blocked, review, done, archived)
+  --assignee <name>    cards assigned to those profiles [,] separated
+  --project <id|slug>  cards linked to that project (the slug is resolved via projects.db)
+  --parent <task-id>   the children of one card
+  --id <task-id>       one card, or several [,] separated
+  --runs <task-id>     the runs of one card instead of a listing
+  --limit <n>          print at most n records (0 = all; default 50, 20 for --runs)
+  --all                same as '--limit 0'
+  --json               one JSON object with the same numbers as the text form
+  --board <slug>, --db <path>
+                       read another board (default: this caller's board)
+
+exit codes: 0 answered, 2 usage error (an option without a value, or with an empty one),
+            3 board unreadable, 4 no such card
+HERMESKANBAN_USAGE
+}
+
+function hermeskanban_usage ## <message> - the failure report, on stderr
+{
+    printf 'hermeskanban: %s\n' "$1" >&2
+    printf "usage: hermeskanban [--json] [--status <s>[,<s>]..] [--assignee <n>] [--project <id|slug>] \
+[--parent <task-id>] [--id <task-id>] [--limit <n>|--all] [--board <slug>|--db <path>]\n" >&2
+    printf '       hermeskanban --runs <task-id> [--json]\n' >&2
+    printf "       hermeskanban --help\n" >&2
+}
+
+# --- the rule -----------------------------------------------------------------------------------
+
+function hermeskanban
+{
+    ## RULE_ARGS are the positional parameters of this function: the rule body passes them on.
+    local -a args=()
+    local raw arg
+    local json="" db="" board="" runs_id="" limit=""
+    local -a status=() assignee=() ids=() parents=() projects=()
+    local -i limit_list=50 limit_runs=20
+    local -a clauses=() values=()
+    local value exists sql
+
+    for raw in "$@"; do
+        if [[ "$raw" == --*=* ]]; then
+            args+=("${raw%%=*}" "${raw#*=}")
+        else
+            args+=("$raw")
+        fi
+    done
+    local -i i=0
+    local -i count=${#args[@]}
+    while (( i < count )); do
+        arg="${args[i]}"
+        i=$(( i + 1 ))
+        case "$arg" in
+        -h | --help)
+            hermeskanban_help
+            return 0
+            ;;
+        --json) json=1 ;;
+        --all) limit=0 ;;
+        --status | --assignee | --project | --parent | --id | --runs | --limit | --db | --board)
+            if (( i >= count )); then
+                hermeskanban_usage "'$arg' needs a value"
+                return 2
+            fi
+            if [[ -z "${args[i]}" ]]; then
+                hermeskanban_usage "'$arg' needs a non-empty value"
+                return 2
+            fi
+            case "$arg" in
+            --status) status+=("${args[i]}") ;;
+            --assignee) assignee+=("${args[i]}") ;;
+            --project) projects+=("${args[i]}") ;;
+            --parent) parents+=("${args[i]}") ;;
+            --id) ids+=("${args[i]}") ;;
+            --runs) runs_id="${args[i]}" ;;
+            --limit) limit="${args[i]}" ;;
+            --db) db="${args[i]}" ;;
+            --board) board="${args[i]}" ;;
+            esac
+            i=$(( i + 1 ))
+            ;;
+        *)
+            hermeskanban_usage "unknown argument '$arg'"
+            return 2
+            ;;
+        esac
+    done
+
+    [[ -n "${BAR_AGENT_JSON:-}" ]] && json=1
+    if [[ -n "$limit" && ! "$limit" =~ ^[0-9]+$ ]]; then
+        hermeskanban_usage "invalid --limit '$limit', want a non-negative number"
+        return 2
+    fi
+    if [[ -n "$board" && ! "$board" =~ ^[a-z0-9][a-z0-9_-]*$ ]]; then
+        hermeskanban_usage "invalid --board '$board'"
+        return 2
+    fi
+    if [[ -n "$runs_id" ]] && (( ${#status[@]} + ${#assignee[@]} + ${#projects[@]} + \
+        ${#parents[@]} + ${#ids[@]} > 0 )); then
+        hermeskanban_usage "'--runs' takes no card selector"
+        return 2
+    fi
+
+    HERMESKANBAN_DB_PATH="$(hermeskanban_db_path "$db" "$board")"
+    HERMESKANBAN_BOARD_NAME="$(hermeskanban_board_name "$(hermeskanban_root)" "$board")"
+    HERMESKANBAN_NOW="$(date +%s)"
+
+    if ! command -v sqlite3 >/dev/null 2>&1; then
+        printf 'hermeskanban: sqlite3 is not installed\n' >&2
+        return 3
+    fi
+    if [[ ! -f "$HERMESKANBAN_DB_PATH" ]]; then
+        printf 'hermeskanban: no board database at %s\n' "$HERMESKANBAN_DB_PATH" >&2
+        return 3
+    fi
+    exists="$(hermeskanban_sql "select count(*) from sqlite_master where type = 'table' and name = 'tasks';")" || {
+        printf 'hermeskanban: cannot read the board at %s\n' "$HERMESKANBAN_DB_PATH" >&2
+        return 3
+    }
+    if [[ "$exists" != 1 ]]; then
+        printf 'hermeskanban: %s is not a Kanban database (no tasks table)\n' "$HERMESKANBAN_DB_PATH" >&2
+        return 3
+    fi
+
+    if [[ -n "$runs_id" ]]; then
+        hermeskanban_runs_view "$runs_id" "$json" "${limit:-$limit_runs}"
+        return $?
+    fi
+
+    if (( ${#parents[@]} > 0 )); then
+        clauses=()
+        for value in "${parents[@]}"; do
+            if ! hermeskanban_card_exists "$value"; then
+                printf 'hermeskanban: no card %s on board %s\n' "$value" "$HERMESKANBAN_BOARD_NAME" >&2
+                return 4
+            fi
+            values+=("$value")
+        done
+        clauses+=("t.id in (select child_id from task_links where parent_id in ($(hermeskanban_in_list "${values[@]}")))")
+    fi
+    if (( ${#ids[@]} > 0 )); then
+        values=()
+        for value in "${ids[@]}"; do
+            IFS=, read -r -a tmp_ids <<<"$value"
+            for arg in ${tmp_ids[@]+"${tmp_ids[@]}"}; do
+                if ! hermeskanban_card_exists "$arg"; then
+                    printf 'hermeskanban: no card %s on board %s\n' "$arg" "$HERMESKANBAN_BOARD_NAME" >&2
+                    return 4
+                fi
+                values+=("$arg")
+            done
+        done
+        clauses+=("t.id in ($(hermeskanban_in_list "${values[@]}"))")
+    fi
+    if (( ${#status[@]} > 0 )); then
+        values=()
+        for value in "${status[@]}"; do
+            IFS=, read -r -a tmp_ids <<<"$value"
+            for arg in ${tmp_ids[@]+"${tmp_ids[@]}"}; do
+                values+=("$arg")
+            done
+        done
+        clauses+=("t.status in ($(hermeskanban_in_list "${values[@]}"))")
+    fi
+    if (( ${#assignee[@]} > 0 )); then
+        values=()
+        for value in "${assignee[@]}"; do
+            IFS=, read -r -a tmp_ids <<<"$value"
+            for arg in ${tmp_ids[@]+"${tmp_ids[@]}"}; do
+                values+=("$arg")
+            done
+        done
+        clauses+=("t.assignee in ($(hermeskanban_in_list "${values[@]}"))")
+    fi
+    if (( ${#projects[@]} > 0 )); then
+        values=()
+        for value in "${projects[@]}"; do
+            values+=("$(hermeskanban_project_id "$value")")
+        done
+        clauses+=("t.project_id in ($(hermeskanban_in_list "${values[@]}"))")
+    fi
+
+    if (( ${#clauses[@]} > 0 )) || [[ -n "$limit" ]]; then
+        hermeskanban_gather_cards ${clauses[@]+"${clauses[@]}"}
+        hermeskanban_list_view "$json" "${limit:-$limit_list}"
+        return $?
+    fi
+
+    hermeskanban_gather_summary
+    if [[ -n "$json" ]]; then
+        hermeskanban_summary_json
+    else
+        hermeskanban_summary_text
+    fi
+}
+
+## Local Variables:
+## mode: sh
+## sh-shell: bash
+## End:
+## vim: set ft=bash:
+
+# helper: hermeskanban | the local Hermes Kanban board: counts by status, ready staleness, filtered card listings with dependencies and live runs, blocked reasons, and the runs of one card | hermeskanban [--json] [--board <slug>] [--db <path>] [--status <s>[,<s>]..] [--assignee <name>] [--project <project>] [--parent <task-id>] [--id <task-id>] [--limit <n>] [--all] [--runs <task-id>] | no selector: a six line summary; a selector: one line per card then '(n of N cards)'; '--runs': one line per run then '(n runs)'; '--json': one object carrying the same numbers
+## The bounded board state digest.  See the module header for the exit codes, the board resolution
+## and the elision rules; nothing but the answer is written to stdout.
+rule hermeskanban: -

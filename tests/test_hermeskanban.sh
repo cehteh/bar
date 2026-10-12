@@ -2,7 +2,7 @@
 # -*- mode: sh; sh-shell: bash -*-
 # vim: set ft=bash:
 #
-# Acceptance tests for the Kanban board state helper (Bar.d/hermes, rule 'hermes_kanban').
+# Acceptance tests for the Kanban board state helper (Bar.d/hermeskanban, rule 'hermeskanban').
 #
 # Everything runs against throw-away board databases and a throw-away installation: the live board
 # (~/.hermes/kanban.db) is never read, so the assertions do not move under the test.  Covered:
@@ -23,7 +23,7 @@
 #   AC12 the repertoire index lists the helper and the registration guard accepts it
 #   AC13 two runs agree on every number
 #
-# Usage: ./bar test_hermes_kanban        (or directly: tests/test_hermes_kanban.sh)
+# Usage: ./bar test_hermeskanban        (or directly: tests/test_hermeskanban.sh)
 
 set -euo pipefail
 
@@ -40,7 +40,7 @@ absent() { if [[ "$1" != *"$2"* ]]; then pass "$3"; else fail "$3 ([$2] found in
 bytes_of() { printf '%s' "$1" | wc -c; }
 num() { printf '%s' "${1//[!0-9]/}"; }   # the leading integer of a line, tags stripped
 
-echo "=== Testing the Kanban board state helper (Bar.d/hermes) ==="
+echo "=== Testing the Kanban board state helper (Bar.d/hermeskanban) ==="
 echo
 
 WORK="$(mktemp -d)"
@@ -187,21 +187,21 @@ mkproject "$PROJ"
 
 # The helper is invoked from a project of its own, the way a rule of an installed helper is: the
 # board it reads is chosen by the environment and by its options, never by the cwd.  It is also
-# what makes 'please hermes_kanban' work from a directory without any Bar.d at all (AC14).
+# what makes 'please hermeskanban' work from a directory without any Bar.d at all (AC14).
 kanban() { # <args..> - the helper against the fixture root
     OUT=""
     RC=0
     OUT="$(cd "$PROJ" && env -u HERMES_KANBAN_DB -u HERMES_KANBAN_BOARD \
         HERMES_KANBAN_HOME="$ROOT" \
-        "$BAR" hermes_kanban "$@" 2>/dev/null)" || RC=$?
+        "$BAR" hermeskanban "$@" 2>/dev/null)" || RC=$?
 }
 
-hermes_kanban_err() { # <args..>
+hermeskanban_err() { # <args..>
     OUT=""
     RC=0
     OUT="$(cd "$PROJ" && env -u HERMES_KANBAN_DB -u HERMES_KANBAN_BOARD \
         HERMES_KANBAN_HOME="$ROOT" \
-        "$BAR" hermes_kanban "$@" 2>&1 >/dev/null)" || RC=$?
+        "$BAR" hermeskanban "$@" 2>&1 >/dev/null)" || RC=$?
 }
 
 status_counts="triage: 1, todo: 4, scheduled: 1, ready: 2, running: 2, blocked: 3, review: 1, done: 2"
@@ -212,7 +212,7 @@ empty_counts="tasks: 0 (triage: 0, todo: 0, scheduled: 0, ready: 0, running: 0, 
 # --------------------------------------------------------------------------------------------
 echo "--- AC1 the summary ---"
 kanban
-check "$RC" "0" "AC1: 'hermes_kanban' exits 0"
+check "$RC" "0" "AC1: 'hermeskanban' exits 0"
 check "$(printf '%s\n' "$OUT" | wc -l)" "6" "AC1: the summary is six lines"
 check "$(sed -n 1p <<<"$OUT")" "board: default ($FIXTURE)" "AC1: the first line names the board and its database"
 contains "$(sed -n 6p <<<"$OUT")" "active runs: 2" "AC1: the last line counts the live runs"
@@ -256,11 +256,11 @@ check "$(grep -m1 '^oldest ready: ' <<<"$OUT")" "oldest ready: none" "AC2: an em
 # --------------------------------------------------------------------------------------------
 echo "--- AC3 --json ---"
 kanban --json
-TEXT_SUMMARY="$(cd "$PROJ" && env -u HERMES_KANBAN_DB -u HERMES_KANBAN_BOARD HERMES_KANBAN_HOME="$ROOT" "$BAR" hermes_kanban 2>/dev/null)"
+TEXT_SUMMARY="$(cd "$PROJ" && env -u HERMES_KANBAN_DB -u HERMES_KANBAN_BOARD HERMES_KANBAN_HOME="$ROOT" "$BAR" hermeskanban 2>/dev/null)"
 check "$RC" "0" "AC3: '--json' exits 0"
 check "$(printf '%s\n' "$OUT" | wc -l)" "1" "AC3: the JSON form is one line"
 if command -v jq >/dev/null; then
-    check "$(printf '%s' "$OUT" | jq -r .bar_hermes_kanban)" "1" "AC3: the object identifies itself"
+    check "$(printf '%s' "$OUT" | jq -r .bar_hermeskanban)" "1" "AC3: the object identifies itself"
     check "$(printf '%s' "$OUT" | jq -r .tasks)" "16" "AC3: .tasks is the text total"
     check "$(printf '%s' "$OUT" | jq -r .by_status.todo)" "4" "AC3: .by_status carries the text counts"
     check "$(printf '%s' "$OUT" | jq -r '[.by_status[]] | add')" "16" "AC3: they add up to the total"
@@ -282,9 +282,9 @@ else
     pass "AC3: jq is not installed, the JSON was only checked for its shape"
 fi
 run_in "$PROJ" env -u HERMES_KANBAN_DB -u HERMES_KANBAN_BOARD HERMES_KANBAN_HOME="$ROOT" \
-    "$BAR" --json hermes_kanban --status ready
+    "$BAR" --json hermeskanban --status ready
 if command -v jq >/dev/null; then
-    check "$(printf '%s' "$OUT" | jq -r .matched)" "2" "AC3: 'bar --json hermes_kanban' reaches the helper"
+    check "$(printf '%s' "$OUT" | jq -r .matched)" "2" "AC3: 'bar --json hermeskanban' reaches the helper"
 else
     pass "AC3: jq is not installed"
 fi
@@ -461,9 +461,9 @@ for opt in --status --assignee --project --parent --id --runs --limit --db --boa
 done
 kanban --id=
 check "$RC" "2" "AC8: an empty '--id=' after the '=' exits 2 as well"
-hermes_kanban_err --id ""
+hermeskanban_err --id ""
 contains "$OUT" "'--id' needs a non-empty value" "AC8: and the report names the option"
-hermes_kanban_err --runs ""
+hermeskanban_err --runs ""
 contains "$OUT" "'--runs' needs a non-empty value" "AC8: '--runs' included"
 
 kanban --limit x
@@ -472,15 +472,15 @@ kanban --board 'Not A Slug'
 check "$RC" "2" "AC8: an invalid board slug exits 2"
 kanban --runs t_run_a --status ready
 check "$RC" "2" "AC8: '--runs' with a selector exits 2"
-hermes_kanban_err --nonsense
-contains "$OUT" "usage: hermes_kanban" "AC8: the usage goes to stderr"
+hermeskanban_err --nonsense
+contains "$OUT" "usage: hermeskanban" "AC8: the usage goes to stderr"
 
 kanban --db "$WORK/does-not-exist.db"
 check "$RC" "3" "AC8: a missing database exits 3"
 : >"$WORK/empty.db"
 kanban --db "$WORK/empty.db"
 check "$RC" "3" "AC8: a database without a tasks table exits 3"
-hermes_kanban_err --db "$WORK/empty.db"
+hermeskanban_err --db "$WORK/empty.db"
 contains "$OUT" "not a Kanban database" "AC8: and says why"
 
 kanban --id t_no_such_card
@@ -489,12 +489,12 @@ kanban --runs t_no_such_card
 check "$RC" "4" "AC8: an unknown card for '--runs' exits 4"
 kanban --parent t_no_such_card
 check "$RC" "4" "AC8: an unknown card for '--parent' exits 4"
-hermes_kanban_err --parent t_no_such_card
+hermeskanban_err --parent t_no_such_card
 contains "$OUT" "no card t_no_such_card on board default" "AC8: and names the card and the board"
 
 kanban --help
 check "$RC" "0" "AC8: '--help' exits 0"
-contains "$OUT" "usage: hermes_kanban" "AC8: and prints the usage on stdout"
+contains "$OUT" "usage: hermeskanban" "AC8: and prints the usage on stdout"
 
 # --------------------------------------------------------------------------------------------
 # AC9  the board is resolved like the kernel resolves it
@@ -511,25 +511,25 @@ kanban --db "$WORK/somewhere-else.db"
 check "$RC" "3" "AC9: a database of its own is only reached by '--db'"
 
 run_in "$PROJ" env -u HERMES_KANBAN_DB -u HERMES_KANBAN_BOARD HERMES_KANBAN_HOME="$ROOT" \
-    HERMES_KANBAN_BOARD=demo "$BAR" hermes_kanban
+    HERMES_KANBAN_BOARD=demo "$BAR" hermeskanban
 check "$RC" "0" "AC9: '\$HERMES_KANBAN_BOARD' is honoured"
 check "$(grep -m1 '^tasks: ' <<<"$OUT")" "$empty_counts" \
     "AC9: and it resolved the empty demo board"
 check "$(sed -n 1p <<<"$OUT")" "board: demo ($DEMO_BOARD)" "AC9: naming it as such"
 
 run_in "$PROJ" env -u HERMES_KANBAN_DB -u HERMES_KANBAN_BOARD HERMES_KANBAN_HOME="$ROOT" \
-    HERMES_KANBAN_DB="$DEMO_BOARD" "$BAR" hermes_kanban
+    HERMES_KANBAN_DB="$DEMO_BOARD" "$BAR" hermeskanban
 check "$(sed -n 1p <<<"$OUT")" "board: demo ($DEMO_BOARD)" "AC9: '\$HERMES_KANBAN_DB' pins the database"
 check "$(grep -m1 '^tasks: ' <<<"$OUT")" "$empty_counts" \
     "AC9: of the empty demo board, not of the default one"
 
 printf 'demo\n' >"$ROOT/kanban/current"
 run_in "$PROJ" env -u HERMES_KANBAN_DB -u HERMES_KANBAN_BOARD HERMES_KANBAN_HOME="$ROOT" \
-    "$BAR" hermes_kanban
+    "$BAR" hermeskanban
 check "$(sed -n 1p <<<"$OUT")" "board: demo ($DEMO_BOARD)" "AC9: '<root>/kanban/current' is the fallback"
 rm -f "$ROOT/kanban/current"
 run_in "$PROJ" env -u HERMES_KANBAN_DB -u HERMES_KANBAN_BOARD HERMES_KANBAN_HOME="$ROOT" \
-    "$BAR" hermes_kanban
+    "$BAR" hermeskanban
 check "$(sed -n 1p <<<"$OUT")" "board: default ($FIXTURE)" "AC9: without it the default board is read"
 
 # --------------------------------------------------------------------------------------------
@@ -556,9 +556,10 @@ fi
 echo "--- AC11/AC12 help and the repertoire ---"
 run_bar "$PROJ" help
 contains "$OUT" "Hermes Kanban board state" "AC11: the module header prose is in 'bar help'"
-contains "$OUT" "THE KANBAN BOARD ('hermes_kanban')" "AC11: as its own section of the module's block"
+contains "$OUT" "The Hermes Kanban board state digest" "AC11: its own module header reaches 'bar help'"
+contains "$OUT" "hermeskanban --status blocked" "AC11: the rule and its usage are in that block"
 run_bar "$PROJ" helpers
-contains "$OUT" "hermes_kanban" "AC12: the repertoire lists the helper"
+contains "$OUT" "hermeskanban" "AC12: the repertoire lists the helper"
 run_bar "$PROJ" helpers --check
 check "$RC" "0" "AC12: the registration guard accepts the module"
 check "$OUT" "" "AC12: and says nothing when there is nothing to say"
@@ -567,7 +568,7 @@ check "$RC" "0" "AC12: the guard is green as a 'bar check' target"
 check "$OUT" "OK helpers_check" "AC12: and is one line there"
 
 # the helper runs from a project of its own, not only from this checkout
-run_bar "$PROJ" hermes_kanban --db "$FIXTURE"
+run_bar "$PROJ" hermeskanban --db "$FIXTURE"
 check "$RC" "0" "AC12: the helper resolves and runs from another project"
 
 # --------------------------------------------------------------------------------------------
@@ -614,15 +615,15 @@ else
     fail "AC14: no 'please' at $FAKE_HOME/.local/bin/please"
 fi
 run_in "$WORK" env -u HERMES_KANBAN_DB -u HERMES_KANBAN_BOARD HOME="$FAKE_HOME" \
-    HERMES_KANBAN_HOME="$ROOT" "$FAKE_HOME/.local/bin/please" hermes_kanban
-check "$RC" "0" "AC14: 'please hermes_kanban' from an arbitrary directory exits 0"
+    HERMES_KANBAN_HOME="$ROOT" "$FAKE_HOME/.local/bin/please" hermeskanban
+check "$RC" "0" "AC14: 'please hermeskanban' from an arbitrary directory exits 0"
 check "$(printf '%s\n' "$OUT" | wc -l)" "6" "AC14: and prints the six line summary"
 check "$(grep -m1 '^tasks: ' <<<"$OUT")" "tasks: 16 ($status_counts)" "AC14: of the board it resolved"
 run_in "$WORK" env -u HERMES_KANBAN_DB -u HERMES_KANBAN_BOARD HOME="$FAKE_HOME" \
-    HERMES_KANBAN_HOME="$ROOT" "$FAKE_HOME/.local/bin/please" hermes_kanban --status blocked
+    HERMES_KANBAN_HOME="$ROOT" "$FAKE_HOME/.local/bin/please" hermeskanban --status blocked
 check "$(printf '%s\n' "$OUT" | tail -2 | head -1)" "(3 cards)" "AC14: and a filter too"
 run_in "$WORK" env -u HERMES_KANBAN_DB -u HERMES_KANBAN_BOARD HOME="$FAKE_HOME" \
-    "$FAKE_HOME/.local/bin/please" hermes_kanban
+    "$FAKE_HOME/.local/bin/please" hermeskanban
 check "$RC" "3" "AC14: with no board at all it fails fast, exit 3"
 check "$OUT" "" "AC14: and says nothing on stdout"
 

@@ -51,15 +51,15 @@
 ###
 ###   <name>        the rule name: '<word>' or '<word>_<rest>' of that module
 ###   <purpose>     one line, the question it answers -- this is how an agent picks a helper
-###   <invocation>  how to call it, its options included ('hermes_kanban [--json] <selector>')
+###   <invocation>  how to call it, its options included ('hermeskanban [--json] <selector>')
 ###   <output>      one line, the shape of the answer
 ###
 ### The three forms share the four fields and the adjacency rule and differ only in *which
 ### personality* lists the helper.  A plain '# helper:' is generic and is listed by both; a
 ### '# helper-bar:' is listed only when bar was called as 'bar', a '# helper-please:' only when
 ### it was called as 'please'.  Every listed row carries the personality: the invocation field is
-### prefixed with it, so 'bar helpers' prints 'bar hermes_kanban [--json]' and 'please helpers'
-### prints the same 'please hermes_kanban [--json]', and each JSON object carries that name in a
+### prefixed with it, so 'bar helpers' prints 'bar hermeskanban [--json]' and 'please helpers'
+### prints the same 'please hermeskanban [--json]', and each JSON object carries that name in a
 ### 'command' field.  The kind never weakens the guard: an adjacency, naming, unusable-field or
 ### duplicate violation is reported for every declaration no matter which personality it addresses.
 ###

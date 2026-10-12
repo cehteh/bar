@@ -56,7 +56,7 @@ rule tests: test_extcomp
 rule tests: test_function_completion
 rule tests: test_helpers
 rule tests: test_hermes_logs
-rule tests: test_hermes_kanban
+rule tests: test_hermeskanban
 rule tests: test_integration
 rule tests: test_is_cargo_tool_completion
 rule tests: test_issue_fixes
@@ -81,7 +81,7 @@ rule test_ext_completers: -- tests/test_ext_completers.sh
 rule test_extcomp: -- tests/test_extcomp.sh
 rule test_function_completion: -- tests/test_function_completion.sh
 rule test_helpers: -- tests/test_helpers.sh
-rule test_hermes_kanban: -- tests/test_hermes_kanban.sh
+rule test_hermeskanban: -- tests/test_hermeskanban.sh
 rule test_hermes_logs: -- tests/test_hermes_logs.sh
 rule test_integration: -- tests/test_integration.sh
 rule test_is_cargo_tool_completion: -- tests/test_is_cargo_tool_completion.sh

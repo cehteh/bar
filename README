@@ -799,15 +799,15 @@ MODULE API/RULES
     
       <name>        the rule name: '<word>' or '<word>_<rest>' of that module
       <purpose>     one line, the question it answers -- this is how an agent picks a helper
-      <invocation>  how to call it, its options included ('hermes_kanban [--json] <selector>')
+      <invocation>  how to call it, its options included ('hermeskanban [--json] <selector>')
       <output>      one line, the shape of the answer
     
     The three forms share the four fields and the adjacency rule and differ only in *which
     personality* lists the helper.  A plain '# helper:' is generic and is listed by both; a
     '# helper-bar:' is listed only when bar was called as 'bar', a '# helper-please:' only when
     it was called as 'please'.  Every listed row carries the personality: the invocation field is
-    prefixed with it, so 'bar helpers' prints 'bar hermes_kanban [--json]' and 'please helpers'
-    prints the same 'please hermes_kanban [--json]', and each JSON object carries that name in a
+    prefixed with it, so 'bar helpers' prints 'bar hermeskanban [--json]' and 'please helpers'
+    prints the same 'please hermeskanban [--json]', and each JSON object carries that name in a
     'command' field.  The kind never weakens the guard: an adjacency, naming, unusable-field or
     duplicate violation is reported for every declaration no matter which personality it addresses.
     
@@ -1055,42 +1055,6 @@ MODULE API/RULES
     replace the 'session_search' tool for fuzzy recall, and it does not read what Hermes stores
     outside the paths above (the kanban board as a database, cron job definitions, the vault).  It
     never pages, never colours, and prints no progress on stdout.
-    
-    THE KANBAN BOARD ('hermes_kanban')
-    
-    Hermes Kanban board state: what the local board holds right now, bounded.
-    
-    'hermes_kanban' answers the board questions that otherwise cost several turns of hand written
-    sqlite -- and that 'hermes kanban' refuses to answer at all inside a worker context -- by
-    reading the board database directly: the counts by status together with how stale the oldest
-    ready card is and how many runs are live (the summary, which lists no card); the cards matching
-    a filter, one per line, with their dependencies and their live run; why a blocked card is
-    blocked; and what a card's runs did.
-    
-      hermes_kanban                              the bounded summary digest, no card listed
-      hermes_kanban --status blocked             the blocked cards, one line each, with the reason
-      hermes_kanban --assignee default           the cards of one agent, highest priority first
-      hermes_kanban --parent t_deadbeef          the children of one card
-      hermes_kanban --runs t_deadbeef            the runs of one card, newest first
-      hermes_kanban --json                       the same numbers as one JSON object
-    
-    A listing is bounded by '--limit' (default 50) and prints the exact elision counts plus the path
-    of a file holding every matching card whenever it elides anything; the summary always fits in
-    six lines.  Nothing but the answer goes to stdout.
-    
-    EXIT CODES: 0 answered (a filter matching no card is an answer, not a failure), 2 usage error,
-    3 the board could not be read (no database, not a Kanban database, 'sqlite3' missing), 4 the
-    card asked for ('--id', '--parent', '--runs') does not exist.
-    
-    An option is nothing without its value: '--status' with nothing after it is a usage error like
-    any other, and so is an empty value ('--id ""'), which would otherwise name no card and quietly
-    answer as though the option had not been given at all.
-    
-    The board is resolved the way the kernel resolves it: '--db', then '--board', else
-    '$HERMES_KANBAN_DB', '$HERMES_KANBAN_BOARD' or '<root>/kanban/current', finally the default
-    board.  '<root>' is '$HERMES_KANBAN_HOME' or '~/.hermes'; a named board lives in
-    '<root>/kanban/boards/<slug>/kanban.db'.  The first line of the summary names the board after
-    the database it read: 'default', the slug of a named board, or 'custom' for anything else.
 
     Variables:
 
@@ -1172,114 +1136,6 @@ MODULE API/RULES
         Body of the 'hermes_logs' rule: parse the options into the query context, resolve the corpus
         roots and hand over to 'hermes_logs_scan'.  See the module header for the contract.
 
-      hermes_kanban_root - '$HERMES_KANBAN_HOME' or '~/.hermes'
-
-      hermes_kanban_db_default - the database the kernel would resolve for this caller
-
-      hermes_kanban_db_path <db option> <board option>
-        the path the explicit options resolve to
-
-      hermes_kanban_board_name <board option>
-        the board slug for the output header
-
-      hermes_kanban_sql <sql>
-        run one query, print its rows with US separated fields
-        '-readonly' keeps a board the caller may not write untouched; the second attempt covers a
-        WAL database whose shared memory sidecar the kernel has not materialised yet.  A failure of
-        both is a failure to read the board, which the caller turns into exit code 3.
-
-      hermes_kanban_quote <value>
-        a SQL single quoted literal
-
-      hermes_kanban_in_list <value..>
-        a quoted, comma joined SQL literal list
-
-      hermes_kanban_project_id <id-or-slug>
-        the project id, or the argument unchanged
-        '<root>/projects.db' maps a slug to its id; without it (or without that project) the
-        argument is taken as an id verbatim, so a board database alone is enough to filter.
-
-      hermes_kanban_json <text>
-        sets HERMES_KANBAN_JSON to <text> as a JSON string literal
-        Sets a global instead of printing: a command substitution would fork a subshell for every
-        field of every record, which is what makes a listing of a hundred cards take a second
-        (measured 800 ms for 90 cards before this, 90 ms after).  The escaping and the 'into a
-        variable' form are 'json_set_string'; what stays local is kanban's own policy -- every
-        control character becomes a space instead of being dropped, so a title keeps its word
-        boundaries ('title with\na newline' reads 'title with a newline').
-
-      hermes_kanban_json_number_or_null <number|''>
-        sets HERMES_KANBAN_JSON to a JSON number, or 'null'
-        The argument shape is kanban's (a run id or a duration as sqlite3 prints it, '' for none),
-        the literal is 'json_set_number'.
-
-      hermes_kanban_duration <seconds>
-        '3d4h', '5h12m', '12m30s' or '45s'
-
-      hermes_kanban_stamp <epoch>
-        a local 'YYYY-MM-DD HH:MM:SS', '-' for 0
-
-      hermes_kanban_truncate <text> <max>
-        <text>, shortened to <max> bytes with a '...' tail
-
-      hermes_kanban_card_sql <where clauses..>
-        the SELECT of one card record
-
-      hermes_kanban_card_field <record> <index, 1 based>
-        one field of a card record
-
-      hermes_kanban_card_reason <kind> <reason> <error>
-        why a blocked card is blocked
-
-      hermes_kanban_card_line <record> <reason budget, 0 = full>
-        one card as one text line
-        The record is split once, here: a 'read' per field would fork a subshell per field and cost
-        a hundred milliseconds over a listing (measured on a 90 card answer).
-
-      hermes_kanban_gather_cards <where clauses..>
-        load every matching card into HERMES_KANBAN_ROWS
-
-      hermes_kanban_card_exists <task-id>
-        0 when the card is on the board
-
-      hermes_kanban_write_all <suffix> <budget>
-        write every record, print the path of the file
-        The complete, untruncated answer: the convention is that whatever the screen leaves out is
-        retrievable from a file whose path is printed next to the elision counts.  Written through a
-        temporary name so a reader never sees a half written file.
-
-      hermes_kanban_record_line <record> <budget>
-        one record through the active renderer
-
-      hermes_kanban_status_count <status>
-        the count of one status, 0 when it is not a status
-
-      hermes_kanban_list_view <json> <limit>
-        the matching cards, oldest of one priority first
-
-      hermes_kanban_list_json <printed> <limit>
-        the listing as one JSON object
-
-      hermes_kanban_runs_sql <task-id>
-        the SELECT of one run record
-
-      hermes_kanban_gather_runs <task-id>
-        load the runs of a card into HERMES_KANBAN_ROWS
-
-      hermes_kanban_run_line <record> <budget>
-        one run as one text line
-
-      hermes_kanban_runs_view <task-id> <json> <limit>
-        the runs of one card, newest first
-
-      hermes_kanban_runs_json <task-id> <status> <kind> <path> <branch> <title> <printed> <limit>
-
-      hermes_kanban_help - the usage text, on stdout
-
-      hermes_kanban_usage <message>
-        the failure report, on stderr
-        RULE_ARGS are the positional parameters of this function: the rule body passes them on.
-
     Rules:
 
       hermes_logs
@@ -1289,7 +1145,155 @@ MODULE API/RULES
         Exit 0 answered, 3 for no match, 2 usage error, 1 a source could not be read.  See the module
         header for the corpus, the locator format, the filters and the non goals.
 
-      hermes_kanban
+  hermeskanban - The Hermes Kanban board state digest -- the board questions in one call
+    
+    Hermes Kanban board state: what the local board holds right now, bounded.
+    
+    'hermeskanban' answers the board questions that otherwise cost several turns of hand written
+    sqlite -- and that 'hermes kanban' refuses to answer at all inside a worker context -- by
+    reading the board database directly: the counts by status together with how stale the oldest
+    ready card is and how many runs are live (the summary, which lists no card); the cards matching
+    a filter, one per line, with their dependencies and their live run; why a blocked card is
+    blocked; and what a card's runs did.
+    
+      hermeskanban                              the bounded summary digest, no card listed
+      hermeskanban --status blocked             the blocked cards, one line each, with the reason
+      hermeskanban --assignee default           the cards of one agent, highest priority first
+      hermeskanban --parent t_deadbeef          the children of one card
+      hermeskanban --runs t_deadbeef            the runs of one card, newest first
+      hermeskanban --json                       the same numbers as one JSON object
+    
+    A listing is bounded by '--limit' (default 50) and prints the exact elision counts plus the path
+    of a file holding every matching card whenever it elides anything; the summary always fits in
+    six lines.  Nothing but the answer goes to stdout.
+    
+    EXIT CODES: 0 answered (a filter matching no card is an answer, not a failure), 2 usage error,
+    3 the board could not be read (no database, not a Kanban database, 'sqlite3' missing), 4 the
+    card asked for ('--id', '--parent', '--runs') does not exist.
+    
+    An option is nothing without its value: '--status' with nothing after it is a usage error like
+    any other, and so is an empty value ('--id ""'), which would otherwise name no card and quietly
+    answer as though the option had not been given at all.
+    
+    The board is resolved the way the kernel resolves it: '--db', then '--board', else
+    '$HERMES_KANBAN_DB', '$HERMES_KANBAN_BOARD' or '<root>/kanban/current', finally the default
+    board.  '<root>' is '$HERMES_KANBAN_HOME' or '~/.hermes'; a named board lives in
+    '<root>/kanban/boards/<slug>/kanban.db'.  The first line of the summary names the board after
+    the database it read: 'default', the slug of a named board, or 'custom' for anything else.
+
+    Functions:
+
+      hermeskanban_root - '$HERMES_KANBAN_HOME' or '~/.hermes'
+
+      hermeskanban_db_default - the database the kernel would resolve for this caller
+
+      hermeskanban_db_path <db option> <board option>
+        the path the explicit options resolve to
+
+      hermeskanban_board_name <board option>
+        the board slug for the output header
+
+      hermeskanban_sql <sql>
+        run one query, print its rows with US separated fields
+        '-readonly' keeps a board the caller may not write untouched; the second attempt covers a
+        WAL database whose shared memory sidecar the kernel has not materialised yet.  A failure of
+        both is a failure to read the board, which the caller turns into exit code 3.
+
+      hermeskanban_quote <value>
+        a SQL single quoted literal
+
+      hermeskanban_in_list <value..>
+        a quoted, comma joined SQL literal list
+
+      hermeskanban_project_id <id-or-slug>
+        the project id, or the argument unchanged
+        '<root>/projects.db' maps a slug to its id; without it (or without that project) the
+        argument is taken as an id verbatim, so a board database alone is enough to filter.
+
+      hermeskanban_json <text>
+        sets HERMESKANBAN_JSON to <text> as a JSON string literal
+        Sets a global instead of printing: a command substitution would fork a subshell for every
+        field of every record, which is what makes a listing of a hundred cards take a second
+        (measured 800 ms for 90 cards before this, 90 ms after).  The escaping and the 'into a
+        variable' form are 'json_set_string'; what stays local is kanban's own policy -- every
+        control character becomes a space instead of being dropped, so a title keeps its word
+        boundaries ('title with\na newline' reads 'title with a newline').
+
+      hermeskanban_json_number_or_null <number|''>
+        sets HERMESKANBAN_JSON to a JSON number, or 'null'
+        The argument shape is kanban's (a run id or a duration as sqlite3 prints it, '' for none),
+        the literal is 'json_set_number'.
+
+      hermeskanban_duration <seconds>
+        '3d4h', '5h12m', '12m30s' or '45s'
+
+      hermeskanban_stamp <epoch>
+        a local 'YYYY-MM-DD HH:MM:SS', '-' for 0
+
+      hermeskanban_truncate <text> <max>
+        <text>, shortened to <max> bytes with a '...' tail
+
+      hermeskanban_card_sql <where clauses..>
+        the SELECT of one card record
+
+      hermeskanban_card_field <record> <index, 1 based>
+        one field of a card record
+
+      hermeskanban_card_reason <kind> <reason> <error>
+        why a blocked card is blocked
+
+      hermeskanban_card_line <record> <reason budget, 0 = full>
+        one card as one text line
+        The record is split once, here: a 'read' per field would fork a subshell per field and cost
+        a hundred milliseconds over a listing (measured on a 90 card answer).
+
+      hermeskanban_gather_cards <where clauses..>
+        load every matching card into HERMESKANBAN_ROWS
+
+      hermeskanban_card_exists <task-id>
+        0 when the card is on the board
+
+      hermeskanban_write_all <suffix> <budget>
+        write every record, print the path of the file
+        The complete, untruncated answer: the convention is that whatever the screen leaves out is
+        retrievable from a file whose path is printed next to the elision counts.  Written through a
+        temporary name so a reader never sees a half written file.
+
+      hermeskanban_record_line <record> <budget>
+        one record through the active renderer
+
+      hermeskanban_status_count <status>
+        the count of one status, 0 when it is not a status
+
+      hermeskanban_list_view <json> <limit>
+        the matching cards, oldest of one priority first
+
+      hermeskanban_list_json <printed> <limit>
+        the listing as one JSON object
+
+      hermeskanban_runs_sql <task-id>
+        the SELECT of one run record
+
+      hermeskanban_gather_runs <task-id>
+        load the runs of a card into HERMESKANBAN_ROWS
+
+      hermeskanban_run_line <record> <budget>
+        one run as one text line
+
+      hermeskanban_runs_view <task-id> <json> <limit>
+        the runs of one card, newest first
+
+      hermeskanban_runs_json <task-id> <status> <kind> <path> <branch> <title> <printed> <limit>
+
+      hermeskanban_help - the usage text, on stdout
+
+      hermeskanban_usage <message>
+        the failure report, on stderr
+        RULE_ARGS are the positional parameters of this function: the rule body passes them on.
+
+    Rules:
+
+      hermeskanban
         The bounded board state digest.  See the module header for the exit codes, the board resolution
         and the elision rules; nothing but the answer is written to stdout.
 
@@ -1330,7 +1334,7 @@ MODULE API/RULES
 
   json_lib - The JSON literals of bar's machine readable output: one escaping rule for every '--json' form.
     
-    The JSON forms of the helpers -- 'hermes_kanban --json', 'rad_state --json', 'sourcetree_state
+    The JSON forms of the helpers -- 'hermeskanban --json', 'rad_state --json', 'sourcetree_state
     --json', 'hermes_logs --json', 'helpers --json', the report of 'bar check' -- are assembled from
     string, number, boolean and array literals.  Writing one of them is one small piece of policy
     and it belongs in one place:
@@ -1362,7 +1366,7 @@ MODULE API/RULES
     WHY THE SETTERS EXIST
     
     A command substitution forks a subshell, and a listing quotes a dozen fields per record:
-    'hermes_kanban' measured 800 ms for 90 cards when every field forked and 90 ms when none did.
+    'hermeskanban' measured 800 ms for 90 cards when every field forked and 90 ms when none did.
     A caller which quotes many fields asks for the literal in a variable with the setters and never
     forks; a caller with one or two fields asks for the printed form.  Both forms are one
     implementation -- 'json_string' calls 'json_set_string' -- so the rule above cannot drift.
@@ -1370,7 +1374,7 @@ MODULE API/RULES
     This module is a library: no rules, no helpers and therefore no helper module header of its own
     (a lib is not a repertoire module, see Bar.d/helpers_rules).  A module whose '--json' form needs
     literal says 'require json_lib'; where a field is not a JSON literal but module policy -- the
-    yes/no/unset rule of rad, the flag list of sourcetree, the control characters 'hermes_kanban'
+    yes/no/unset rule of rad, the flag list of sourcetree, the control characters 'hermeskanban'
     replaces by a space instead of dropping them -- that policy stays in the module, which asks
     these functions for the literal and keeps only the decision.
 
@@ -1381,7 +1385,7 @@ MODULE API/RULES
         The escaping rule of every '--json' form of bar.  Backslash and quote first (so the escapes
         they introduce are not escaped again), then the tab -- which is the one control character
         worth carrying, an indented line is common in a log -- and finally every other control
-        character, dropped with the same pattern substitution 'hermes_kanban' uses: no 'tr', so no
+        character, dropped with the same pattern substitution 'hermeskanban' uses: no 'tr', so no
         subshell per field.
 
       json_string <text>
