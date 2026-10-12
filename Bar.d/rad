@@ -129,6 +129,33 @@
 ### A delegate's maintenance command reads the trusted proposals back and applies them -- the labels
 ### and assignments themselves still need that delegate's own key.
 ###
+### The write layer of the same policy.  One function per effect, each of them exactly one 'rad'
+### invocation, and none of them asks about trust: that is the reader's decision, which is why the
+### reader is the only way in.  These are not rules -- they are the API a rule (or the daemon the
+### project builds elsewhere) composes, which is why they are named like the plumbing they are:
+###
+###   bar rad_set_label <item> <add> [<delete>]..      one 'rad issue|patch label' write
+###   bar rad_assign <item> <did|alias>                one 'rad issue|patch assign' add
+###   bar rad_unassign <item> <did|alias>              one 'rad issue|patch assign' delete
+###   bar rad_apply_from_comments <item>.. [--query <key>].. [--repo <rid|path>] [--trust <spec>]..
+###                              [--dry-run]           the trusted proposals of an item, applied
+###
+### '<item>' is the form the reader answers with ('issue:<id>', 'patch:<id>'); a bare id is an issue.
+### The identity of an assignment is resolved before it is written -- a comment cannot be trusted to
+### spell a DID right -- by the same fact command the trust gate asks, and a value which resolves to
+### nothing is refused rather than written as it stands.  Every applier reports what it applied
+### ('applied label item=issue:4444444 add=idea delete=wip') and no applier writes into the thread.
+###
+### 'rad_apply_from_comments' reads the newest trusted block per key (that is what applies; a block a
+### later one superseded is history) and dispatches every entry to the applier of its key: 'label',
+### 'assign', 'unassign'.  Any other key is reported and never guessed at.  An entry whose author
+### cannot be attributed never reaches it -- the reader drops those, silently, like every proposal
+### which is not trusted.  A label the item already says is not written again ('skip when the labels
+### already say it'), the previous chain state is deleted in the same write as the new label (that is
+### what makes an item carry one chain state at a time), and '--dry-run' prints what would be applied
+### without writing anything.  Nothing is remembered between calls: what the item carries is read
+### fresh, from 'rad issue|patch list', every time.
+###
 ### 'rad_topic' opens the topic tree of that work in one action: it mints the name from the
 ### branch *class* and the description, resolves the clone and the freshest base, keeps '.worktrees/'
 ### out of the main checkout's status and runs 'git worktree add' -- the sequence an agent otherwise
@@ -1630,6 +1657,447 @@ function rad_comment_metadata ## see the module header
         printf '%s item=%s:%s author=%s did=did:key:%s trust=%s date=%s value=%s\n' \
             "$key" "$type" "$id" "$alias" "$mdid" "$trust" "$iso" "$value"
     done
+}
+
+# --- the write layer: one function per effect, each one 'rad' invocation -----------------------
+
+function rad_metadata_rad ## <repo> <args>.. - one 'rad' invocation, in the repository the caller means
+{
+    ## Every applier below does exactly one invocation of 'rad' and this is where it runs: an empty
+    ## <repo> is the checkout the command runs in, a path is entered, a RID is handed to rad with
+    ## '-r' (rad then needs no checkout at all).  Nothing is written anywhere else and there is no
+    ## second write: an applier either makes its one call or it refuses.
+    local repo="$1"
+    shift
+    if [[ -z "$repo" ]]; then
+        rad_run "$@"
+    elif [[ "$repo" == rad:* ]]; then
+        rad_run "$@" -r "$repo"
+    else
+        ( cd "$repo" 2>/dev/null && rad_run "$@" )
+    fi
+}
+
+function rad_metadata_identity ## <repo> <did|alias> - the DID the write commands take
+{
+    ## A comment cannot be trusted to spell a DID right, so an alias is resolved before it is written
+    ## -- by the same fact command the trust gate asks ('RAD_TRUST_CMD', the tool behind 'rad_trust'),
+    ## for the repository the caller names (or this checkout).  A value which is already a DID/NID
+    ## needs no command; one which resolves to nothing is refused rather than written as it stands.
+    local repo="$1" value="$2"
+    local -a cmd=()
+    local nid="" facts=""
+    nid="$(rad_metadata_nid "$value")"
+    if [[ "$nid" == z6M* ]]; then
+        printf 'did:key:%s' "$nid"
+        return 0
+    fi
+    read -r -a cmd <<<"${RAD_TRUST_CMD:-}"
+    if (( ${#cmd[@]} )) && facts="$("${cmd[@]}" --repo "${repo:-$PWD}" --author "$value" 2>/dev/null)"; then
+        nid="$(printf '%s' "$facts" | jq -r '(.author.nid // .author.did // "") | tostring' 2>/dev/null)" || nid=""
+        nid="$(rad_metadata_nid "$nid")"
+        if [[ "$nid" == z6M* ]]; then
+            printf 'did:key:%s' "$nid"
+            return 0
+        fi
+    fi
+    error "cannot resolve '$value' to a radicle identity: it is neither a DID/NID nor an alias the repository knows"
+    return 1
+}
+
+function rad_metadata_labels ## <repo> <type> <id> - the labels the item carries now, one per line
+{
+    ## The mutation target, read fresh and never remembered: the Labels column of 'rad <type> list'
+    ## is what the item carries, and the applier knows what it has to delete from it.  This is *not*
+    ## how the chain state is read -- a label written after a proposal is stale -- it is a different
+    ## question ('what is there' against 'what was proposed').
+    local repo="$1" type="$2" id="$3"
+    local sub="issue" table rows row cell label
+    [[ "$type" == patch ]] && sub="patch"
+    table="$(rad_metadata_rad "$repo" "$sub" list --all)" || return 1
+    rows="$(rad_state_table_checked "$sub list --all" "$table" ID Labels)" || return 1
+    while IFS="$RAD_US" read -r row cell; do
+        [[ -n "$cell" ]] || continue
+        [[ "$row" == "$id"* ]] || continue
+        local IFS=','
+        for label in $cell; do
+            label="${label#"${label%%[![:space:]]*}"}"
+            label="${label%"${label##*[![:space:]]}"}"
+            [[ -n "$label" ]] && printf '%s\n' "$label"
+        done
+    done <<<"$rows"
+    return 0
+}
+
+## <item> - the 'rad' word and the id of an item as the reader answers it
+function rad_metadata_item
+{
+    ## '<type>:<id>' is the form 'rad_comment_metadata' answers with, so it is the form the appliers
+    ## take; a bare id is an issue, which is the common case (labels and assignments are mostly issue
+    ## business, and the read side names the type anyway).
+    local item="$1"
+    RAD_METADATA_SUB="issue"
+    RAD_METADATA_ID="$item"
+    case "$item" in
+    issue:*) RAD_METADATA_SUB="issue"; RAD_METADATA_ID="${item#issue:}" ;;
+    patch:*) RAD_METADATA_SUB="patch"; RAD_METADATA_ID="${item#patch:}" ;;
+    esac
+}
+
+function rad_set_label_usage ## [reason] - usage on stderr
+{
+    [[ -n "${1:-}" ]] && printf 'rad_set_label: %s\n' "$1" >&2
+    printf 'usage: rad_set_label <item> <add> [<delete>].. [--repo <rid|path>]\n' >&2
+    printf '       <item> issue:<id>, patch:<id> or a bare issue id\n' >&2
+}
+
+function rad_set_label ## <item> <add> [<delete>].. [--repo <rid|path>] - one 'rad <type> label'
+{
+    ## One label added, and any number of labels deleted in the same write: that is what makes an
+    ## item carry one chain state at a time (the new one in, the previous one out).  A label the item
+    ## does not carry is rad's business, not this function's -- it hands rad exactly what it was
+    ## given and reports what it did.
+    local -a deletes=() args=()
+    local raw value item="" add="" repo=""
+    for raw in "$@"; do
+        if [[ "$raw" == --repo=* ]]; then
+            args+=(--repo "${raw#--repo=}")
+        else
+            args+=("$raw")
+        fi
+    done
+    local -i i=0 count=${#args[@]}
+    while (( i < count )); do
+        raw="${args[i]}"
+        i=$(( i + 1 ))
+        case "$raw" in
+        -h | --help)
+            rad_set_label_usage 2>&1
+            return 0
+            ;;
+        --repo)
+            if (( i >= count )) || [[ -z "${args[i]}" ]]; then
+                rad_set_label_usage "'--repo' needs a non-empty value"
+                return 2
+            fi
+            repo="${args[i]}"
+            i=$(( i + 1 ))
+            ;;
+        -*)
+            rad_set_label_usage "unknown argument '$raw'"
+            return 2
+            ;;
+        *)
+            if [[ -z "$item" ]]; then
+                item="$raw"
+            elif [[ -z "$add" ]]; then
+                add="$raw"
+            else
+                deletes+=( "$raw" )
+            fi
+            ;;
+        esac
+    done
+    if [[ -z "$item" || -z "$add" ]]; then
+        rad_set_label_usage "an item and the label to add are required"
+        return 2
+    fi
+    rad_metadata_item "$item"
+    local -a call=("$RAD_METADATA_SUB" label "$RAD_METADATA_ID" --quiet "--add=$add")
+    for value in ${deletes[@]+"${deletes[@]}"}; do
+        call+=( "--delete=$value" )
+    done
+    rad_metadata_rad "$repo" "${call[@]}" || return $?
+    printf 'applied label item=%s add=%s' "$item" "$add"
+    (( ${#deletes[@]} )) && printf ' delete=%s' "${deletes[*]}"
+    printf '\n'
+}
+
+function rad_assign_usage ## [reason] - usage on stderr
+{
+    [[ -n "${1:-}" ]] && printf '%s: %s\n' "$RAD_ASSIGN_WORD" "$1" >&2
+    printf 'usage: %s <item> <did|alias> [--repo <rid|path>]\n' "$RAD_ASSIGN_WORD" >&2
+    printf '       <item> issue:<id>, patch:<id> or a bare issue id\n' >&2
+}
+
+## <item> <did|alias> [--repo <rid|path>] - one 'rad <type> assign' add or delete
+function rad_metadata_assign
+{
+    local word="$1" remove="$2"
+    shift 2
+    local -a args=()
+    local raw value item="" who="" repo="" did="" arg
+    RAD_ASSIGN_WORD="$word"
+    for raw in "$@"; do
+        if [[ "$raw" == --repo=* ]]; then
+            args+=(--repo "${raw#--repo=}")
+        else
+            args+=("$raw")
+        fi
+    done
+    local -i i=0 count=${#args[@]}
+    while (( i < count )); do
+        raw="${args[i]}"
+        i=$(( i + 1 ))
+        case "$raw" in
+        -h | --help)
+            rad_assign_usage 2>&1
+            return 0
+            ;;
+        --repo)
+            if (( i >= count )) || [[ -z "${args[i]}" ]]; then
+                rad_assign_usage "'--repo' needs a non-empty value"
+                return 2
+            fi
+            repo="${args[i]}"
+            i=$(( i + 1 ))
+            ;;
+        -*)
+            rad_assign_usage "unknown argument '$raw'"
+            return 2
+            ;;
+        *)
+            if [[ -z "$item" ]]; then
+                item="$raw"
+            elif [[ -z "$who" ]]; then
+                who="$raw"
+            else
+                rad_assign_usage "unexpected argument '$raw'"
+                return 2
+            fi
+            ;;
+        esac
+    done
+    if [[ -z "$item" || -z "$who" ]]; then
+        rad_assign_usage "an item and an identity are required"
+        return 2
+    fi
+    rad_metadata_item "$item"
+    did="$(rad_metadata_identity "$repo" "$who")" || return 1
+    if [[ -n "$remove" ]]; then
+        arg="--delete=$did"
+    else
+        arg="--add=$did"
+    fi
+    rad_metadata_rad "$repo" "$RAD_METADATA_SUB" assign "$RAD_METADATA_ID" --quiet "$arg" || return $?
+    if [[ -n "$remove" ]]; then
+        printf 'applied unassign item=%s delete=%s\n' "$item" "$did"
+    else
+        printf 'applied assign item=%s add=%s\n' "$item" "$did"
+    fi
+}
+
+function rad_assign ## <item> <did|alias> [--repo <rid|path>] - one 'rad <type> assign --add'
+{
+    rad_metadata_assign rad_assign "" "$@"
+}
+
+function rad_unassign ## <item> <did|alias> [--repo <rid|path>] - one 'rad <type> assign --delete'
+{
+    rad_metadata_assign rad_unassign 1 "$@"
+}
+
+function rad_apply_labels ## <repo> <dry> <entry>.. - the label state of one item, reconciled and applied
+{
+    ## The label entries of one item are one *state*: the labels the chain proposes against the
+    ## labels the item carries, which are read fresh (nothing is remembered between calls).  The
+    ## first write of the item carries the labels the proposal does not carry -- the previous chain
+    ## state -- so the item ends with the state the trusted block asks for, and a label the item
+    ## already says is not written again.
+    ##
+    ## An <entry> is one line of the reader's answer as 'key<TAB>item<TAB>id<TAB>value'.  Entries
+    ## which are not labels are not this function's business.  A stored label no proposal asks for is
+    ## reported and left alone: deleting state nobody proposed is not what the proposals asked for.
+    local repo="$1" dry="$2"
+    shift 2
+    local -a entries=( "$@" ) derived=() adds=() deletes=() repopt=() call=()
+    local entry key type id value label itemref="" stored="" rc=0
+    local -i i=0
+
+    for entry in ${entries[@]+"${entries[@]}"}; do
+        IFS=$'\t' read -r key type id value <<<"$entry"
+        [[ "$key" == label ]] || continue
+        itemref="$type:$id"
+        break
+    done
+    [[ -n "$itemref" ]] || return 0
+    [[ -n "$repo" ]] && repopt=( --repo "$repo" )
+    type="${itemref%%:*}"
+    id="${itemref#*:}"
+
+    ## What the chain proposes (every label of the item's block) and what the item carries now.
+    for entry in ${entries[@]+"${entries[@]}"}; do
+        IFS=$'\t' read -r key type id value <<<"$entry"
+        [[ "$key" == label && "$type:$id" == "$itemref" ]] || continue
+        derived+=( "$value" )
+    done
+    type="${itemref%%:*}"
+    id="${itemref#*:}"
+    stored="$(rad_metadata_labels "$repo" "$type" "$id")" || rc=1
+    while IFS= read -r label; do
+        [[ -n "$label" ]] || continue
+        [[ " ${derived[*]} " == *" $label "* ]] && continue
+        deletes+=( "$label" )
+    done <<<"$stored"
+
+    ## What to add, in the order the block wrote it, and what is already said.
+    for entry in ${entries[@]+"${entries[@]}"}; do
+        IFS=$'\t' read -r key type id value <<<"$entry"
+        [[ "$key" == label && "$type:$id" == "$itemref" ]] || continue
+        if [[ $'\n'"$stored"$'\n' == *$'\n'"$value"$'\n'* ]]; then
+            printf 'skip label item=%s add=%s (the item already says it)\n' "$itemref" "$value"
+            continue
+        fi
+        adds+=( "$value" )
+    done
+
+    if (( ${#adds[@]} == 0 )); then
+        if (( ${#deletes[@]} )); then
+            printf 'skip label item=%s (%s is carried by the item, no proposal asks for it)\n' \
+                "$itemref" "${deletes[*]}"
+        fi
+        return $rc
+    fi
+    for i in "${!adds[@]}"; do
+        if [[ -n "$dry" ]]; then
+            printf 'would label item=%s add=%s' "$itemref" "${adds[i]}"
+            (( i == 0 && ${#deletes[@]} )) && printf ' delete=%s' "${deletes[*]}"
+            printf '\n'
+            continue
+        fi
+        call=( "$itemref" "${adds[i]}" )
+        (( i == 0 )) && call+=( ${deletes[@]+"${deletes[@]}"} )
+        call+=( ${repopt[@]+"${repopt[@]}"} )
+        rad_set_label "${call[@]}" || rc=1
+    done
+    return $rc
+}
+
+function rad_apply_from_comments_usage ## [reason] - usage on stderr
+{
+    [[ -n "${1:-}" ]] && printf 'rad_apply_from_comments: %s\n' "$1" >&2
+    printf 'usage: rad_apply_from_comments <item>.. [--query <key>].. [--repo <rid|path>]\n' >&2
+    printf '       [--trust <spec>].. [--dry-run]\n' >&2
+    printf '       <item> an issue or patch (short or full id) whose proposals are applied\n' >&2
+    printf '       The newest trusted block per key is what applies; superseded ones are history.\n' >&2
+}
+
+function rad_apply_from_comments ## see the module header
+{
+    ## The maintenance side of the reader: it asks 'rad_comment_metadata' for the trusted proposals
+    ## of an item ('--last', which is the state; a block a later one superseded is history) and
+    ## dispatches every entry to the applier of its key.  The reader owns the trust decision -- an
+    ## entry whose author cannot be attributed never reaches this function, and it is not reported
+    ## here because it was never an entry -- and this function owns the effect.  The keys it knows
+    ## are 'label', 'assign' and 'unassign'; any other key is reported and never guessed at.
+    local -a args=() items=() entries=() queries=() specs=() parts=() repopt=() call=()
+    local raw value json="" repo="" dry="" item="" entry="" key="" type="" id="" itemref="" did=""
+    local rc=0 failed=0
+    local -i i=0 count=0
+
+    for raw in "$@"; do
+        if [[ "$raw" == --*=* ]]; then
+            args+=("${raw%%=*}" "${raw#*=}")
+        else
+            args+=("$raw")
+        fi
+    done
+    count=${#args[@]}
+    while (( i < count )); do
+        raw="${args[i]}"
+        i=$(( i + 1 ))
+        case "$raw" in
+        -h | --help)
+            rad_apply_from_comments_usage 2>&1
+            return 0
+            ;;
+        --dry-run) dry=1 ;;
+        --query | --repo | --trust)
+            if (( i >= count )) || [[ -z "${args[i]}" ]]; then
+                rad_apply_from_comments_usage "'$raw' needs a non-empty value"
+                return 2
+            fi
+            value="${args[i]}"
+            i=$(( i + 1 ))
+            case "$raw" in
+            --query) queries+=( --query "$value" ) ;;
+            --repo) repo="$value" ;;
+            --trust)
+                IFS=',' read -r -a parts <<<"$value"
+                for value in ${parts[@]+"${parts[@]}"}; do
+                    [[ -n "$value" ]] && specs+=( --trust "$value" )
+                done
+                ;;
+            esac
+            ;;
+        -*)
+            rad_apply_from_comments_usage "unknown argument '$raw'"
+            return 2
+            ;;
+        *) items+=( "$raw" ) ;;
+        esac
+    done
+    if (( ${#items[@]} == 0 )); then
+        rad_apply_from_comments_usage "at least one item is required"
+        return 2
+    fi
+    if ! command -v jq >/dev/null 2>&1; then
+        printf 'rad_apply_from_comments: jq is required to read the entries of the reader\n' >&2
+        return 2
+    fi
+    [[ -n "$repo" ]] && repopt=( --repo "$repo" )
+
+    for item in "${items[@]}"; do
+        call=( "$item" --last --json )
+        call+=( ${queries[@]+"${queries[@]}"} )
+        call+=( ${specs[@]+"${specs[@]}"} )
+        call+=( ${repopt[@]+"${repopt[@]}"} )
+        if ! json="$(rad_comment_metadata "${call[@]}")"; then
+            rc=$?
+            printf 'rad_apply_from_comments: no answer for %s\n' "$item" >&2
+            failed=1
+            continue
+        fi
+        entries=()
+        while IFS= read -r entry; do
+            [[ -n "$entry" ]] && entries+=( "$entry" )
+        done < <(printf '%s' "$json" | jq -r '.entries[] | [.key,.item,.id,.value] | @tsv')
+        ## The labels first: they are one state of the item, and the write which changes it may have
+        ## to delete the state it replaces.  Then everything else in the order it was written.
+        rad_apply_labels "$repo" "$dry" ${entries[@]+"${entries[@]}"} || failed=1
+        for entry in ${entries[@]+"${entries[@]}"}; do
+            IFS=$'\t' read -r key type id value <<<"$entry"
+            [[ "$key" == label ]] && continue
+            itemref="$type:$id"
+            case "$key" in
+            assign | unassign)
+                if ! did="$(rad_metadata_identity "$repo" "$value")"; then
+                    printf 'skip %s item=%s value=%s (no identity behind it)\n' "$key" "$itemref" "$value"
+                    failed=1
+                    continue
+                fi
+                if [[ -n "$dry" ]]; then
+                    if [[ "$key" == assign ]]; then
+                        printf 'would assign item=%s add=%s\n' "$itemref" "$did"
+                    else
+                        printf 'would unassign item=%s delete=%s\n' "$itemref" "$did"
+                    fi
+                    continue
+                fi
+                if [[ "$key" == assign ]]; then
+                    rad_assign "$itemref" "$value" ${repopt[@]+"${repopt[@]}"} || failed=1
+                else
+                    rad_unassign "$itemref" "$value" ${repopt[@]+"${repopt[@]}"} || failed=1
+                fi
+                ;;
+            *)
+                printf 'skip %s item=%s value=%s (no effect is registered for that key)\n' \
+                    "$key" "$itemref" "$value"
+                ;;
+            esac
+        done
+    done
+    return $(( rc | failed ))
 }
 
 # --- rad_topic ------------------------------------------------------------------------------

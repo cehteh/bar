@@ -38,6 +38,15 @@
 #        last record also when the smaller sha is the newer one
 #   AC23 '--last' is per key (a key nobody asked for is not answered), and a newest block nobody can
 #        be attributed to is skipped so that an older trusted block still applies
+#   AC24 'rad_set_label' makes exactly one 'rad issue|patch label' write with the argv it promises,
+#        travels a RID as '-r', reports a refusal rad made and refuses a usage error
+#   AC25 'rad_assign'/'rad_unassign' resolve an alias through the facts command before writing the
+#        DID, take a DID as it stands, and refuse an alias nobody knows without writing anything
+#   AC26 'rad_apply_from_comments' applies the trusted proposals of an item: the new label carries
+#        the previous chain state out with it, a label the item already says is skipped (the stored
+#        state is read fresh), '--dry-run' reports the writes and makes none
+#   AC27 a key with no registered effect is reported and never applied, and a block whose author is
+#        not trusted never reaches an applier at all
 
 set -euo pipefail
 
@@ -85,6 +94,7 @@ UNHELD="rad:zCommentMetadataUnheld00000000000"
 DELEGATE_NID="z6MkCommentMetadataDelegate000000000000"
 OUTSIDER_NID="z6MkCommentMetadataOutsider000000000000"
 CONTRIBUTOR_NID="z6MkCommentMetadataContributor00000000"
+SELF_NID="z6MkCommentMetadataSelf0000000000000000"
 ISSUE="4444444444444444444444444444444444444444"
 OTHER="6666666666666666666666666666666666666666"
 PATCH="5555555555555555555555555555555555555555"
@@ -98,13 +108,14 @@ STORAGE="$RADHOME/storage/${RID#rad:}"
 FAKERAD="$WORK/bin/rad"
 FACTS="$WORK/bin/triage-facts"
 
-mkdir -p "$PROJECT" "$RADHOME/storage" "$WORK/bin"
+mkdir -p "$PROJECT" "$RADHOME/storage" "$WORK/bin" "$WORK/labels.issue" "$WORK/labels.patch"
 mkproject "$PROJECT"
 git init -q "$PROJECT"
 git -C "$PROJECT" commit -q --allow-empty -m "fixture"
 git init -q --bare "$STORAGE"
 
-# the fake 'rad': the node path, the identity of this checkout, the delegates of the fixture
+# the fake 'rad': the node path, the identity of this checkout, the delegates of the fixture, the
+# label table the stored state is read from, and a recorder for every write it is asked to make
 cat >"$FAKERAD" <<EOF
 #!/bin/sh
 case "\$1" in
@@ -114,6 +125,30 @@ inspect)
     --rid) printf '%s\n' "$RID" ;;
     "$RID") printf 'did:key:%s (delegate)\n' "$DELEGATE_NID" ;;
     "$UNHELD") printf 'did:key:%s (delegate)\n' "$DELEGATE_NID" ;;
+    esac
+    ;;
+self)
+    case "\$2" in
+    --did) printf 'did:key:%s\n' "$SELF_NID" ;;
+    --alias) printf 'self\n' ;;
+    esac
+    ;;
+issue | patch)
+    case "\$2" in
+    list)
+        printf '│ ●   ID        Labels                     │\n'
+        for file in "$WORK/labels.\$1"/*; do
+            [ -e "\$file" ] || continue
+            printf '│ ●   %s   %s   │\n' "\${file##*/}" "\$(cat "\$file")"
+        done
+        ;;
+    label | assign | react | state | comment)
+        printf '%s\n' "\$*" >>"$WORK/rad.calls"
+        if [ -f "$WORK/refuse" ] && printf '%s' "\$*" | grep -qF "\$(cat "$WORK/refuse")"; then
+            printf 'refused: %s\n' "\$*" >&2
+            exit 1
+        fi
+        ;;
     esac
     ;;
 esac
@@ -134,6 +169,9 @@ while [ \$# -gt 0 ]; do
     esac
 done
 case "\$nid" in
+cehteh) nid="$DELEGATE_NID" ;;
+esac
+case "\$nid" in
 "$OUTSIDER_NID") authored=9 ;;
 "$CONTRIBUTOR_NID") authored=42 ;;
 "$DELEGATE_NID") authored=7 ;;
@@ -144,6 +182,7 @@ printf '{"author":{"nid":"%s","commits_as_identity":%s,"total_authored":%s},"con
 EOF
 chmod +x "$FACTS"
 : >"$WORK/facts.calls"
+: >"$WORK/rad.calls"
 
 # <ns> <type> <cob> <subject> <payload> [parent] [name] [nid] [date] - one COB op, prints its sha
 op() {
@@ -269,6 +308,16 @@ while (( nonce < 60 )); do
     fi
     nonce=$(( nonce + 1 ))
 done
+
+# -- a seventh issue: its newest label block is an outsider's, which only a trust spec hands over ---
+OWN="dddddddddddddddddddddddddddddddddddddddd"
+OWN_ID="${OWN:0:7}"
+OWN_TIP="$(op "$DELEGATE_NID" issue "$OWN" "Create issue" \
+    '{"body":"*label:carried\nan outsider proposes the next state","type":"issue","title":"an outsider proposes"}' \
+    "" "delegate" "$DELEGATE_NID" "2026-10-11T10:30:00+02:00")"
+OWN_TIP="$(op "$OUTSIDER_NID" issue "$OWN" "Comment" \
+    '{"body":"*label:outsider-wip\nfrom an identity nobody trusts here","type":"comment"}' \
+    "$OWN_TIP" "outsider" "$OUTSIDER_NID" "2026-10-11T10:31:00+02:00")"
 
 # -- the patch: a delegate comment carries a marker, and the tricky bodies -----------------------
 PATCH_TIP="$(op "$DELEGATE_NID" patch "$PATCH" "Initial revision" \
@@ -579,6 +628,113 @@ run "$PROJECT" rad_comment_metadata "$THIRD_ID" --query label --last
 check "$(lines_of "$OUT")" 1 "the newest op of that item has no radicle identity"
 contains "$OUT" "value=wip" "so the older trusted block still applies"
 absent "$OUT" "value=done" "and the op nobody can be attributed to is never applied"
+echo
+
+echo "AC24 rad_set_label makes one label write, and says what it wrote"
+: >"$WORK/rad.calls"
+run "$PROJECT" rad_set_label "issue:$ISSUE_ID" improvement wip
+check "$RC" 0 "exit 0"
+check "$(lines_of "$OUT")" 1 "one line, the report"
+contains "$OUT" "applied label item=issue:$ISSUE_ID add=improvement delete=wip" "which names the item, the label and the state it replaces"
+check "$(lines_of "$(cat "$WORK/rad.calls")")" 1 "exactly one 'rad' invocation"
+check "$(cat "$WORK/rad.calls")" "issue label $ISSUE_ID --quiet --add=improvement --delete=wip" \
+    "with the argv the applier promises"
+run "$PROJECT" rad_set_label "patch:$PATCH_ID" "$ISSUE_ID"
+check "$(tail -1 "$WORK/rad.calls")" "patch label $PATCH_ID --quiet --add=$ISSUE_ID" \
+    "a patch label goes through 'rad patch label'"
+run "$PROJECT" rad_set_label "issue:$ISSUE_ID" idea --repo "$RID"
+check "$(tail -1 "$WORK/rad.calls")" "issue label $ISSUE_ID --quiet --add=idea -r $RID" \
+    "a repository given as a RID travels as '-r'"
+printf 'improvement' >"$WORK/refuse"
+run "$PROJECT" rad_set_label "issue:$ISSUE_ID" improvement
+check "$RC" 1 "a write rad refuses is the exit code"
+err "$PROJECT" rad_set_label "issue:$ISSUE_ID" improvement
+contains "$OUT" "failed" "and the reason comes from rad"
+rm -f "$WORK/refuse"
+run "$PROJECT" rad_set_label "issue:$ISSUE_ID"
+check "$RC" 2 "no label at all is a usage error"
+run "$PROJECT" rad_set_label "issue:$ISSUE_ID" idea --nonsense
+check "$RC" 2 "so is an argument it does not know"
+echo
+
+echo "AC25 rad_assign and rad_unassign resolve the identity before they write it"
+: >"$WORK/rad.calls"
+: >"$WORK/facts.calls"
+run "$PROJECT" rad_assign "issue:$ISSUE_ID" cehteh
+check "$RC" 0 "exit 0"
+contains "$OUT" "applied assign item=issue:$ISSUE_ID add=did:key:$DELEGATE_NID" "the alias became the DID rad takes"
+check "$(cat "$WORK/rad.calls")" "issue assign $ISSUE_ID --quiet --add=did:key:$DELEGATE_NID" \
+    "…in one 'rad issue assign'"
+contains "$(cat "$WORK/facts.calls")" "--author cehteh" "the resolution asked the facts command"
+run "$PROJECT" rad_assign "issue:$ISSUE_ID" "did:key:$CONTRIBUTOR_NID"
+check "$(tail -1 "$WORK/rad.calls")" "issue assign $ISSUE_ID --quiet --add=did:key:$CONTRIBUTOR_NID" \
+    "a DID is written as it stands"
+run "$PROJECT" rad_unassign "patch:$PATCH_ID" "$CONTRIBUTOR_NID"
+contains "$OUT" "applied unassign item=patch:$PATCH_ID delete=did:key:$CONTRIBUTOR_NID" "an unassign reports its delete"
+check "$(tail -1 "$WORK/rad.calls")" "patch assign $PATCH_ID --quiet --delete=did:key:$CONTRIBUTOR_NID" \
+    "…and it is a 'rad patch assign --delete'"
+run "$PROJECT" rad_assign "issue:$ISSUE_ID" nosuchalias
+check "$RC" 1 "an alias nobody knows is refused"
+err "$PROJECT" rad_assign "issue:$ISSUE_ID" nosuchalias
+contains "$OUT" "cannot resolve 'nosuchalias'" "and the refusal names the value"
+run "$PROJECT" rad_unassign
+check "$RC" 2 "no item and no identity is a usage error"
+echo
+
+echo "AC26 rad_apply_from_comments applies the trusted proposals of one item"
+printf 'idea' >"$WORK/labels.issue/$ISSUE_ID"
+: >"$WORK/rad.calls"
+run "$PROJECT" rad_apply_from_comments "$ISSUE_ID"
+check "$RC" 0 "exit 0"
+check "$(lines_of "$OUT")" 3 "two labels and the assignment"
+contains "$OUT" "applied label item=issue:$ISSUE_ID add=bug delete=idea" \
+    "the new label carries the old chain state out with it"
+contains "$OUT" "applied label item=issue:$ISSUE_ID add=wip" "the block's second label follows, without a delete"
+contains "$OUT" "applied assign item=issue:$ISSUE_ID add=did:key:$DELEGATE_NID" "the assignment is applied too"
+check "$(lines_of "$(cat "$WORK/rad.calls")")" 3 "three writes, one per effect"
+check "$(sed -n 1p "$WORK/rad.calls")" "issue label $ISSUE_ID --quiet --add=bug --delete=idea" "the first write is the one with the delete"
+printf 'bug, wip' >"$WORK/labels.issue/$ISSUE_ID"
+: >"$WORK/rad.calls"
+run "$PROJECT" rad_apply_from_comments "$ISSUE_ID" --query label
+check "$RC" 0 "exit 0"
+check "$(lines_of "$OUT")" 2 "both labels are already said"
+contains "$OUT" "skip label item=issue:$ISSUE_ID add=bug (the item already says it)" "…and that is reported"
+check "$(lines_of "$(cat "$WORK/rad.calls")")" 0 "the stored state is read fresh, so nothing is written again"
+printf 'idea' >"$WORK/labels.issue/$ISSUE_ID"
+: >"$WORK/rad.calls"
+run "$PROJECT" rad_apply_from_comments "$ISSUE_ID" --dry-run
+check "$RC" 0 "a dry run exits 0"
+contains "$OUT" "would label item=issue:$ISSUE_ID add=bug delete=idea" "it names the write and what it would replace"
+contains "$OUT" "would assign item=issue:$ISSUE_ID add=did:key:$DELEGATE_NID" "and the identity it resolved"
+check "$(lines_of "$(cat "$WORK/rad.calls")")" 0 "and it writes nothing"
+run "$PROJECT" rad_apply_from_comments
+check "$RC" 2 "no item is a usage error"
+echo
+
+echo "AC27 a key with no effect, and an author nobody trusts, are never applied"
+rm -f "$WORK/labels.issue/$OWN_ID"
+: >"$WORK/rad.calls"
+run "$PROJECT" rad_apply_from_comments "$OWN_ID"
+check "$RC" 0 "an item whose newest block nobody is trusted for exits 0"
+check "$(lines_of "$OUT")" 1 "one entry -- the older trusted block, not the newer one nobody is trusted for"
+contains "$OUT" "applied label item=issue:$OWN_ID add=carried" "which is the block the delegate wrote"
+absent "$OUT" "outsider-wip" "the untrusted block never reaches an applier"
+check "$(cat "$WORK/rad.calls")" "issue label $OWN_ID --quiet --add=carried" "and it is the only write"
+: >"$WORK/rad.calls"
+run "$PROJECT" rad_apply_from_comments "$OWN_ID" --trust "did:$OUTSIDER_NID"
+check "$RC" 0 "exit 0"
+contains "$OUT" "applied label item=issue:$OWN_ID add=outsider-wip" \
+    "with that identity named, the newer block is what applies"
+check "$(cat "$WORK/rad.calls")" "issue label $OWN_ID --quiet --add=outsider-wip" "…and it replaces nothing, the item carries no label"
+: >"$WORK/rad.calls"
+run "$PROJECT" rad_apply_from_comments "$KEYS_ID"
+check "$RC" 0 "exit 0"
+contains "$OUT" "skip issue item=issue:$KEYS_ID value=5555555 (no effect is registered for that key)" \
+    "a key with no registered effect is reported"
+contains "$OUT" "skip Note item=issue:$KEYS_ID value=hello (no effect is registered for that key)" \
+    "…like every other one"
+contains "$OUT" "applied label item=issue:$KEYS_ID add=after-empty" "while the keys which have one are applied"
+check "$(lines_of "$(cat "$WORK/rad.calls")")" 1 "and that is the only write"
 echo
 
 echo
