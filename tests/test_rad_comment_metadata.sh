@@ -47,6 +47,15 @@
 #        state is read fresh), '--dry-run' reports the writes and makes none
 #   AC27 a key with no registered effect is reported and never applied, and a block whose author is
 #        not trusted never reaches an applier at all
+#   AC28 'rad_reaction' compares against the caller's own reduced state: our newest live marker is
+#        the state (an op stream entry its author took back is not, and neither is another identity's
+#        marker), a mismatch writes nothing, the issue itself is reached through its root comment
+#   AC29 a patch level transition takes the marker it replaces back in the same step, an empty
+#        reaction takes it back and sets nothing, and the issue level refuses the same call
+#   AC30 a revision id names the patch COB that holds it, and a comment of that revision is reacted
+#        to through 'rad patch comment --react'
+#   AC31 what the store would refuse is refused before any call (a two codepoint emoji, a word, an
+#        empty reaction without an expectation), and so is a usage error or an id nobody holds
 
 set -euo pipefail
 
@@ -308,6 +317,52 @@ while (( nonce < 60 )); do
     fi
     nonce=$(( nonce + 1 ))
 done
+
+# -- an eighth issue and a second patch: the reaction markers ------------------------------------
+# The reader never sees a reaction as a proposal (its subject carries no body), which is why they can
+# live in the same COBs: what is read back here is the reaction API's own business.
+REACT="eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+REACT_ID="${REACT:0:7}"
+REACT_TIP="$(op "$DELEGATE_NID" issue "$REACT" "Create issue" \
+    '{"body":"no proposals here at all","type":"issue","title":"reactions"}' \
+    "" "delegate" "$DELEGATE_NID" "2026-10-11T10:40:00+02:00")"
+REACT_COMMENT="$(op "$DELEGATE_NID" issue "$REACT" "Comment" \
+    '{"body":"a comment to react to","type":"comment"}' \
+    "$REACT_TIP" "delegate" "$DELEGATE_NID" "2026-10-11T10:41:00+02:00")"
+# a marker of the delegate's: not ours, so it is not the state this caller compares
+REACT_TIP="$(op "$DELEGATE_NID" issue "$REACT" "React" \
+    "{\"active\":true,\"id\":\"$REACT\",\"reaction\":\"✅\",\"type\":\"comment.react\"}" \
+    "$REACT_COMMENT" "delegate" "$DELEGATE_NID" "2026-10-11T10:42:00+02:00")"
+# ours: claimed, then superseded -- the issue level has no way to take the old one back
+REACT_TIP="$(op "$DELEGATE_NID" issue "$REACT" "React" \
+    "{\"active\":true,\"id\":\"$REACT\",\"reaction\":\"👀\",\"type\":\"comment.react\"}" \
+    "$REACT_TIP" "self" "$SELF_NID" "2026-10-11T10:43:00+02:00")"
+REACT_TIP="$(op "$DELEGATE_NID" issue "$REACT" "React" \
+    "{\"active\":true,\"id\":\"$REACT\",\"reaction\":\"➖\",\"type\":\"comment.react\"}" \
+    "$REACT_TIP" "self" "$SELF_NID" "2026-10-11T10:44:00+02:00")"
+# ours: an add and its withdrawal -- the op stream carries the marker, the state does not
+REACT_TIP="$(op "$DELEGATE_NID" issue "$REACT" "React" \
+    "{\"active\":true,\"id\":\"$REACT\",\"reaction\":\"🔧\",\"type\":\"comment.react\"}" \
+    "$REACT_TIP" "self" "$SELF_NID" "2026-10-11T10:45:00+02:00")"
+REACT_TIP="$(op "$DELEGATE_NID" issue "$REACT" "React" \
+    "{\"active\":false,\"id\":\"$REACT\",\"reaction\":\"🔧\",\"type\":\"comment.react\"}" \
+    "$REACT_TIP" "self" "$SELF_NID" "2026-10-11T10:46:00+02:00")"
+
+RATCH="ffffffffffffffffffffffffffffffffffffffff"
+RATCH_ID="${RATCH:0:7}"
+RATCH_TIP="$(op "$DELEGATE_NID" patch "$RATCH" "Initial revision" \
+    '{"type":"revision","description":"a patch to react to","oid":"0000000000000000000000000000000000000000","base":"1111111111111111111111111111111111111111"}' \
+    "" "delegate" "$DELEGATE_NID" "2026-10-11T10:47:00+02:00")"
+RATCH_COMMENT="$(op "$DELEGATE_NID" patch "$RATCH" "Comment" \
+    '{"body":"a comment on the patch","type":"comment"}' \
+    "$RATCH_TIP" "delegate" "$DELEGATE_NID" "2026-10-11T10:48:00+02:00")"
+RATCH_REVISION="$(op "$DELEGATE_NID" patch "$RATCH" "Add revision" \
+    '{"type":"revision","description":"the second one","oid":"2222222222222222222222222222222222222222","base":"1111111111111111111111111111111111111111"}' \
+    "$RATCH_COMMENT" "delegate" "$DELEGATE_NID" "2026-10-11T10:49:00+02:00")"
+# our marker on the patch's root revision
+RATCH_TIP="$(op "$DELEGATE_NID" patch "$RATCH" "React" \
+    "{\"active\":true,\"revision\":\"$RATCH\",\"reaction\":\"✅\",\"type\":\"revision.react\"}" \
+    "$RATCH_REVISION" "self" "$SELF_NID" "2026-10-11T10:50:00+02:00")"
 
 # -- a seventh issue: its newest label block is an outsider's, which only a trust spec hands over ---
 OWN="dddddddddddddddddddddddddddddddddddddddd"
@@ -735,6 +790,99 @@ contains "$OUT" "skip Note item=issue:$KEYS_ID value=hello (no effect is registe
     "…like every other one"
 contains "$OUT" "applied label item=issue:$KEYS_ID add=after-empty" "while the keys which have one are applied"
 check "$(lines_of "$(cat "$WORK/rad.calls")")" 1 "and that is the only write"
+echo
+
+echo "AC28 rad_reaction compares against our own reduced state, never the op stream"
+: >"$WORK/rad.calls"
+run "$PROJECT" rad_reaction "" 👀 "$REACT_ID"
+check "$RC" 1 "our newest marker is already there, so 'no live marker' is refused"
+err "$PROJECT" rad_reaction "" 👀 "$REACT_ID"
+contains "$OUT" "is '➖' where no marker was expected" "…and the refusal names the state it found"
+check "$(lines_of "$(cat "$WORK/rad.calls")")" 0 "a mismatch writes nothing"
+run "$PROJECT" rad_reaction 🔧 ✅ "$REACT_ID"
+check "$RC" 1 "a marker the op stream carries but its author took back is not live"
+run "$PROJECT" rad_reaction ✅ ❓ "$REACT_ID"
+check "$RC" 1 "the delegate's marker is not ours, so it is not the state either"
+run "$PROJECT" rad_reaction ➖ ✅ "$REACT_ID"
+check "$RC" 0 "the newest live marker is the state, and it is accepted"
+check "$(cat "$WORK/rad.calls")" "issue react $REACT_ID --to $REACT_ID --emoji ✅ --quiet" \
+    "the issue itself is reacted to through its own root comment"
+check "$(lines_of "$(cat "$WORK/rad.calls")")" 1 "one invocation: the issue level has nothing to close with"
+contains "$OUT" "level=root" "the report names the level"
+contains "$OUT" "withdrawn=no" "…and that the marker it supersedes stays in the chain"
+: >"$WORK/rad.calls"
+run "$PROJECT" rad_reaction "" 👀 "$REACT_ID" "$REACT_COMMENT"
+check "$RC" 0 "'no live marker' holds on a comment nobody of ours reacted to"
+check "$(tail -1 "$WORK/rad.calls")" "issue react $REACT_ID --to $REACT_COMMENT --emoji 👀 --quiet" \
+    "…and it reacts to that comment"
+contains "$OUT" "level=comment" "reported as a comment of the item"
+: >"$WORK/rad.calls"
+run "$PROJECT" rad_reaction "" 👀 "$REACT_ID" "$REACT_COMMENT" --repo "$RID"
+check "$RC" 0 "a RID may name the repository"
+check "$(tail -1 "$WORK/rad.calls")" "issue react $REACT_ID --to $REACT_COMMENT --emoji 👀 --quiet -r $RID" \
+    "…and it travels to 'rad' as '-r'"
+echo
+
+echo "AC29 patch level withdraws what it replaces, the issue level cannot"
+: >"$WORK/rad.calls"
+run "$PROJECT" rad_reaction ✅ 🔧 "$RATCH_ID"
+check "$RC" 0 "the state the patch carries is accepted"
+check "$(lines_of "$(cat "$WORK/rad.calls")")" 2 "two invocations: set, then take the old one back"
+check "$(sed -n 1p "$WORK/rad.calls")" "patch react $RATCH_ID --emoji 🔧 --quiet" "the new marker goes first"
+check "$(sed -n 2p "$WORK/rad.calls")" "patch react $RATCH_ID --emoji ✅ --undo --quiet" \
+    "…and the one it replaces is withdrawn in the same step"
+contains "$OUT" "withdrawn=yes" "the report says what happened"
+contains "$OUT" "level=revision" "at the revision level"
+: >"$WORK/rad.calls"
+run "$PROJECT" rad_reaction 👀 🔧 "$RATCH_ID"
+check "$RC" 1 "a marker which is not the state is refused"
+check "$(lines_of "$(cat "$WORK/rad.calls")")" 0 "…and nothing at all is written"
+: >"$WORK/rad.calls"
+run "$PROJECT" rad_reaction ✅ "" "$RATCH_ID"
+check "$RC" 0 "an empty reaction takes the marker back"
+check "$(cat "$WORK/rad.calls")" "patch react $RATCH_ID --emoji ✅ --undo --quiet" "with the one call that does it"
+check "$(lines_of "$(cat "$WORK/rad.calls")")" 1 "and sets nothing"
+: >"$WORK/rad.calls"
+run "$PROJECT" rad_reaction ✅ "" "$REACT_ID"
+check "$RC" 1 "the issue level has no '--undo', so it refuses instead of pretending"
+err "$PROJECT" rad_reaction ✅ "" "$REACT_ID"
+contains "$OUT" "no --undo" "…and says why"
+check "$(lines_of "$(cat "$WORK/rad.calls")")" 0 "nothing is written"
+echo
+
+echo "AC30 a revision id names the patch COB that holds it"
+: >"$WORK/rad.calls"
+run "$PROJECT" rad_reaction "" 🔧 "$RATCH_REVISION"
+check "$RC" 0 "exit 0"
+check "$(cat "$WORK/rad.calls")" "patch react $RATCH_REVISION --emoji 🔧 --quiet" \
+    "the revision is handed to rad as it was given"
+contains "$OUT" "level=revision" "and it is a revision of the patch"
+contains "$OUT" "item=patch:$RATCH_ID" "which the read found through the chain"
+: >"$WORK/rad.calls"
+run "$PROJECT" rad_reaction "" 👀 "$RATCH_ID" "$RATCH_COMMENT"
+check "$RC" 0 "exit 0"
+check "$(tail -1 "$WORK/rad.calls")" "patch comment $RATCH_ID --react $RATCH_COMMENT --emoji 👀 --quiet" \
+    "a comment of a patch is reacted to through 'rad patch comment --react'"
+contains "$OUT" "level=comment" "reported as a comment of the revision"
+echo
+
+echo "AC31 rad_reaction refuses what the store would refuse"
+run "$PROJECT" rad_reaction "" "$(printf '\u2764\ufe0f')" "$REACT_ID"
+check "$RC" 2 "an emoji with a variation selector is refused before any call"
+run "$PROJECT" rad_reaction "" "ab" "$REACT_ID"
+check "$RC" 2 "so is a word"
+run "$PROJECT" rad_reaction "" "" "$REACT_ID"
+check "$RC" 2 "an empty reaction needs the marker it takes back"
+run "$PROJECT" rad_reaction "" 👀
+check "$RC" 2 "no target at all is a usage error"
+run "$PROJECT" rad_reaction "" 👀 "$REACT_ID" one two
+check "$RC" 2 "more than two target words are too"
+run "$PROJECT" rad_reaction 👀 👀 "$REACT_ID"
+check "$RC" 2 "a transition to itself is not a transition"
+run "$PROJECT" rad_reaction "" "➖" "zzzzzzz"
+check "$RC" 3 "an id nobody holds is no data"
+run "$PROJECT" rad_reaction "" 👀 "$REACT_ID" --nonsense
+check "$RC" 2 "an unknown argument"
 echo
 
 echo

@@ -1652,6 +1652,29 @@ MODULE API/RULES
     without writing anything.  Nothing is remembered between calls: what the item carries is read
     fresh, from 'rad issue|patch list', every time.
     
+    'rad_reaction' is the same idea for the reaction markers, and those are a different animal: a
+    reaction is *private per identity* and can never be delegated, so there is no trust question here
+    -- what the caller compares and swaps is its *own* state, reduced the way the store reduces it:
+    the newest op per target and emoji of ours, with 'active' read off that survivor, ordered by the
+    op's position in the chain (an add and its undo land in the same second routinely).
+    
+      bar rad_reaction [--from <emoji>] [--repo <rid|path>] <to> <target>..
+      bar rad_reaction <from> <to> <target>.. [--repo <rid|path>]
+    
+    '<to>' is the marker to set: one emoji of the store's allow list, checked before any call, so the
+    '❤️' an emoji picker hands out (heart plus a variation selector) is refused here instead of by the
+    store.  A target is '<issue-id>' (the issue itself), '<issue-id> <comment-id>',
+    '<patch-or-revision-id>' (a patch id is its root revision) or '<patch-or-revision-id>
+    <comment-id>'.
+    
+    '<from>' is what the caller expects to be live there: omitted is no expectation at all, the empty
+    string is 'no live marker of mine', anything else must be the state -- and a state which does not
+    match fails without writing anything.  A patch level transition takes '<from>' back in the same
+    step ('rad patch react --undo'), so the target ends with one live marker; the issue level cannot
+    ('rad issue react' has no '--undo' in rad 1.10.3), so there the transition is supersede-only and
+    the check is a guard, never a cleanup.  An empty '<to>' takes '<from>' back and sets nothing:
+    patch level only, and it needs '--from', because the expectation is what names the marker.
+    
     'rad_topic' opens the topic tree of that work in one action: it mints the name from the
     branch *class* and the description, resolves the clone and the freshest base, keeps '.worktrees/'
     out of the main checkout's status and runs 'git worktree add' -- the sequence an agent otherwise
@@ -1894,6 +1917,10 @@ MODULE API/RULES
 
       rad_comment_metadata_usage [reason]
         usage on stderr
+        Which repository: an explicit one (RID, or a path entered to ask that checkout), else the one
+        this runs in.  Sets 'RAD_METADATA_RID' and 'RAD_METADATA_STORAGE'.  '<name>' is the caller,
+        only for its diagnostics -- 'not a repository here' and 'the node holds no storage' are not
+        the same answer for the operator, and neither is a usage error.
 
       rad_comment_metadata see the module header
         the one item the question is about (the only positional argument there is)
@@ -1985,6 +2012,63 @@ MODULE API/RULES
         are 'label', 'assign' and 'unassign'; any other key is reported and never guessed at.
         The labels first: they are one state of the item, and the write which changes it may have
         to delete the state it replaces.  Then everything else in the order it was written.
+
+      rad_reaction_accepts <char>
+        0 when the store would accept it as a reaction
+        One codepoint of rad's allow list (heartwood, 'crates/radicle/src/cob/common.rs').  An emoji
+        picker hands out '❤️' (heart plus a variation selector) and other sequences, and the store
+        refuses those with 'invalid reaction': refusing them here costs no call and no write, and it is
+        the same list -- a character this accepts and the store does not would be a bad promise.
+        U+1F600..U+1F64F, U+1FA75..U+1FA77, U+1FAC0..U+1FAC6, U+1FAE0..U+1FAF8,
+        U+1F300..U+1F5FF, U+2700..U+27BF, U+1F900..U+1F9FF, U+1F680..U+1F6FF
+
+      rad_metadata_reactions <storage> <ref> <kind> <target> <nid>
+        our markers on one target
+        The reaction state of one target as the store reduces it, for *our* identity alone: the newest
+        op per (target, emoji) whose author mail carries our NID, with 'active' read off that survivor.
+        A withdrawal supersedes the add it withdraws without deleting it, so reading 'active' off the
+        op stream would keep reporting markers their author took back.  The order is the op's position
+        in the chain (parent before child), never the op sha: an add and its undo land in the same
+        second routinely.
+        <kind> says which reaction of which COB is meant: 'comment' matches the op's 'id' (an issue's
+        root comment carries the issue id, a comment its own), 'revision' matches 'revision' (the
+        patch id is its root revision's id) and 'revision-comment' matches 'comment'.  <target> may be
+        short: the payload carries the full id.  Prints '<position>US<emoji>US<active>US<op>' per
+        survivor, oldest first.
+        The fields over 'RAD_US', not over a tab: a tab is *whitespace* to 'read' and empty fields
+        would collapse, which would shift every field behind them.
+        A patch or issue id names the COB itself and the reader's listing says which; a *revision* id
+        is an op inside a patch COB, and 'git for-each-ref --contains' finds the COB whose chain
+        carries it -- the same resolution 'rad patch react' makes when it is handed a revision.
+        Returns 3 when nothing matches, 2 when the id matches more than one COB.
+        What is *ours*: the actor of an op travels in its author mail ('<alias>@<nid>'), and reactions
+        are private per identity, so our NID is what decides which markers this caller wrote.
+
+      rad_reaction_usage [reason]
+        usage on stderr
+
+      rad_reaction see the module header
+        Compare and swap on the caller's *own* reaction state: one target, one marker, and the write
+        happens only when what the caller expects is what the store reduces.  rad has no way to set a
+        reaction to a state, only to add one, so 'from -> to' is what a transition is.
+        Patch level withdraws <from> in the same step ('--undo' exists there), so the target ends with
+        one live marker.  Issue level cannot: 'rad issue react' has no '--undo' in rad 1.10.3, so the
+        transition is supersede-only and the check is a guard, never a cleanup -- the older marker
+        stays in the chain, and the newest live one is what a reader resolves.
+        The '<from> <to>' form is the two leading positionals, the '<to> <target>' form starts with
+        the reaction to set.  What tells them apart is what can be a reaction at all: a target is an
+        id, never an emoji -- and an empty second word is only a '<to>' if that is what it can be,
+        which is how 'rad_reaction <from> "" <target>' takes a marker back.
+        Which COB the target names, and which of its reactions: the issue itself (its root comment),
+        a comment of the issue, the patch (whose id is its root revision) or one revision of it, or a
+        comment of a revision.
+        Taking a marker back is a patch level act: 'rad issue react' has no '--undo'.  Asked before the
+        state is even read -- no state would make it possible.
+        Our own state on that target, newest survivor last.
+        The write hands rad the target the caller named (short or full, 'rad' resolves both); the COB
+        was only resolved to read the state back.
+        Set first, take the old one back after: an interrupted step leaves the newer marker live, which
+        is the state a reader resolves -- the order the reaction loop already proved in production.
 
       rad_topic_usage [reason]
         usage on stderr

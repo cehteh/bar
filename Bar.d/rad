@@ -156,6 +156,29 @@
 ### without writing anything.  Nothing is remembered between calls: what the item carries is read
 ### fresh, from 'rad issue|patch list', every time.
 ###
+### 'rad_reaction' is the same idea for the reaction markers, and those are a different animal: a
+### reaction is *private per identity* and can never be delegated, so there is no trust question here
+### -- what the caller compares and swaps is its *own* state, reduced the way the store reduces it:
+### the newest op per target and emoji of ours, with 'active' read off that survivor, ordered by the
+### op's position in the chain (an add and its undo land in the same second routinely).
+###
+###   bar rad_reaction [--from <emoji>] [--repo <rid|path>] <to> <target>..
+###   bar rad_reaction <from> <to> <target>.. [--repo <rid|path>]
+###
+### '<to>' is the marker to set: one emoji of the store's allow list, checked before any call, so the
+### '❤️' an emoji picker hands out (heart plus a variation selector) is refused here instead of by the
+### store.  A target is '<issue-id>' (the issue itself), '<issue-id> <comment-id>',
+### '<patch-or-revision-id>' (a patch id is its root revision) or '<patch-or-revision-id>
+### <comment-id>'.
+###
+### '<from>' is what the caller expects to be live there: omitted is no expectation at all, the empty
+### string is 'no live marker of mine', anything else must be the state -- and a state which does not
+### match fails without writing anything.  A patch level transition takes '<from>' back in the same
+### step ('rad patch react --undo'), so the target ends with one live marker; the issue level cannot
+### ('rad issue react' has no '--undo' in rad 1.10.3), so there the transition is supersede-only and
+### the check is a guard, never a cleanup.  An empty '<to>' takes '<from>' back and sets nothing:
+### patch level only, and it needs '--from', because the expectation is what names the marker.
+###
 ### 'rad_topic' opens the topic tree of that work in one action: it mints the name from the
 ### branch *class* and the description, resolves the clone and the freshest base, keeps '.worktrees/'
 ### out of the main checkout's status and runs 'git worktree add' -- the sequence an agent otherwise
@@ -1434,6 +1457,43 @@ function rad_comment_metadata_usage ## [reason] - usage on stderr
     printf '       --last the newest block per key, which is what applies it\n' >&2
 }
 
+## <name> <rid|path> - the repository and the node storage of it, in the 'RAD_METADATA_*' variables
+function rad_metadata_store
+{
+    ## Which repository: an explicit one (RID, or a path entered to ask that checkout), else the one
+    ## this runs in.  Sets 'RAD_METADATA_RID' and 'RAD_METADATA_STORAGE'.  '<name>' is the caller,
+    ## only for its diagnostics -- 'not a repository here' and 'the node holds no storage' are not
+    ## the same answer for the operator, and neither is a usage error.
+    local name="$1" repo="$2"
+    local toplevel="" rid="" radpath="" storage=""
+    if [[ -n "$repo" && "$repo" != rad:* ]]; then
+        if ! toplevel="$(cd "$repo" 2>/dev/null && git rev-parse --show-toplevel 2>/dev/null)"; then
+            error "not a git repository: '$repo' is neither a RID nor a checkout"
+            return 3
+        fi
+    elif [[ -z "$repo" ]]; then
+        if ! toplevel="$(git rev-parse --show-toplevel 2>/dev/null)"; then
+            error "not a git repository: 'bar $name' reads the checkout it runs in"
+            return 3
+        fi
+    fi
+    if [[ -n "$toplevel" ]]; then
+        rid="$(cd "$toplevel" && rad_run inspect --rid)" || return $?
+        rid="${rid##*$'\n'}"
+    else
+        rid="$repo"
+    fi
+    radpath="$(rad_path)" || radpath=""
+    storage="$radpath/storage/${rid#rad:}"
+    if [[ -z "$radpath" || ! -d "$storage" ]]; then
+        error "the node holds no storage for '$rid': '${RAD_BIN} path' says '${radpath:--}'"
+        return 3
+    fi
+    RAD_METADATA_RID="$rid"
+    RAD_METADATA_STORAGE="$storage"
+    return 0
+}
+
 function rad_comment_metadata ## see the module header
 {
     local -a args=() specs=() parts=() queries=()
@@ -1539,30 +1599,9 @@ function rad_comment_metadata ## see the module header
     }
 
     ## Which repository: an explicit one (RID or path), else the checkout this runs in.
-    if [[ -n "$repo" && "$repo" != rad:* ]]; then
-        if ! toplevel="$(cd "$repo" 2>/dev/null && git rev-parse --show-toplevel 2>/dev/null)"; then
-            error "not a git repository: '$repo' is neither a RID nor a checkout"
-            return 3
-        fi
-    elif [[ -z "$repo" ]]; then
-        if ! toplevel="$(git rev-parse --show-toplevel 2>/dev/null)"; then
-            error "not a git repository: 'bar rad_comment_metadata' reads the checkout it runs in"
-            return 3
-        fi
-    fi
-    if [[ -n "$toplevel" ]]; then
-        rid="$(cd "$toplevel" && rad_run inspect --rid)" || return $?
-        rid="${rid##*$'\n'}"
-    else
-        rid="$repo"
-    fi
-
-    radpath="$(rad_path)" || radpath=""
-    storage="$radpath/storage/${rid#rad:}"
-    if [[ -z "$radpath" || ! -d "$storage" ]]; then
-        error "the node holds no storage for '$rid': '${RAD_BIN} path' says '${radpath:--}'"
-        return 3
-    fi
+    rad_metadata_store rad_comment_metadata "$repo" || return $?
+    rid="$RAD_METADATA_RID"
+    storage="$RAD_METADATA_STORAGE"
 
     ## Who is trusted: the delegates answer from the identity document, 'did:' names one identity and
     ## 'contributor(<n>)' is decided from the authored commits the fact tool counts.  The table is
@@ -1915,7 +1954,7 @@ function rad_apply_labels ## <repo> <dry> <entry>.. - the label state of one ite
     local -i i=0
 
     for entry in ${entries[@]+"${entries[@]}"}; do
-        IFS=$'\t' read -r key type id value <<<"$entry"
+        IFS="$RAD_US" read -r key type id value <<<"$entry"
         [[ "$key" == label ]] || continue
         itemref="$type:$id"
         break
@@ -1927,7 +1966,7 @@ function rad_apply_labels ## <repo> <dry> <entry>.. - the label state of one ite
 
     ## What the chain proposes (every label of the item's block) and what the item carries now.
     for entry in ${entries[@]+"${entries[@]}"}; do
-        IFS=$'\t' read -r key type id value <<<"$entry"
+        IFS="$RAD_US" read -r key type id value <<<"$entry"
         [[ "$key" == label && "$type:$id" == "$itemref" ]] || continue
         derived+=( "$value" )
     done
@@ -1942,7 +1981,7 @@ function rad_apply_labels ## <repo> <dry> <entry>.. - the label state of one ite
 
     ## What to add, in the order the block wrote it, and what is already said.
     for entry in ${entries[@]+"${entries[@]}"}; do
-        IFS=$'\t' read -r key type id value <<<"$entry"
+        IFS="$RAD_US" read -r key type id value <<<"$entry"
         [[ "$key" == label && "$type:$id" == "$itemref" ]] || continue
         if [[ $'\n'"$stored"$'\n' == *$'\n'"$value"$'\n'* ]]; then
             printf 'skip label item=%s add=%s (the item already says it)\n' "$itemref" "$value"
@@ -2061,12 +2100,12 @@ function rad_apply_from_comments ## see the module header
         entries=()
         while IFS= read -r entry; do
             [[ -n "$entry" ]] && entries+=( "$entry" )
-        done < <(printf '%s' "$json" | jq -r '.entries[] | [.key,.item,.id,.value] | @tsv')
+        done < <(printf '%s' "$json" | jq -r '.entries[] | [.key,.item,.id,.value] | @tsv' | tr '\t' "$RAD_US")
         ## The labels first: they are one state of the item, and the write which changes it may have
         ## to delete the state it replaces.  Then everything else in the order it was written.
         rad_apply_labels "$repo" "$dry" ${entries[@]+"${entries[@]}"} || failed=1
         for entry in ${entries[@]+"${entries[@]}"}; do
-            IFS=$'\t' read -r key type id value <<<"$entry"
+            IFS="$RAD_US" read -r key type id value <<<"$entry"
             [[ "$key" == label ]] && continue
             itemref="$type:$id"
             case "$key" in
@@ -2100,7 +2139,333 @@ function rad_apply_from_comments ## see the module header
     return $(( rc | failed ))
 }
 
-# --- rad_topic ------------------------------------------------------------------------------
+# --- the reaction API: compare and swap on the caller's own reaction state ---------------------
+#
+# Reactions are *private per identity* and never delegated: the marker an identity leaves is read
+# back by reducing the ops that identity wrote, which is why this needs none of the reader's trust
+# plumbing.  rad offers no way to set a reaction to a state, only to add one or (at patch level) to
+# take one back, so a transition is expressed as 'the marker I expect' -> 'the marker I want' and the
+# expectation is checked against the state the store reduces before anything is written.
+
+function rad_reaction_accepts ## <char> - 0 when the store would accept it as a reaction
+{
+    ## One codepoint of rad's allow list (heartwood, 'crates/radicle/src/cob/common.rs').  An emoji
+    ## picker hands out '❤️' (heart plus a variation selector) and other sequences, and the store
+    ## refuses those with 'invalid reaction': refusing them here costs no call and no write, and it is
+    ## the same list -- a character this accepts and the store does not would be a bad promise.
+    local char="$1" cp range
+    ## U+1F600..U+1F64F, U+1FA75..U+1FA77, U+1FAC0..U+1FAC6, U+1FAE0..U+1FAF8,
+    ## U+1F300..U+1F5FF, U+2700..U+27BF, U+1F900..U+1F9FF, U+1F680..U+1F6FF
+    local -a ranges=(
+        128512:128591 129653:129655 129728:129734 129760:129784
+        127744:128511 9984:10175 129280:129535 128640:128767
+    )
+    [[ "${#char}" == 1 ]] || return 1
+    cp="$(printf '%d' "'$char" 2>/dev/null)" || return 1
+    [[ "$cp" =~ ^[0-9]+$ ]] || return 1
+    for range in "${ranges[@]}"; do
+        (( cp >= ${range%%:*} && cp <= ${range##*:} )) && return 0
+    done
+    return 1
+}
+
+function rad_metadata_reactions ## <storage> <ref> <kind> <target> <nid> - our markers on one target
+{
+    ## The reaction state of one target as the store reduces it, for *our* identity alone: the newest
+    ## op per (target, emoji) whose author mail carries our NID, with 'active' read off that survivor.
+    ## A withdrawal supersedes the add it withdraws without deleting it, so reading 'active' off the
+    ## op stream would keep reporting markers their author took back.  The order is the op's position
+    ## in the chain (parent before child), never the op sha: an add and its undo land in the same
+    ## second routinely.
+    ##
+    ## <kind> says which reaction of which COB is meant: 'comment' matches the op's 'id' (an issue's
+    ## root comment carries the issue id, a comment its own), 'revision' matches 'revision' (the
+    ## patch id is its root revision's id) and 'revision-comment' matches 'comment'.  <target> may be
+    ## short: the payload carries the full id.  Prints '<position>US<emoji>US<active>US<op>' per
+    ## survivor, oldest first.
+    local storage="$1" ref="$2" kind="$3" target="$4" nid="$5"
+    local op mail subject payload type id revision comment emoji active candidate=""
+    local -A survivor=()
+    local -i pos=0
+    while IFS="$RAD_RS" read -r op mail subject; do
+        [[ -n "$op" ]] || continue
+        case "$subject" in
+        React | 'React comment') ;;
+        *) continue ;;
+        esac
+        [[ "$(rad_metadata_mail_nid "$mail")" == "$nid" ]] || continue
+        payload="$(git --git-dir="$storage" show "$op:0" 2>/dev/null)" || continue
+        ## The fields over 'RAD_US', not over a tab: a tab is *whitespace* to 'read' and empty fields
+        ## would collapse, which would shift every field behind them.
+        {
+            IFS="$RAD_US" read -r type id revision comment emoji active
+        } < <(printf '%s' "$payload" |
+            jq -r '[.type // "", .id // "", .revision // "", .comment // "", (.reaction // ""), ((.active // false) | tostring)] | @tsv' 2>/dev/null |
+            tr '\t' "$RAD_US")
+        candidate=""
+        case "$kind" in
+        comment)
+            [[ "$type" == comment.react ]] && candidate="$id"
+            ;;
+        revision)
+            [[ "$type" == revision.react ]] && candidate="$revision"
+            ;;
+        revision-comment)
+            [[ "$type" == revision.comment.react ]] && candidate="$comment"
+            ;;
+        esac
+        [[ -n "$candidate" && "$candidate" == "$target"* ]] || continue
+        survivor["$emoji"]="$pos${RAD_US}$active${RAD_US}$op"
+        pos=$(( pos + 1 ))
+    done < <(git --git-dir="$storage" log --reverse --topo-order \
+        --format="%H${RAD_RS}%ae${RAD_RS}%s" "$ref" 2>/dev/null)
+
+    for emoji in ${survivor[@]+"${!survivor[@]}"}; do
+        printf '%s%s%s%s%s\n' "${survivor[$emoji]%%"$RAD_US"*}" "$RAD_US" "$emoji" "$RAD_US" \
+            "${survivor[$emoji]#*"$RAD_US"}"
+    done | LC_ALL=C sort -t"$RAD_US" -k1,1n
+    return 0
+}
+
+## <storage> <id> - the COB a reaction target names, in 'RAD_METADATA_REF'/_TYPE/_ID
+function rad_reaction_ref
+{
+    ## A patch or issue id names the COB itself and the reader's listing says which; a *revision* id
+    ## is an op inside a patch COB, and 'git for-each-ref --contains' finds the COB whose chain
+    ## carries it -- the same resolution 'rad patch react' makes when it is handed a revision.
+    ##
+    ## Returns 3 when nothing matches, 2 when the id matches more than one COB.
+    local storage="$1" id="$2" ref=""
+    local rc=0
+    rad_comment_metadata_ref "$storage" "$id"
+    rc=$?
+    if (( rc == 0 )); then
+        RAD_METADATA_REF="$RAD_COMMENT_METADATA_REF"
+        RAD_METADATA_TYPE="$RAD_COMMENT_METADATA_TYPE"
+        RAD_METADATA_ID="$RAD_COMMENT_METADATA_ID"
+        return 0
+    fi
+    if (( rc == 2 )); then
+        error "'$id' matches more than one issue or patch, use more characters"
+        return 2
+    fi
+    ref="$(git --git-dir="$storage" for-each-ref --contains="$id" --format='%(refname)' \
+        'refs/namespaces/*/refs/cobs/xyz.radicle.patch/*' 2>/dev/null | LC_ALL=C sort | head -1)" || ref=""
+    if [[ -z "$ref" ]]; then
+        error "the node holds no issue, patch or revision '$id' in this repository"
+        return 3
+    fi
+    RAD_METADATA_REF="$ref"
+    RAD_METADATA_TYPE="patch"
+    RAD_METADATA_ID="${ref##*/}"
+    return 0
+}
+
+## - the NID of the identity 'rad' uses here
+function rad_metadata_self
+{
+    ## What is *ours*: the actor of an op travels in its author mail ('<alias>@<nid>'), and reactions
+    ## are private per identity, so our NID is what decides which markers this caller wrote.
+    local did=""
+    did="$(rad_run self --did)" || return $?
+    did="$(rad_metadata_nid "${did##*$'\n'}")"
+    if [[ "$did" != z6M* ]]; then
+        error "'$RAD_BIN self --did' names no radicle identity"
+        return 1
+    fi
+    printf '%s' "$did"
+}
+
+function rad_reaction_usage ## [reason] - usage on stderr
+{
+    [[ -n "${1:-}" ]] && printf 'rad_reaction: %s\n' "$1" >&2
+    printf 'usage: rad_reaction [--from <emoji>] [--repo <rid|path>] <to> <target>..\n' >&2
+    printf '       rad_reaction <from> <to> <target>.. [--repo <rid|path>]\n' >&2
+    printf '       <to>     the marker to set; empty withdraws <from> and sets nothing (patch only)\n' >&2
+    printf '       <from>   the marker the caller expects there; omitted is no expectation at all,\n' >&2
+    printf '                the empty string is "no live marker of mine"\n' >&2
+    printf '       <target> <issue-id> (the issue itself), <issue-id> <comment-id>,\n' >&2
+    printf '                <patch-or-revision-id> (the patch is its root revision),\n' >&2
+    printf '                <patch-or-revision-id> <comment-id>\n' >&2
+}
+
+function rad_reaction ## see the module header
+{
+    ## Compare and swap on the caller's *own* reaction state: one target, one marker, and the write
+    ## happens only when what the caller expects is what the store reduces.  rad has no way to set a
+    ## reaction to a state, only to add one, so 'from -> to' is what a transition is.
+    ##
+    ## Patch level withdraws <from> in the same step ('--undo' exists there), so the target ends with
+    ## one live marker.  Issue level cannot: 'rad issue react' has no '--undo' in rad 1.10.3, so the
+    ## transition is supersede-only and the check is a guard, never a cleanup -- the older marker
+    ## stays in the chain, and the newest live one is what a reader resolves.
+    local -a args=() positional=() targets=() setcall=() dropcall=()
+    local raw value from="" to="" repo="" kind="" level="" storage="" ref="" rid="" nid="" type=""
+    local state="" live="" withdrawn="" target="" pos emoji active op
+    local from_given=""
+    local -i i=0 count=0
+
+    for raw in "$@"; do
+        if [[ "$raw" == --*=* ]]; then
+            args+=("${raw%%=*}" "${raw#*=}")
+        else
+            args+=("$raw")
+        fi
+    done
+    count=${#args[@]}
+    while (( i < count )); do
+        raw="${args[i]}"
+        i=$(( i + 1 ))
+        case "$raw" in
+        -h | --help)
+            rad_reaction_usage 2>&1
+            return 0
+            ;;
+        --from | --repo)
+            if (( i >= count )); then
+                rad_reaction_usage "'$raw' needs a value"
+                return 2
+            fi
+            value="${args[i]}"
+            i=$(( i + 1 ))
+            case "$raw" in
+            --from)
+                from="$value"
+                from_given=1
+                ;;
+            --repo) repo="$value" ;;
+            esac
+            ;;
+        -*)
+            rad_reaction_usage "unknown argument '$raw'"
+            return 2
+            ;;
+        *) positional+=( "$raw" ) ;;
+        esac
+    done
+
+    if (( ${#positional[@]} == 0 )); then
+        rad_reaction_usage "the reaction to set and its target are required"
+        return 2
+    fi
+    ## The '<from> <to>' form is the two leading positionals, the '<to> <target>' form starts with
+    ## the reaction to set.  What tells them apart is what can be a reaction at all: a target is an
+    ## id, never an emoji -- and an empty second word is only a '<to>' if that is what it can be,
+    ## which is how 'rad_reaction <from> "" <target>' takes a marker back.
+    if (( ${#positional[@]} >= 3 )) && [[ -z "$from_given" ]] &&
+        { rad_reaction_accepts "${positional[1]}" ||
+            { [[ -z "${positional[1]}" ]] && rad_reaction_accepts "${positional[0]}"; }; }; then
+        from="${positional[0]}"
+        from_given=1
+        to="${positional[1]}"
+        targets=( "${positional[@]:2}" )
+    else
+        to="${positional[0]}"
+        targets=( "${positional[@]:1}" )
+    fi
+    if (( ${#targets[@]} == 0 || ${#targets[@]} > 2 )); then
+        rad_reaction_usage "one target (and its comment) is required, got ${#targets[@]} words"
+        return 2
+    fi
+    if [[ -n "$to" ]] && ! rad_reaction_accepts "$to"; then
+        rad_reaction_usage "'$to' is not a reaction the store accepts: one emoji, no sequence"
+        return 2
+    fi
+    if [[ -z "$to" ]] && [[ -z "$from" || -z "$from_given" ]]; then
+        rad_reaction_usage "an empty reaction only takes back the one the caller expects"
+        return 2
+    fi
+    if [[ -n "$from_given" && "$from" == "$to" ]]; then
+        rad_reaction_usage "'$from' to '$to' is not a transition"
+        return 2
+    fi
+
+    is_command_installed "$RAD_BIN" || {
+        error "'$RAD_BIN' is not installed"
+        return 1
+    }
+    rad_metadata_store rad_reaction "$repo" || return $?
+    storage="$RAD_METADATA_STORAGE"
+    rid="$RAD_METADATA_RID"
+    nid="$(rad_metadata_self)" || return $?
+
+    ## Which COB the target names, and which of its reactions: the issue itself (its root comment),
+    ## a comment of the issue, the patch (whose id is its root revision) or one revision of it, or a
+    ## comment of a revision.
+    rad_reaction_ref "$storage" "${targets[0]}" || return $?
+    ref="$RAD_METADATA_REF"
+    type="$RAD_METADATA_TYPE"
+    if [[ "$type" == issue ]]; then
+        kind="comment"
+        if (( ${#targets[@]} == 1 )); then
+            level="root"
+            target="$RAD_METADATA_ID"
+        else
+            level="comment"
+            target="${targets[1]}"
+        fi
+    else
+        if (( ${#targets[@]} == 1 )); then
+            kind="revision"
+            level="revision"
+            target="${targets[0]}"
+        else
+            kind="revision-comment"
+            level="comment"
+            target="${targets[1]}"
+        fi
+    fi
+
+    ## Taking a marker back is a patch level act: 'rad issue react' has no '--undo'.  Asked before the
+    ## state is even read -- no state would make it possible.
+    if [[ -z "$to" && "$type" != patch ]]; then
+        error "a reaction on an issue or one of its comments cannot be taken back: '$RAD_BIN issue react' has no --undo"
+        return 1
+    fi
+
+    ## Our own state on that target, newest survivor last.
+    state="$(rad_metadata_reactions "$storage" "$ref" "$kind" "$target" "$nid")"
+    live=""
+    while IFS="$RAD_US" read -r pos emoji active op; do
+        [[ -n "$emoji" ]] || continue
+        [[ "$active" == true ]] || continue
+        live="$emoji"
+    done <<<"$state"
+    if [[ -n "$from_given" && "$live" != "$from" ]]; then
+        local found="no marker" expected="no marker"
+        [[ -n "$live" ]] && found="'$live'"
+        [[ -n "$from" ]] && expected="'$from'"
+        error "the state of $type:${target} is $found where $expected was expected: nothing was written"
+        return 1
+    fi
+
+    ## The write hands rad the target the caller named (short or full, 'rad' resolves both); the COB
+    ## was only resolved to read the state back.
+    case "$level:$type" in
+    root:issue) setcall=( issue react "${targets[0]}" --to "${targets[0]}" --emoji "$to" --quiet ) ;;
+    comment:issue) setcall=( issue react "${targets[0]}" --to "${targets[1]}" --emoji "$to" --quiet ) ;;
+    revision:patch) setcall=( patch react "${targets[0]}" --emoji "$to" --quiet ) ;;
+    comment:patch) setcall=( patch comment "${targets[0]}" --react "${targets[1]}" --emoji "$to" --quiet ) ;;
+    esac
+    case "$level:$type" in
+    revision:patch) dropcall=( patch react "${targets[0]}" --emoji "$from" --undo --quiet ) ;;
+    comment:patch) dropcall=( patch comment "${targets[0]}" --react "${targets[1]}" --emoji "$from" --undo --quiet ) ;;
+    *) dropcall=() ;;
+    esac
+
+    ## Set first, take the old one back after: an interrupted step leaves the newer marker live, which
+    ## is the state a reader resolves -- the order the reaction loop already proved in production.
+    if [[ -n "$to" ]]; then
+        rad_metadata_rad "$repo" "${setcall[@]}" || return $?
+    fi
+    if (( ${#dropcall[@]} )) && [[ -n "$from" && "$from" == "$live" ]]; then
+        rad_metadata_rad "$repo" "${dropcall[@]}" || return $?
+        withdrawn=yes
+    fi
+
+    printf 'applied reaction item=%s:%s level=%s target=%s from=%s to=%s withdrawn=%s\n' \
+        "$type" "$RAD_METADATA_ID" "$level" "$target" "${from:--}" "${to:--}" "${withdrawn:-no}"
+}
 
 function rad_topic_usage ## [reason] - usage on stderr
 {
