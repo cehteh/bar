@@ -66,6 +66,7 @@ rule tests: test_prototype_scoping
 rule tests: test_public_mode
 rule tests: test_rad_comment_metadata
 rule tests: test_rad_flow
+rule tests: test_rad_merge_accepted_prs
 rule tests: test_rad_state
 rule tests: test_report_condense
 rule tests: test_sourcetree
@@ -95,6 +96,7 @@ rule test_prototype_scoping: -- tests/test_prototype_scoping.sh
 rule test_public_mode: -- tests/test_public_mode.sh
 rule test_rad_comment_metadata: -- tests/test_rad_comment_metadata.sh
 rule test_rad_flow: -- tests/test_rad_flow.sh
+rule test_rad_merge_accepted_prs: -- tests/test_rad_merge_accepted_prs.sh
 rule test_rad_state: -- tests/test_rad_state.sh
 rule test_report_condense: -- tests/test_report_condense.sh
 rule test_sourcetree: -- tests/test_sourcetree.sh

@@ -8,7 +8,7 @@
 ### incoming item may be trusted, how a topic starts -- and how a repository gets onto radicle in
 ### the first place.
 ###
-### Seven helpers, all served by the backing library Bar.d/radicle_lib (running 'rad', reading its
+### The helpers, all served by the backing library Bar.d/radicle_lib (running 'rad', reading its
 ### padded tables back, the age of a last event, the node storage, the '.worktrees/' exclusion and
 ### the JSON literals):
 ###
@@ -22,6 +22,8 @@
 ###   bar rad_topic <class> "<description>"                  open the topic tree of an item
 ###   bar rad_reaction [--from <emoji>] <to> <target>..      set/transition/withdraw our own marker
 ###   bar rad_import                                         import this repository into radicle
+###   bar rad_merge_accepted_prs [--dry-run] [--no-fetch] [--max <n>]
+###                                                          merge the patches a delegate accepted
 ###
 ### Every helper answers '-h' or '--help' with its usage on stdout and exit 0.
 ###
@@ -36,6 +38,14 @@
 ### 'head' line names.  Syncing is the caller's business ('rad sync', 'git fetch rad'): this helper
 ### reports what is there and says how old it is.  'rad_topic' is the one exception -- it fetches the
 ### radicle remote (else 'origin') to *know* how the base relates to upstream, see below.
+### 'rad_merge_accepted_prs' is the other exception to the "nothing there goes to the network"
+### reading: it fetches 'rad' first, because the branch a patch has to be merged into has to be
+### the current one.  It is also the one helper which writes to a canonical branch -- the one of
+### the checkout it runs in -- which is why it refuses under an identity which is not a delegate
+### of that repository, and why '--dry-run' exists for every other identity.  The acceptance it
+### acts on is read off the patch's own chain, never off 'rad patch list': a Reviews column cannot
+### say which revision a verdict names, and an acceptance of an older revision is exactly what
+### must not be acted on.
 ###
 ### SOURCES
 ###
@@ -286,6 +296,14 @@ rule rad_topic: -
 ## 2 could not answer (usage, a reaction the store would not accept, a missing target),
 ## 3 the node holds no such repository, item or revision.
 rule rad_reaction: -
+
+# helper: rad_merge_accepted_prs | merge the patches a delegate accepted and which merge cleanly into their target branch | rad_merge_accepted_prs [--dry-run] [--no-fetch] [--max <n>] [--json] | one '<verdict> patch=<id> target=<branch> head=<sha> revision=<sha> upstream=<sha> reason=<why>' line per open patch, <verdict> one of merged, mergeable, blocked, conflict; '--json' the same as one object
+## The acceptance is read off the patch's own chain -- a delegate's 'review' with 'verdict: accept'
+## naming the head revision, with nothing but reactions after it, else it has to be accepted again --
+## and the merge is a push into the canonical branch, which only a delegate may make: an invocation
+## under any other identity refuses before it writes.  '--dry-run' answers what is ready and writes
+## nothing.  Exit 0 answered, 1 refused or could not answer, 2 usage, 3 no data.
+rule rad_merge_accepted_prs: -
 
 # --- rad_import: getting a repository onto radicle ----------------------------------------------
 
@@ -2751,6 +2769,396 @@ function rad_topic ## see the module header
     else
         out="$(printf '%s  %s  base=%s  head=%s' "$wt_path" "$name" "$base" "$head")"
         printf '%s\n' "$out"
+    fi
+    return 0
+}
+
+
+# --- merging the acceptances: rad_merge_accepted_prs ---------------------------------------------
+
+function rad_merge_usage ## [reason] - usage on stderr
+{
+    if [[ -n "${1:-}" ]]; then
+        printf 'rad_merge_accepted_prs: %s\n' "$1" >&2
+    fi
+    printf 'usage: rad_merge_accepted_prs [--dry-run] [--no-fetch] [--max <n>] [--json]\n' >&2
+}
+
+function rad_merge_delegate ## <rid> <nid> - 0 when that identity is a delegate of the repository
+{
+    ## The delegate list is a fact about *today*: a repository can delegate us at any time and take
+    ## it back, so it is read here, per run, never remembered.  A line is '<did> (<alias>)', so the
+    ## identity is what stands before the first blank.
+    local rid="$1" nid="$2" did list=""
+    [[ -n "$nid" ]] || return 1
+    list="$(rad_run inspect "$rid" --delegates)" || return 1
+    while IFS= read -r did; do
+        did="${did%% *}"
+        [[ -n "$did" ]] || continue
+        if [[ "$(rad_metadata_nid "$did")" == "$nid" ]]; then
+            return 0
+        fi
+    done <<<"$list"
+    return 1
+}
+
+function rad_merge_ref ## <storage> <id> - the COB ref of that patch, empty when it is not there
+{
+    ## A COB lives in the namespace of every identity which replicated it, so the newest copy is the
+    ## one to read -- else every op would be read once per copy.
+    local storage="$1" id="$2" epoch ref
+    while IFS="$RAD_RS" read -r epoch ref; do
+        [[ -n "$ref" ]] || continue
+        [[ "${ref##*/}" == "$id"* ]] || continue
+        printf '%s' "$ref"
+        return 0
+    done < <(git --git-dir="$storage" for-each-ref --sort=-committerdate \
+        --format="%(committerdate:unix)${RAD_RS}%(refname)" \
+        'refs/namespaces/*/refs/cobs/xyz.radicle.patch/*' 2>/dev/null)
+    return 1
+}
+
+function rad_merge_read ## <storage> <ref> <rid> - the head revision of a patch and its newest followup
+{
+    ## Sets the 'RAD_MERGE_*' facts of one patch:
+    ##
+    ##   RAD_MERGE_REVISION       the head revision: the newest 'Create patch' or 'Add revision' op,
+    ##                            an unrevised patch is its own head.  That op's own id is the id a
+    ##                            review has to name -- 'rad patch list' shows the revision's commit
+    ##                            instead, which is a different thing.
+    ##   RAD_MERGE_COMMIT         the commit that revision carries
+    ##   RAD_MERGE_ACCEPT         the identity which accepted it, empty when none did
+    ##   RAD_MERGE_STALE          why an acceptance found in the chain does not count, empty when
+    ##                            none is stale: 'revision' (an older revision was accepted),
+    ##                            'not-a-delegate', 'review:<verdict>' or 'followup:<kind>'
+    ##   RAD_MERGE_COMMENT        the newest comment of the chain, '<op> <nid>'
+    ##
+    ## The acceptance is the newest *followup* of the chain.  A reaction is not one: a marker is
+    ## bookkeeping -- the reaction loop writes one on every event it reads -- so counting a marker
+    ## as a followup would void the acceptance of every patch the moment somebody looks at it.
+    ## Everything else is one: a comment, a new revision, an edit, a lifecycle op.  The walk is over
+    ## the COB's own first parent chain (a COB commit carries the whole chain as parents), newest op
+    ## first, and it stops at the head revision.
+    local storage="$1" ref="$2" rid="$3"
+    local op mail subject nid payload verdict revision followed=""
+    RAD_MERGE_REVISION="" RAD_MERGE_COMMIT=""
+    RAD_MERGE_ACCEPT="" RAD_MERGE_STALE="" RAD_MERGE_COMMENT=""
+
+    while IFS="$RAD_US" read -r op mail subject; do
+        [[ -n "$op" ]] || continue
+        nid="$(rad_metadata_mail_nid "$mail")"
+        [[ -n "$nid" ]] || break     ## no radicle identity: not an op of this item
+        case "$subject" in
+        'Create patch' | 'Add revision')
+            payload="$(git --git-dir="$storage" cat-file -p "${op}^{tree}:0" 2>/dev/null)" || payload=""
+            RAD_MERGE_REVISION="$op"
+            RAD_MERGE_COMMIT="$(printf '%s' "$payload" | jq -r '.oid // empty' 2>/dev/null)"
+            break
+            ;;
+        esac
+    done < <(git --git-dir="$storage" log --first-parent \
+        --format="%H${RAD_US}%ae${RAD_US}%s" "$ref" 2>/dev/null)
+    [[ -n "$RAD_MERGE_REVISION" ]] || return 1
+
+    while IFS="$RAD_US" read -r op mail subject; do
+        [[ -n "$op" ]] || continue
+        [[ "$op" == "$RAD_MERGE_REVISION" ]] && break
+        nid="$(rad_metadata_mail_nid "$mail")"
+        [[ -n "$nid" ]] || break
+        case "$subject" in
+        React | 'React comment') continue ;;
+        Comment) [[ -n "$RAD_MERGE_COMMENT" ]] || RAD_MERGE_COMMENT="$op $nid" ;;
+        esac
+        [[ -n "$followed" ]] && continue
+        followed=1
+        case "$subject" in
+        Review)
+            payload="$(git --git-dir="$storage" cat-file -p "${op}^{tree}:0" 2>/dev/null)" || payload=""
+            revision="$(printf '%s' "$payload" | jq -r '.revision // empty' 2>/dev/null)"
+            verdict="$(printf '%s' "$payload" | jq -r '.verdict // empty' 2>/dev/null)"
+            if [[ "$verdict" != accept ]]; then
+                RAD_MERGE_STALE="review:${verdict:-unknown}"
+            elif [[ "$revision" != "$RAD_MERGE_REVISION" ]]; then
+                RAD_MERGE_STALE="revision"
+            elif ! rad_merge_delegate "$rid" "$nid"; then
+                RAD_MERGE_STALE="not-a-delegate"
+            else
+                RAD_MERGE_ACCEPT="$nid"
+            fi
+            ;;
+        Comment) RAD_MERGE_STALE="followup:comment" ;;
+        'Add revision') RAD_MERGE_STALE="followup:revision" ;;
+        'Edit root') RAD_MERGE_STALE="followup:edit" ;;
+        Lifecycle) RAD_MERGE_STALE="followup:lifecycle" ;;
+        *) RAD_MERGE_STALE="followup" ;;
+        esac
+    done < <(git --git-dir="$storage" log --first-parent \
+        --format="%H${RAD_US}%ae${RAD_US}%s" "$ref" 2>/dev/null)
+    return 0
+}
+
+function rad_merge_target ## <toplevel> <patch> - the branch that patch targets, empty when rad hides it
+{
+    ## 'rad patch list' has no target column and the patch's own revision payload does not carry one
+    ## either, so the header of 'rad patch show' is the one place which says it.
+    local toplevel="$1" patch="$2" show line
+    show="$(cd "$toplevel" && rad_run patch show "$patch")" || return 1
+    while IFS= read -r line; do
+        [[ "$line" == *"│ Target "* ]] || continue
+        line="$(rad_line "$line")"
+        printf '%s' "${line%% *}"
+        return 0
+    done <<<"$show"
+    return 1
+}
+
+function rad_merge_upstream ## <toplevel> <target> - the commit the canonical branch holds
+{
+    ## What a patch is merged into is the *canonical* branch as the last fetch left it.  Merging into
+    ## the local branch instead would publish whatever else sits on it, which is not this helper's
+    ## business.
+    local toplevel="$1" target="$2" sha=""
+    sha="$(git -C "$toplevel" rev-parse --verify --quiet "refs/remotes/rad/$target^{commit}" 2>/dev/null)" || sha=""
+    if [[ -z "$sha" ]]; then
+        sha="$(git -C "$toplevel" rev-parse --verify --quiet "refs/heads/$target^{commit}" 2>/dev/null)" || sha=""
+    fi
+    [[ -n "$sha" ]] || return 1
+    printf '%s' "$sha"
+}
+
+function rad_merge_push ## <toplevel> <upstream> <head> <target> <patch> - merge and push, print the commit
+{
+    ## 'merge-tree' writes the merged tree without a working tree (and is the clean-merge test),
+    ## 'commit-tree' makes the merge commit, the push names that commit: no tree is ever switched, so
+    ## a checkout somebody is working in stays exactly where it is.  A head the canonical branch
+    ## already contains is pushed as it is -- a fast-forward, linear history, and the gate run at the
+    ## head is the post-merge gate.
+    ##
+    ## Returns 1 when the push failed and 2 when it went somewhere else: 'refs/heads/<target>' is the
+    ## canonical branch, and rad has to say that the canonical reference moved -- a push which
+    ## succeeded without that line landed in our own namespace, which is not a merge.
+    local toplevel="$1" upstream="$2" head="$3" target="$4" patch="$5"
+    local commit="" tree="" out=""
+    if git -C "$toplevel" merge-base --is-ancestor "$upstream" "$head" 2>/dev/null; then
+        commit="$head"
+    else
+        tree="$(git -C "$toplevel" merge-tree --write-tree "$upstream" "$head" 2>/dev/null)" || return 1
+        [[ -n "$tree" ]] || return 1
+        commit="$(printf 'merge patch %s\n' "$patch" |
+            git -C "$toplevel" commit-tree "$tree" -p "$upstream" -p "$head" -F - 2>/dev/null)" || return 1
+        [[ -n "$commit" ]] || return 1
+    fi
+    out="$(git -C "$toplevel" push rad "${commit}:refs/heads/${target}" 2>&1)" || return 1
+    [[ "$out" == *'Canonical reference'* ]] || return 2
+    printf '%s' "$commit"
+    return 0
+}
+
+function rad_merge_abort ## <toplevel> <storage> <revision> <upstream> <nid> <last-comment> - the abort note
+{
+    ## 'does not merge at upstream <sha>' is the comment the abort owes the author, and it goes on the
+    ## revision it is about.  Once per head revision, not once per run: when our own newest comment
+    ## already says exactly that, the patch was reported before and nothing is appended again.
+    local toplevel="$1" storage="$2" revision="$3" upstream="$4" nid="$5" last="$6"
+    local op="" author="" previous="" body="does not merge at upstream $upstream"
+    if [[ -n "$last" ]]; then
+        op="${last%% *}"
+        author="${last##* }"
+    fi
+    if [[ -n "$op" && "$author" == "$nid" ]]; then
+        previous="$(rad_metadata_body "$storage" "$op" patch Comment 2>/dev/null)" || previous=""
+        [[ "$previous" == "$body" ]] && return 0
+    fi
+    if ! ( cd "$toplevel" && rad_run patch comment "$revision" -m "$body" >/dev/null ); then
+        warn "could not comment 'does not merge at upstream $upstream' on $revision"
+        return 1
+    fi
+    return 0
+}
+
+function rad_merge_accepted_prs ## see the module header
+{
+    local -a args=( ${RULE_ARGS[@]+"${RULE_ARGS[@]}"} )
+    local -a rows=() ids=()
+    local -A tip=()
+    local raw arg value dry="" json="" nofetch="" max=0
+    local -i i=0 failed=0 landed=0
+    local toplevel="" rid="" radpath="" storage="" self="" alias="" nid="" delegate="no"
+    local table="" listing="" id="" head="" target="-" upstream="-" revision="-" verdict="" reason=""
+    local ref="" commit="" rc=0
+
+    while (( i < ${#args[@]} )); do
+        arg="${args[i]}"
+        case "$arg" in
+        -h | --help)
+            rad_merge_usage 2>&1
+            return 0
+            ;;
+        --dry-run) dry=1 ;;
+        --json) json=1 ;;
+        --no-fetch) nofetch=1 ;;
+        --max)
+            i=$(( i + 1 ))
+            max="${args[i]:-}"
+            [[ "$max" =~ ^[0-9]+$ ]] || { rad_merge_usage "'--max' needs a number"; return 2; }
+            ;;
+        --max=*)
+            max="${arg#--max=}"
+            [[ "$max" =~ ^[0-9]+$ ]] || { rad_merge_usage "'--max' needs a number"; return 2; }
+            ;;
+        *)
+            rad_merge_usage "unknown argument '$arg'"
+            return 2
+            ;;
+        esac
+        i=$(( i + 1 ))
+    done
+    [[ -n "${BAR_AGENT_JSON:-}" ]] && json=1
+
+    is_command_installed "$RAD_BIN" || {
+        error "'$RAD_BIN' is not installed"
+        return 1
+    }
+    ## There is no '--repo': the checkout it is run from is the repository, and its canonical
+    ## branch is the one the patches are merged into.
+    if ! toplevel="$(git rev-parse --show-toplevel 2>/dev/null)"; then
+        error "not a git repository: 'rad_merge_accepted_prs' merges the patches of the checkout it runs in"
+        return 3
+    fi
+
+    rid="$(cd "$toplevel" && rad_run inspect --rid)" || return $?
+    rid="${rid##*$'\n'}"
+    radpath="$(rad_path)" || radpath=""
+    storage="$radpath/storage/${rid#rad:}"
+    if [[ -z "$radpath" || ! -d "$storage" ]]; then
+        error "the node holds no storage for '$rid': '${RAD_BIN} path' says '${radpath:--}'"
+        return 3
+    fi
+
+    self="$(LC_ALL=C "$RAD_BIN" self 2>/dev/null)" || self=""
+    if [[ -n "$self" ]]; then
+        alias="$(printf '%s\n' "$self" | LC_ALL=C sed -n 's/^Alias[[:space:]]\{1,\}//p' | head -1)"
+        nid="$(rad_metadata_nid "$(printf '%s\n' "$self" | LC_ALL=C sed -n 's/^DID[[:space:]]\{1,\}//p' | head -1)")"
+    fi
+    rad_merge_delegate "$rid" "$nid" && delegate="yes"
+    if [[ "$delegate" != yes && -z "$dry" ]]; then
+        error "the identity '${alias:--}' is not a delegate of $rid: updating the canonical branch is theirs to do (--dry-run reads what is ready without writing)"
+        return 1
+    fi
+
+    if [[ -z "$nofetch" ]] && git -C "$toplevel" remote | grep -qx rad; then
+        git -C "$toplevel" fetch --quiet rad 2>/dev/null ||
+            warn "'git fetch rad' failed, the target branches are read as they are"
+    fi
+
+    table="$(cd "$toplevel" && rad_run patch list --open)" || return $?
+    listing="$(rad_state_table_checked 'patch list --open' "$table" ID Head)" || return 1
+    while IFS="$RAD_US" read -r id head; do
+        [[ -n "$id" ]] || continue
+        ids+=("$id")
+    done <<<"$listing"
+
+    ## Oldest first: an older topic has waited longest, and a merge into the same branch moves the
+    ## base under every younger one anyway.
+    for (( i = ${#ids[@]} - 1; i >= 0; i-- )); do
+        if (( max > 0 && landed >= max )); then
+            break
+        fi
+        id="${ids[i]}"
+        head="-" target="-" upstream="-" revision="-" verdict="" reason=""
+        if ! ref="$(rad_merge_ref "$storage" "$id")"; then
+            rows+=("blocked${RAD_US}${id}${RAD_US}-${RAD_US}-${RAD_US}-${RAD_US}-${RAD_US}no-storage")
+            continue
+        fi
+        rad_merge_read "$storage" "$ref" "$rid" || {
+            rows+=("blocked${RAD_US}${id}${RAD_US}-${RAD_US}-${RAD_US}-${RAD_US}-${RAD_US}no-revision")
+            continue
+        }
+        revision="$RAD_MERGE_REVISION"
+        head="${RAD_MERGE_COMMIT:--}"
+        if [[ -z "$RAD_MERGE_ACCEPT" ]]; then
+            rows+=("blocked${RAD_US}${id}${RAD_US}${target}${RAD_US}${head}${RAD_US}${revision}${RAD_US}${upstream}${RAD_US}${RAD_MERGE_STALE:-no-accept}")
+            continue
+        fi
+        if ! target="$(rad_merge_target "$toplevel" "$id")" || [[ -z "$target" ]]; then
+            target="-"
+            rows+=("blocked${RAD_US}${id}${RAD_US}-${RAD_US}${head}${RAD_US}${revision}${RAD_US}-${RAD_US}no-target")
+            continue
+        fi
+        upstream="${tip[$target]:-}"
+        if [[ -z "$upstream" ]] && ! upstream="$(rad_merge_upstream "$toplevel" "$target")"; then
+            upstream="-"
+            rows+=("blocked${RAD_US}${id}${RAD_US}${target}${RAD_US}${head}${RAD_US}${revision}${RAD_US}-${RAD_US}no-upstream")
+            failed=$(( failed + 1 ))
+            continue
+        fi
+
+        ## Whether it merges at all is read in both modes -- that is the answer a dry run owes,
+        ## and it writes nothing to find out.
+        verdict="mergeable"
+        reason="fast-forward"
+        rc=0
+        if ! git -C "$toplevel" merge-base --is-ancestor "$upstream" "$head" 2>/dev/null; then
+            reason="merge-commit"
+            git -C "$toplevel" merge-tree --write-tree "$upstream" "$head" >/dev/null 2>&1 || rc=$?
+        fi
+        if (( rc == 1 )); then
+            verdict="conflict"
+            reason="does-not-merge"
+            if [[ -z "$dry" ]]; then
+                rad_merge_abort "$toplevel" "$storage" "$revision" "$upstream" "$nid" "$RAD_MERGE_COMMENT" ||
+                    failed=$(( failed + 1 ))
+            fi
+        elif (( rc > 1 )); then
+            verdict="blocked"
+            reason="merge-tree-failed"
+            failed=$(( failed + 1 ))
+        elif [[ -n "$dry" ]]; then
+            reason="dry-run"
+        else
+            rc=0
+            commit="$(rad_merge_push "$toplevel" "$upstream" "$head" "$target" "$id")" || rc=$?
+            if (( rc == 0 )); then
+                verdict="merged"
+                tip["$target"]="$commit"
+                landed=$(( landed + 1 ))
+            elif (( rc == 2 )); then
+                verdict="blocked"
+                reason="not-canonical"
+                failed=$(( failed + 1 ))
+            else
+                verdict="blocked"
+                reason="push-failed"
+                failed=$(( failed + 1 ))
+            fi
+        fi
+        rows+=("${verdict}${RAD_US}${id}${RAD_US}${target}${RAD_US}${head}${RAD_US}${revision}${RAD_US}${upstream}${RAD_US}${reason}")
+    done
+
+    if [[ -n "$json" ]]; then
+        if (( ${#rows[@]} == 0 )); then
+            jq -cn --arg repo "$rid" --arg identity "$alias" --arg delegate "$delegate" \
+                '{bar_rad: 1, repo: $repo, identity: $identity, delegate: ($delegate == "yes"), patches: []}'
+        else
+            printf '%s\n' "${rows[@]}" | jq -Rn --arg repo "$rid" --arg identity "$alias" --arg delegate "$delegate" '
+                [inputs | select(length > 0) | split("\u001f")
+                 | {verdict: .[0], patch: .[1], target: .[2], head: .[3],
+                    revision: .[4], upstream: .[5], reason: .[6]}]
+                | {bar_rad: 1, repo: $repo, identity: $identity,
+                   delegate: ($delegate == "yes"), patches: .}'
+        fi
+    elif (( ${#rows[@]} == 0 )); then
+        note "no open patch in $rid"
+    else
+        printf '%s\n' "${rows[@]}" |
+            while IFS="$RAD_US" read -r verdict id target head revision upstream reason; do
+                printf '%s patch=%s target=%s head=%s revision=%s upstream=%s reason=%s\n' \
+                    "$verdict" "$id" "$target" "$head" "$revision" "$upstream" "$reason"
+            done
+    fi
+
+    if (( failed )); then
+        return 1
     fi
     return 0
 }

@@ -1654,7 +1654,7 @@ MODULE API/RULES
     incoming item may be trusted, how a topic starts -- and how a repository gets onto radicle in
     the first place.
     
-    Seven helpers, all served by the backing library Bar.d/radicle_lib (running 'rad', reading its
+    The helpers, all served by the backing library Bar.d/radicle_lib (running 'rad', reading its
     padded tables back, the age of a last event, the node storage, the '.worktrees/' exclusion and
     the JSON literals):
     
@@ -1668,6 +1668,8 @@ MODULE API/RULES
       bar rad_topic <class> "<description>"                  open the topic tree of an item
       bar rad_reaction [--from <emoji>] <to> <target>..      set/transition/withdraw our own marker
       bar rad_import                                         import this repository into radicle
+      bar rad_merge_accepted_prs [--dry-run] [--no-fetch] [--max <n>]
+                                                             merge the patches a delegate accepted
     
     Every helper answers '-h' or '--help' with its usage on stdout and exit 0.
     
@@ -1682,6 +1684,14 @@ MODULE API/RULES
     'head' line names.  Syncing is the caller's business ('rad sync', 'git fetch rad'): this helper
     reports what is there and says how old it is.  'rad_topic' is the one exception -- it fetches the
     radicle remote (else 'origin') to *know* how the base relates to upstream, see below.
+    'rad_merge_accepted_prs' is the other exception to the "nothing there goes to the network"
+    reading: it fetches 'rad' first, because the branch a patch has to be merged into has to be
+    the current one.  It is also the one helper which writes to a canonical branch -- the one of
+    the checkout it runs in -- which is why it refuses under an identity which is not a delegate
+    of that repository, and why '--dry-run' exists for every other identity.  The acceptance it
+    acts on is read off the patch's own chain, never off 'rad patch list': a Reviews column cannot
+    say which revision a verdict names, and an acceptance of an older revision is exactly what
+    must not be acted on.
     
     SOURCES
     
@@ -2264,6 +2274,76 @@ MODULE API/RULES
         *know* the relation; a trunk which is behind upstream is refused, because updating the trunk
         is its own step with its own gate.
 
+      rad_merge_usage [reason]
+        usage on stderr
+
+      rad_merge_delegate <rid> <nid>
+        0 when that identity is a delegate of the repository
+        The delegate list is a fact about *today*: a repository can delegate us at any time and take
+        it back, so it is read here, per run, never remembered.  A line is '<did> (<alias>)', so the
+        identity is what stands before the first blank.
+
+      rad_merge_ref <storage> <id>
+        the COB ref of that patch, empty when it is not there
+        A COB lives in the namespace of every identity which replicated it, so the newest copy is the
+        one to read -- else every op would be read once per copy.
+
+      rad_merge_read <storage> <ref> <rid>
+        the head revision of a patch and its newest followup
+        Sets the 'RAD_MERGE_*' facts of one patch:
+          RAD_MERGE_REVISION       the head revision: the newest 'Create patch' or 'Add revision' op,
+                                   an unrevised patch is its own head.  That op's own id is the id a
+                                   review has to name -- 'rad patch list' shows the revision's commit
+                                   instead, which is a different thing.
+          RAD_MERGE_COMMIT         the commit that revision carries
+          RAD_MERGE_ACCEPT         the identity which accepted it, empty when none did
+          RAD_MERGE_STALE          why an acceptance found in the chain does not count, empty when
+                                   none is stale: 'revision' (an older revision was accepted),
+                                   'not-a-delegate', 'review:<verdict>' or 'followup:<kind>'
+          RAD_MERGE_COMMENT        the newest comment of the chain, '<op> <nid>'
+        The acceptance is the newest *followup* of the chain.  A reaction is not one: a marker is
+        bookkeeping -- the reaction loop writes one on every event it reads -- so counting a marker
+        as a followup would void the acceptance of every patch the moment somebody looks at it.
+        Everything else is one: a comment, a new revision, an edit, a lifecycle op.  The walk is over
+        the COB's own first parent chain (a COB commit carries the whole chain as parents), newest op
+        first, and it stops at the head revision.
+
+      rad_merge_target <toplevel> <patch>
+        the branch that patch targets, empty when rad hides it
+        'rad patch list' has no target column and the patch's own revision payload does not carry one
+        either, so the header of 'rad patch show' is the one place which says it.
+
+      rad_merge_upstream <toplevel> <target>
+        the commit the canonical branch holds
+        What a patch is merged into is the *canonical* branch as the last fetch left it.  Merging into
+        the local branch instead would publish whatever else sits on it, which is not this helper's
+        business.
+
+      rad_merge_push <toplevel> <upstream> <head> <target> <patch>
+        merge and push, print the commit
+        'merge-tree' writes the merged tree without a working tree (and is the clean-merge test),
+        'commit-tree' makes the merge commit, the push names that commit: no tree is ever switched, so
+        a checkout somebody is working in stays exactly where it is.  A head the canonical branch
+        already contains is pushed as it is -- a fast-forward, linear history, and the gate run at the
+        head is the post-merge gate.
+        Returns 1 when the push failed and 2 when it went somewhere else: 'refs/heads/<target>' is the
+        canonical branch, and rad has to say that the canonical reference moved -- a push which
+        succeeded without that line landed in our own namespace, which is not a merge.
+
+      rad_merge_abort <toplevel> <storage> <revision> <upstream> <nid> <last-comment>
+        the abort note
+        'does not merge at upstream <sha>' is the comment the abort owes the author, and it goes on the
+        revision it is about.  Once per head revision, not once per run: when our own newest comment
+        already says exactly that, the patch was reported before and nothing is appended again.
+
+      rad_merge_accepted_prs see the module header
+        There is no '--repo': the checkout it is run from is the repository, and its canonical
+        branch is the one the patches are merged into.
+        Oldest first: an older topic has waited longest, and a merge into the same branch moves the
+        base under every younger one anyway.
+        Whether it merges at all is read in both modes -- that is the answer a dry run owes,
+        and it writes nothing to find out.
+
     Rules:
 
       rad_import
@@ -2306,6 +2386,13 @@ MODULE API/RULES
         Exit 0 applied, 1 the expected marker is not what the store reduces (nothing was written),
         2 could not answer (usage, a reaction the store would not accept, a missing target),
         3 the node holds no such repository, item or revision.
+
+      rad_merge_accepted_prs
+        The acceptance is read off the patch's own chain -- a delegate's 'review' with 'verdict: accept'
+        naming the head revision, with nothing but reactions after it, else it has to be accepted again --
+        and the merge is a push into the canonical branch, which only a delegate may make: an invocation
+        under any other identity refuses before it writes.  '--dry-run' answers what is ready and writes
+        nothing.  Exit 0 answered, 1 refused or could not answer, 2 usage, 3 no data.
 
   rad_rules - The rules of the 'rad' module which everything else may depend on before a rulefile is read:
     the cheap guards of a radicle checkout and the hook into 'activate'.
