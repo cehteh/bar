@@ -8,7 +8,7 @@
 ### incoming item may be trusted, how a topic starts -- and how a repository gets onto radicle in
 ### the first place.
 ###
-### Six helpers, all served by the backing library Bar.d/radicle_lib (running 'rad', reading its
+### Seven helpers, all served by the backing library Bar.d/radicle_lib (running 'rad', reading its
 ### padded tables back, the age of a last event, the node storage, the '.worktrees/' exclusion and
 ### the JSON literals):
 ###
@@ -20,6 +20,7 @@
 ###                                                          the trusted '*label:'/'*assign:'/
 ###                                                          '*unassign:' proposals of one item
 ###   bar rad_topic <class> "<description>"                  open the topic tree of an item
+###   bar rad_reaction [--from <emoji>] <to> <target>..      set/transition/withdraw our own marker
 ###   bar rad_import                                         import this repository into radicle
 ###
 ### Every helper answers '-h' or '--help' with its usage on stdout and exit 0.
@@ -268,6 +269,19 @@ rule rad_comment_metadata: -
 ## 1 refused (the tree or the branch exists, the name is too long), 2 could not answer (usage, an
 ## unknown class, not a git repository, git failed).
 rule rad_topic: -
+
+# helper: rad_reaction | set, transition or withdraw one of our reaction markers, comparing the state the store reduces before writing: the write happens only when what the caller expects is live | rad_reaction [--from <emoji>] [--repo <rid,path>] <to> <target>.. or rad_reaction <from> <to> <target>.. [--repo <rid,path>] | one 'applied reaction item=<one of issue, patch>:<id> level=<one of root, comment, revision> target=<id> from=<emoji or -> to=<emoji or -> withdrawn=<one of yes, no>' line
+## Compare and swap on the caller's *own* reaction state: a reaction is private per identity and can
+## never be delegated, so there is no trust question here.  '<to>' is the marker to set (one codepoint
+## of the store's allow list, checked before any call), '<from>' what the caller expects to be live
+## there -- omitted is no expectation at all, the empty string is 'no live marker of mine'.  An empty
+## '<to>' withdraws '<from>' and sets nothing: patch level only, and it needs '--from', because the
+## expectation is what names the marker.  A target is '<issue-id>', '<issue-id> <comment-id>',
+## '<patch-or-revision-id>' (a patch id is its root revision) or '<patch-or-revision-id> <comment-id>'.
+## Exit 0 applied, 1 the expected marker is not what the store reduces (nothing was written),
+## 2 could not answer (usage, a reaction the store would not accept, a missing target),
+## 3 the node holds no such repository, item or revision.
+rule rad_reaction: -
 
 # --- rad_import: getting a repository onto radicle ----------------------------------------------
 
