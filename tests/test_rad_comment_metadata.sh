@@ -49,11 +49,13 @@
 #        not trusted never reaches an applier at all
 #   AC28 'rad_reaction' compares against the caller's own reduced state: our newest live marker is
 #        the state (an op stream entry its author took back is not, and neither is another identity's
-#        marker), a mismatch writes nothing, the issue itself is reached through its root comment
-#   AC29 a patch level transition takes the marker it replaces back in the same step, an empty
-#        reaction takes it back and sets nothing, and the issue level refuses the same call
-#   AC30 a revision id names the patch COB that holds it, and a comment of that revision is reacted
-#        to through 'rad patch comment --react'
+#        marker), a mismatch writes nothing, and the whole transition -- the issue itself reached
+#        through its root comment included -- is one 'rad cob update' whose action list carries what
+#        rad writes itself, ids in the full form the store validates ('invalid length')
+#   AC29 a transition takes the marker it replaces back in the same op, at every level, and an empty
+#        reaction takes one back and sets nothing (which the typed issue command cannot do at all)
+#   AC30 a revision id names the patch COB that holds it, and a comment of that revision is written
+#        against the revision the comment itself names
 #   AC31 what the store would refuse is refused before any call (a two codepoint emoji, a word, an
 #        empty reaction without an expectation), and so is a usage error or an id nobody holds
 
@@ -124,7 +126,9 @@ git -C "$PROJECT" commit -q --allow-empty -m "fixture"
 git init -q --bare "$STORAGE"
 
 # the fake 'rad': the node path, the identity of this checkout, the delegates of the fixture, the
-# label table the stored state is read from, and a recorder for every write it is asked to make
+# label table the stored state is read from, and a recorder for every write it is asked to make --
+# 'rad cob update' records its call beside the action file it was handed, which is what the reaction
+# tests assert on (the file name is a mktemp path and would make an exact match brittle)
 cat >"$FAKERAD" <<EOF
 #!/bin/sh
 case "\$1" in
@@ -141,6 +145,23 @@ self)
     --did) printf 'did:key:%s\n' "$SELF_NID" ;;
     --alias) printf 'self\n' ;;
     esac
+    ;;
+cob)
+    if [ "\$2" = update ]; then
+        shift 2
+        t=""; o=""; m=""; r=""; f=""
+        while [ \$# -gt 0 ]; do
+            case "\$1" in
+            --type) t="\$2"; shift 2 ;;
+            --object) o="\$2"; shift 2 ;;
+            --message) m="\$2"; shift 2 ;;
+            -r) r="\$2"; shift 2 ;;
+            *) f="\$1"; shift ;;
+            esac
+        done
+        printf 'cob update --type %s --object %s --message %s%s\n' "\$t" "\$o" "\$m" "\${r:+ -r \$r}" >>"$WORK/rad.calls"
+        cat "\$f" >>"$WORK/rad.actions" 2>/dev/null
+    fi
     ;;
 issue | patch)
     case "\$2" in
@@ -192,6 +213,7 @@ EOF
 chmod +x "$FACTS"
 : >"$WORK/facts.calls"
 : >"$WORK/rad.calls"
+: >"$WORK/rad.actions"
 
 # <ns> <type> <cob> <subject> <payload> [parent] [name] [nid] [date] - one COB op, prints its sha
 op() {
@@ -350,18 +372,18 @@ REACT_TIP="$(op "$DELEGATE_NID" issue "$REACT" "React" \
 
 RATCH="ffffffffffffffffffffffffffffffffffffffff"
 RATCH_ID="${RATCH:0:7}"
-RATCH_TIP="$(op "$DELEGATE_NID" patch "$RATCH" "Initial revision" \
+RATCH_ROOT="$(op "$DELEGATE_NID" patch "$RATCH" "Initial revision" \
     '{"type":"revision","description":"a patch to react to","oid":"0000000000000000000000000000000000000000","base":"1111111111111111111111111111111111111111"}' \
     "" "delegate" "$DELEGATE_NID" "2026-10-11T10:47:00+02:00")"
 RATCH_COMMENT="$(op "$DELEGATE_NID" patch "$RATCH" "Comment" \
-    '{"body":"a comment on the patch","type":"comment"}' \
-    "$RATCH_TIP" "delegate" "$DELEGATE_NID" "2026-10-11T10:48:00+02:00")"
+    "{\"body\":\"a comment on the patch\",\"revision\":\"$RATCH_ROOT\",\"type\":\"comment\"}" \
+    "$RATCH_ROOT" "delegate" "$DELEGATE_NID" "2026-10-11T10:48:00+02:00")"
 RATCH_REVISION="$(op "$DELEGATE_NID" patch "$RATCH" "Add revision" \
     '{"type":"revision","description":"the second one","oid":"2222222222222222222222222222222222222222","base":"1111111111111111111111111111111111111111"}' \
     "$RATCH_COMMENT" "delegate" "$DELEGATE_NID" "2026-10-11T10:49:00+02:00")"
 # our marker on the patch's root revision
 RATCH_TIP="$(op "$DELEGATE_NID" patch "$RATCH" "React" \
-    "{\"active\":true,\"revision\":\"$RATCH\",\"reaction\":\"✅\",\"type\":\"revision.react\"}" \
+    "{\"active\":true,\"revision\":\"$RATCH_ROOT\",\"reaction\":\"✅\",\"type\":\"revision.react\"}" \
     "$RATCH_REVISION" "self" "$SELF_NID" "2026-10-11T10:50:00+02:00")"
 
 # -- a seventh issue: its newest label block is an outsider's, which only a trust spec hands over ---
@@ -794,6 +816,7 @@ echo
 
 echo "AC28 rad_reaction compares against our own reduced state, never the op stream"
 : >"$WORK/rad.calls"
+: >"$WORK/rad.actions"
 run "$PROJECT" rad_reaction "" 👀 "$REACT_ID"
 check "$RC" 1 "our newest marker is already there, so 'no live marker' is refused"
 err "$PROJECT" rad_reaction "" 👀 "$REACT_ID"
@@ -805,64 +828,105 @@ run "$PROJECT" rad_reaction ✅ ❓ "$REACT_ID"
 check "$RC" 1 "the delegate's marker is not ours, so it is not the state either"
 run "$PROJECT" rad_reaction ➖ ✅ "$REACT_ID"
 check "$RC" 0 "the newest live marker is the state, and it is accepted"
-check "$(cat "$WORK/rad.calls")" "issue react $REACT_ID --to $REACT_ID --emoji ✅ --quiet" \
-    "the issue itself is reacted to through its own root comment"
-check "$(lines_of "$(cat "$WORK/rad.calls")")" 1 "one invocation: the issue level has nothing to close with"
+check "$(cat "$WORK/rad.calls")" "cob update --type xyz.radicle.issue --object $REACT --message React" \
+    "the issue itself is one write on the issue COB"
+check "$(lines_of "$(cat "$WORK/rad.calls")")" 1 "one invocation carries the whole transition"
+check "$(sed -n 1p "$WORK/rad.actions")" \
+    "{\"type\":\"comment.react\",\"id\":\"$REACT\",\"reaction\":\"✅\",\"active\":true}" \
+    "and the action is the payload rad writes itself"
+check "$(sed -n 2p "$WORK/rad.actions")" \
+    "{\"type\":\"comment.react\",\"id\":\"$REACT\",\"reaction\":\"➖\",\"active\":false}" \
+    "…which withdraws the marker it replaces, in the same op"
 contains "$OUT" "level=root" "the report names the level"
-contains "$OUT" "withdrawn=no" "…and that the marker it supersedes stays in the chain"
+contains "$OUT" "withdrawn=yes" "…and that the marker it supersedes was taken back"
 : >"$WORK/rad.calls"
+: >"$WORK/rad.actions"
 run "$PROJECT" rad_reaction "" 👀 "$REACT_ID" "$REACT_COMMENT"
 check "$RC" 0 "'no live marker' holds on a comment nobody of ours reacted to"
-check "$(tail -1 "$WORK/rad.calls")" "issue react $REACT_ID --to $REACT_COMMENT --emoji 👀 --quiet" \
-    "…and it reacts to that comment"
+check "$(tail -1 "$WORK/rad.calls")" "cob update --type xyz.radicle.issue --object $REACT --message React" \
+    "…and that comment is a write on the same item"
+check "$(tail -1 "$WORK/rad.actions")" \
+    "{\"type\":\"comment.react\",\"id\":\"$REACT_COMMENT\",\"reaction\":\"👀\",\"active\":true}" \
+    "the action names the comment"
 contains "$OUT" "level=comment" "reported as a comment of the item"
 : >"$WORK/rad.calls"
+: >"$WORK/rad.actions"
+run "$PROJECT" rad_reaction "" 👀 "$REACT_ID" "${REACT_COMMENT:0:7}"
+check "$RC" 0 "a comment named in shorthand is accepted"
+check "$(tail -1 "$WORK/rad.actions")" \
+    "{\"type\":\"comment.react\",\"id\":\"$REACT_COMMENT\",\"reaction\":\"👀\",\"active\":true}" \
+    "…and the action carries the full op id the store insists on"
+: >"$WORK/rad.calls"
+: >"$WORK/rad.actions"
 run "$PROJECT" rad_reaction "" 👀 "$REACT_ID" "$REACT_COMMENT" --repo "$RID"
 check "$RC" 0 "a RID may name the repository"
-check "$(tail -1 "$WORK/rad.calls")" "issue react $REACT_ID --to $REACT_COMMENT --emoji 👀 --quiet -r $RID" \
+check "$(tail -1 "$WORK/rad.calls")" \
+    "cob update --type xyz.radicle.issue --object $REACT --message React -r $RID" \
     "…and it travels to 'rad' as '-r'"
 echo
 
-echo "AC29 patch level withdraws what it replaces, the issue level cannot"
+echo "AC29 a transition takes the marker it replaces back, at every level"
 : >"$WORK/rad.calls"
-run "$PROJECT" rad_reaction ✅ 🔧 "$RATCH_ID"
+: >"$WORK/rad.actions"
+run "$PROJECT" rad_reaction ✅ 🔧 "$RATCH_ROOT"
 check "$RC" 0 "the state the patch carries is accepted"
-check "$(lines_of "$(cat "$WORK/rad.calls")")" 2 "two invocations: set, then take the old one back"
-check "$(sed -n 1p "$WORK/rad.calls")" "patch react $RATCH_ID --emoji 🔧 --quiet" "the new marker goes first"
-check "$(sed -n 2p "$WORK/rad.calls")" "patch react $RATCH_ID --emoji ✅ --undo --quiet" \
-    "…and the one it replaces is withdrawn in the same step"
+check "$(cat "$WORK/rad.calls")" "cob update --type xyz.radicle.patch --object $RATCH --message React" \
+    "one write on the patch COB"
+check "$(lines_of "$(cat "$WORK/rad.calls")")" 1 "one invocation: the replace is not two calls"
+check "$(sed -n 1p "$WORK/rad.actions")" \
+    "{\"type\":\"revision.react\",\"revision\":\"$RATCH_ROOT\",\"reaction\":\"🔧\",\"active\":true}" \
+    "the new marker goes first"
+check "$(sed -n 2p "$WORK/rad.actions")" \
+    "{\"type\":\"revision.react\",\"revision\":\"$RATCH_ROOT\",\"reaction\":\"✅\",\"active\":false}" \
+    "…and the one it replaces is withdrawn in the same op"
 contains "$OUT" "withdrawn=yes" "the report says what happened"
 contains "$OUT" "level=revision" "at the revision level"
 : >"$WORK/rad.calls"
-run "$PROJECT" rad_reaction 👀 🔧 "$RATCH_ID"
+: >"$WORK/rad.actions"
+run "$PROJECT" rad_reaction 👀 🔧 "$RATCH_ROOT"
 check "$RC" 1 "a marker which is not the state is refused"
 check "$(lines_of "$(cat "$WORK/rad.calls")")" 0 "…and nothing at all is written"
 : >"$WORK/rad.calls"
-run "$PROJECT" rad_reaction ✅ "" "$RATCH_ID"
+: >"$WORK/rad.actions"
+run "$PROJECT" rad_reaction ✅ "" "$RATCH_ROOT"
 check "$RC" 0 "an empty reaction takes the marker back"
-check "$(cat "$WORK/rad.calls")" "patch react $RATCH_ID --emoji ✅ --undo --quiet" "with the one call that does it"
-check "$(lines_of "$(cat "$WORK/rad.calls")")" 1 "and sets nothing"
+check "$(cat "$WORK/rad.calls")" "cob update --type xyz.radicle.patch --object $RATCH --message React" \
+    "with the one call that does it"
+check "$(cat "$WORK/rad.actions")" \
+    "{\"type\":\"revision.react\",\"revision\":\"$RATCH_ROOT\",\"reaction\":\"✅\",\"active\":false}" \
+    "…as the withdrawal alone, and it sets nothing"
 : >"$WORK/rad.calls"
-run "$PROJECT" rad_reaction ✅ "" "$REACT_ID"
-check "$RC" 1 "the issue level has no '--undo', so it refuses instead of pretending"
-err "$PROJECT" rad_reaction ✅ "" "$REACT_ID"
-contains "$OUT" "no --undo" "…and says why"
-check "$(lines_of "$(cat "$WORK/rad.calls")")" 0 "nothing is written"
+: >"$WORK/rad.actions"
+run "$PROJECT" rad_reaction ➖ "" "$REACT_ID"
+check "$RC" 0 "the issue level takes a marker back the same way"
+check "$(cat "$WORK/rad.calls")" "cob update --type xyz.radicle.issue --object $REACT --message React" \
+    "…through the same one call"
+check "$(cat "$WORK/rad.actions")" \
+    "{\"type\":\"comment.react\",\"id\":\"$REACT\",\"reaction\":\"➖\",\"active\":false}" \
+    "…which is the write 'rad issue react' cannot make"
 echo
 
 echo "AC30 a revision id names the patch COB that holds it"
 : >"$WORK/rad.calls"
+: >"$WORK/rad.actions"
 run "$PROJECT" rad_reaction "" 🔧 "$RATCH_REVISION"
 check "$RC" 0 "exit 0"
-check "$(cat "$WORK/rad.calls")" "patch react $RATCH_REVISION --emoji 🔧 --quiet" \
-    "the revision is handed to rad as it was given"
+check "$(cat "$WORK/rad.calls")" "cob update --type xyz.radicle.patch --object $RATCH --message React" \
+    "the revision is written against the COB that holds it"
+check "$(cat "$WORK/rad.actions")" \
+    "{\"type\":\"revision.react\",\"revision\":\"$RATCH_REVISION\",\"reaction\":\"🔧\",\"active\":true}" \
+    "and the action names that revision, in full"
 contains "$OUT" "level=revision" "and it is a revision of the patch"
 contains "$OUT" "item=patch:$RATCH_ID" "which the read found through the chain"
 : >"$WORK/rad.calls"
+: >"$WORK/rad.actions"
 run "$PROJECT" rad_reaction "" 👀 "$RATCH_ID" "$RATCH_COMMENT"
 check "$RC" 0 "exit 0"
-check "$(tail -1 "$WORK/rad.calls")" "patch comment $RATCH_ID --react $RATCH_COMMENT --emoji 👀 --quiet" \
-    "a comment of a patch is reacted to through 'rad patch comment --react'"
+check "$(cat "$WORK/rad.calls")" "cob update --type xyz.radicle.patch --object $RATCH --message React" \
+    "a comment of a patch is a write on the patch COB"
+check "$(cat "$WORK/rad.actions")" \
+    "{\"type\":\"revision.comment.react\",\"revision\":\"$RATCH_ROOT\",\"comment\":\"$RATCH_COMMENT\",\"reaction\":\"👀\",\"active\":true}" \
+    "…naming the comment and the revision the comment was made on"
 contains "$OUT" "level=comment" "reported as a comment of the revision"
 echo
 

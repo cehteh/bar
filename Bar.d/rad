@@ -173,11 +173,13 @@
 ###
 ### '<from>' is what the caller expects to be live there: omitted is no expectation at all, the empty
 ### string is 'no live marker of mine', anything else must be the state -- and a state which does not
-### match fails without writing anything.  A patch level transition takes '<from>' back in the same
-### step ('rad patch react --undo'), so the target ends with one live marker; the issue level cannot
-### ('rad issue react' has no '--undo' in rad 1.10.3), so there the transition is supersede-only and
-### the check is a guard, never a cleanup.  An empty '<to>' takes '<from>' back and sets nothing:
-### patch level only, and it needs '--from', because the expectation is what names the marker.
+### match fails without writing anything.  A transition takes '<from>' back in the same step, at
+### every level: the write is one 'rad cob update' whose action list carries the marker to set and the
+### one to withdraw, and rad lands that list as a single op, so the target ends with one live marker of
+### ours.  The typed commands are deliberately not used -- 'rad issue react' cannot take a marker back
+### at all ('--undo' is patch only in rad 1.10.3) and the patch commands would be a second code path
+### for the same effect.  An empty '<to>' takes '<from>' back and sets nothing, and it needs '--from',
+### because the expectation is what names the marker.
 ###
 ### 'rad_topic' opens the topic tree of that work in one action: it mints the name from the
 ### branch *class* and the description, resolves the clone and the freshest base, keeps '.worktrees/'
@@ -2178,21 +2180,20 @@ function rad_metadata_reactions ## <storage> <ref> <kind> <target> <nid> - our m
     ## in the chain (parent before child), never the op sha: an add and its undo land in the same
     ## second routinely.
     ##
+    ## Which ops are reaction ops is read from the payload's 'type' alone, never from the commit
+    ## subject: the write is 'rad cob update', which stores *our* message as the subject.
+    ##
     ## <kind> says which reaction of which COB is meant: 'comment' matches the op's 'id' (an issue's
     ## root comment carries the issue id, a comment its own), 'revision' matches 'revision' (the
     ## patch id is its root revision's id) and 'revision-comment' matches 'comment'.  <target> may be
     ## short: the payload carries the full id.  Prints '<position>US<emoji>US<active>US<op>' per
     ## survivor, oldest first.
     local storage="$1" ref="$2" kind="$3" target="$4" nid="$5"
-    local op mail subject payload type id revision comment emoji active candidate=""
+    local op mail payload type id revision comment emoji active candidate=""
     local -A survivor=()
     local -i pos=0
-    while IFS="$RAD_RS" read -r op mail subject; do
+    while IFS="$RAD_RS" read -r op mail; do
         [[ -n "$op" ]] || continue
-        case "$subject" in
-        React | 'React comment') ;;
-        *) continue ;;
-        esac
         [[ "$(rad_metadata_mail_nid "$mail")" == "$nid" ]] || continue
         payload="$(git --git-dir="$storage" show "$op:0" 2>/dev/null)" || continue
         ## The fields over 'RAD_US', not over a tab: a tab is *whitespace* to 'read' and empty fields
@@ -2218,7 +2219,7 @@ function rad_metadata_reactions ## <storage> <ref> <kind> <target> <nid> - our m
         survivor["$emoji"]="$pos${RAD_US}$active${RAD_US}$op"
         pos=$(( pos + 1 ))
     done < <(git --git-dir="$storage" log --reverse --topo-order \
-        --format="%H${RAD_RS}%ae${RAD_RS}%s" "$ref" 2>/dev/null)
+        --format="%H${RAD_RS}%ae" "$ref" 2>/dev/null)
 
     for emoji in ${survivor[@]+"${!survivor[@]}"}; do
         printf '%s%s%s%s%s\n' "${survivor[$emoji]%%"$RAD_US"*}" "$RAD_US" "$emoji" "$RAD_US" \
@@ -2276,12 +2277,59 @@ function rad_metadata_self
     printf '%s' "$did"
 }
 
+function rad_reaction_full_id ## <storage> <id> - the full op id a reaction action has to name
+{
+    ## 'rad cob update' writes the ids into the action literally and the store validates them ('invalid
+    ## length (have 7, want 40)'), while a caller may name a comment or a revision in shorthand: the
+    ## shorthand is resolved against the storage the state was read from.  A word which resolves to
+    ## nothing and is not a full id is refused here, where the error can name it, instead of by rad.
+    local storage="$1" id="$2" full=""
+    full="$(git --git-dir="$storage" rev-parse --verify --quiet "${id}^{commit}" 2>/dev/null)" || full=""
+    [[ -n "$full" ]] || full="$id"
+    if (( ${#full} != 40 )); then
+        error "'$id' is no op id of this repository: a reaction action names a full 40 hex comment or revision"
+        return 1
+    fi
+    printf '%s' "$full"
+}
+
+function rad_reaction_comment_revision ## <storage> <comment> - the revision that comment belongs to
+{
+    ## A comment of a revision is reacted to against the revision it was written on, and the comment
+    ## op carries it: rad writes the 'revision' field into a 'revision.comment' payload itself, and
+    ## the action has to name the same one or the store refuses the pair.
+    local storage="$1" comment="$2" revision=""
+    revision="$(git --git-dir="$storage" show "$comment:0" 2>/dev/null | jq -r '.revision // ""')" || revision=""
+    if [[ -z "$revision" ]]; then
+        error "the comment '$comment' names no revision: a comment of a patch carries one"
+        return 1
+    fi
+    printf '%s' "$revision"
+}
+
+function rad_reaction_action ## <emoji> <active> <id> <revision> <comment> - one 'cob update' action
+{
+    ## The action is the payload rad's own commands write for a reaction, so the store reads our op
+    ## back exactly like one of its own: a comment id for the issue level, the revision for a
+    ## revision, and both for a comment of one.  Fields the target has no use for are left out.
+    local emoji="$1" active="$2" id="$3" revision="$4" comment="$5" payload=""
+    payload="$(jq -cn --arg reaction "$emoji" --argjson active "$active" --arg id "$id" \
+        --arg revision "$revision" --arg comment "$comment" \
+        'if $comment != "" then {type:"revision.comment.react", revision:$revision, comment:$comment}
+         elif $revision != "" then {type:"revision.react", revision:$revision}
+         else {type:"comment.react", id:$id} end | .reaction = $reaction | .active = $active')" || {
+        error 'could not build the reaction action'
+        return 1
+    }
+    printf '%s' "$payload"
+}
+
 function rad_reaction_usage ## [reason] - usage on stderr
 {
     [[ -n "${1:-}" ]] && printf 'rad_reaction: %s\n' "$1" >&2
     printf 'usage: rad_reaction [--from <emoji>] [--repo <rid|path>] <to> <target>..\n' >&2
     printf '       rad_reaction <from> <to> <target>.. [--repo <rid|path>]\n' >&2
-    printf '       <to>     the marker to set; empty withdraws <from> and sets nothing (patch only)\n' >&2
+    printf '       <to>     the marker to set; empty withdraws <from> and sets nothing\n' >&2
     printf '       <from>   the marker the caller expects there; omitted is no expectation at all,\n' >&2
     printf '                the empty string is "no live marker of mine"\n' >&2
     printf '       <target> <issue-id> (the issue itself), <issue-id> <comment-id>,\n' >&2
@@ -2295,13 +2343,14 @@ function rad_reaction ## see the module header
     ## happens only when what the caller expects is what the store reduces.  rad has no way to set a
     ## reaction to a state, only to add one, so 'from -> to' is what a transition is.
     ##
-    ## Patch level withdraws <from> in the same step ('--undo' exists there), so the target ends with
-    ## one live marker.  Issue level cannot: 'rad issue react' has no '--undo' in rad 1.10.3, so the
-    ## transition is supersede-only and the check is a guard, never a cleanup -- the older marker
-    ## stays in the chain, and the newest live one is what a reader resolves.
-    local -a args=() positional=() targets=() setcall=() dropcall=()
+    ## The write is one 'rad cob update' at every level: the action file carries the marker to set and
+    ## the one to withdraw, rad lands the pair as a single op, and the target ends with one live marker
+    ## of ours.  The typed commands are not used -- 'rad issue react' can only add, and 'rad patch
+    ## react'/'rad patch comment --react' would be a second code path for the same effect.
+    local -a args=() positional=() targets=() actions=()
     local raw value from="" to="" repo="" kind="" level="" storage="" ref="" rid="" nid="" type=""
     local state="" live="" withdrawn="" target="" pos emoji active op
+    local typename="" action_id="" action_revision="" action_comment="" action_file="" rc=0
     local from_given=""
     local -i i=0 count=0
 
@@ -2416,13 +2465,6 @@ function rad_reaction ## see the module header
         fi
     fi
 
-    ## Taking a marker back is a patch level act: 'rad issue react' has no '--undo'.  Asked before the
-    ## state is even read -- no state would make it possible.
-    if [[ -z "$to" && "$type" != patch ]]; then
-        error "a reaction on an issue or one of its comments cannot be taken back: '$RAD_BIN issue react' has no --undo"
-        return 1
-    fi
-
     ## Our own state on that target, newest survivor last.
     state="$(rad_metadata_reactions "$storage" "$ref" "$kind" "$target" "$nid")"
     live=""
@@ -2439,28 +2481,49 @@ function rad_reaction ## see the module header
         return 1
     fi
 
-    ## The write hands rad the target the caller named (short or full, 'rad' resolves both); the COB
-    ## was only resolved to read the state back.
-    case "$level:$type" in
-    root:issue) setcall=( issue react "${targets[0]}" --to "${targets[0]}" --emoji "$to" --quiet ) ;;
-    comment:issue) setcall=( issue react "${targets[0]}" --to "${targets[1]}" --emoji "$to" --quiet ) ;;
-    revision:patch) setcall=( patch react "${targets[0]}" --emoji "$to" --quiet ) ;;
-    comment:patch) setcall=( patch comment "${targets[0]}" --react "${targets[1]}" --emoji "$to" --quiet ) ;;
+    ## Which COB type the action belongs to, and the ids it has to name in full: 'rad cob update'
+    ## stores what it is handed, so what the caller named in shorthand is resolved here (see
+    ## rad_reaction_full_id).  The object itself is the COB the state was read from -- the issue, or
+    ## the patch whose root revision is the id the caller used.
+    case "$type" in
+    issue) typename=xyz.radicle.issue ;;
+    patch) typename=xyz.radicle.patch ;;
     esac
     case "$level:$type" in
-    revision:patch) dropcall=( patch react "${targets[0]}" --emoji "$from" --undo --quiet ) ;;
-    comment:patch) dropcall=( patch comment "${targets[0]}" --react "${targets[1]}" --emoji "$from" --undo --quiet ) ;;
-    *) dropcall=() ;;
+    root:issue | comment:issue)
+        action_id="$(rad_reaction_full_id "$storage" "$target")" || return $?
+        ;;
+    revision:patch)
+        action_revision="$(rad_reaction_full_id "$storage" "$target")" || return $?
+        ;;
+    comment:patch)
+        action_comment="$(rad_reaction_full_id "$storage" "$target")" || return $?
+        action_revision="$(rad_reaction_comment_revision "$storage" "$action_comment")" || return $?
+        ;;
     esac
 
-    ## Set first, take the old one back after: an interrupted step leaves the newer marker live, which
-    ## is the state a reader resolves -- the order the reaction loop already proved in production.
+    ## Set first, take the old one back after: both actions ride the same op, the newer marker is the
+    ## one a reader resolves, and a transition therefore leaves one live marker of ours behind -- at
+    ## every level, which is what the typed commands cannot do for an issue.
     if [[ -n "$to" ]]; then
-        rad_metadata_rad "$repo" "${setcall[@]}" || return $?
+        actions+=( "$(rad_reaction_action "$to" true "$action_id" "$action_revision" "$action_comment")" ) ||
+            return $?
     fi
-    if (( ${#dropcall[@]} )) && [[ -n "$from" && "$from" == "$live" ]]; then
-        rad_metadata_rad "$repo" "${dropcall[@]}" || return $?
+    if [[ -n "$from" && "$from" == "$live" ]]; then
+        actions+=( "$(rad_reaction_action "$from" false "$action_id" "$action_revision" "$action_comment")" ) ||
+            return $?
         withdrawn=yes
+    fi
+    if (( ${#actions[@]} )); then
+        action_file="$(mktemp)" || {
+            error 'no temporary file for the action list'
+            return 1
+        }
+        printf '%s\n' "${actions[@]}" >"$action_file"
+        rad_metadata_rad "$repo" cob update --type "$typename" --object "$RAD_METADATA_ID" \
+            --message React "$action_file" >/dev/null || rc=$?
+        rm -f "$action_file"
+        (( rc == 0 )) || return $rc
     fi
 
     printf 'applied reaction item=%s:%s level=%s target=%s from=%s to=%s withdrawn=%s\n' \
