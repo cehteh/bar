@@ -21,6 +21,7 @@
 ###                                                          '*unassign:' proposals of one item
 ###   bar rad_topic <class> "<description>"                  open the topic tree of an item
 ###   bar rad_reaction [--from <emoji>] <to> <target>..      set/transition/withdraw our own marker
+###   bar rad_rm_label <item> <glob>..                      remove the stored labels a glob matches
 ###   bar rad_import                                         import this repository into radicle
 ###   bar rad_merge_accepted_prs [--dry-run] [--no-fetch] [--max <n>]
 ###                                                          merge the patches a delegate accepted
@@ -145,7 +146,7 @@
 ### reader is the only way in.  These are not rules -- they are the API a rule (or the daemon the
 ### project builds elsewhere) composes, which is why they are named like the plumbing they are:
 ###
-###   bar rad_set_label <item> <add> [<delete>]..      one 'rad issue|patch label' write
+###   bar rad_set_label <item> [<add>] [<delete>]..    one 'rad issue|patch label' write
 ###   bar rad_assign <item> <did|alias>                one 'rad issue|patch assign' add
 ###   bar rad_unassign <item> <did|alias>              one 'rad issue|patch assign' delete
 ###   bar rad_apply_from_comments <item>.. [--query <key>].. [--repo <rid|path>] [--trust <spec>]..
@@ -304,6 +305,16 @@ rule rad_reaction: -
 ## under any other identity refuses before it writes.  '--dry-run' answers what is ready and writes
 ## nothing.  Exit 0 answered, 1 refused or could not answer, 2 usage, 3 no data.
 rule rad_merge_accepted_prs: -
+# helper: rad_rm_label | remove every stored label of an item which matches one of the globs, in one write | rad_rm_label <item> <glob>.. [--repo <rid,path>] | one 'removed label item=<issue,patch>:<id> delete=<label>..' line, or 'no label item=…' when no stored label matches
+## The removal half of the write layer's label effect: the labels the item carries are read fresh
+## ('rad <type> list', the mutation target, never remembered) and every one matching a glob goes out
+## in a single 'rad <type> label --delete' invocation.  A glob matches the whole stored label,
+## anchored at both ends, with '*' and '?': 'pr:*' removes 'pr:<id>' and never 'xpr:<id>', and '*'
+## removes every label -- the chain slot included, an explicit act.  A glob matching nothing writes
+## nothing and is reported: nothing to remove is an answer, not a failure.  No identity is resolved,
+## a glob matches labels and never identities.  Exit 0 removed (or nothing matched), 1 the write 'rad'
+## refused or could not answer, 2 usage.
+rule rad_rm_label: -
 
 # --- rad_import: getting a repository onto radicle ----------------------------------------------
 
@@ -1828,18 +1839,21 @@ function rad_metadata_item
 function rad_set_label_usage ## [reason] - usage on stderr
 {
     [[ -n "${1:-}" ]] && printf 'rad_set_label: %s\n' "$1" >&2
-    printf 'usage: rad_set_label <item> <add> [<delete>].. [--repo <rid|path>]\n' >&2
+    printf 'usage: rad_set_label <item> [<add>] [<delete>].. [--repo <rid|path>]\n' >&2
     printf '       <item> issue:<id>, patch:<id> or a bare issue id\n' >&2
+    printf '       an empty <add> adds nothing: one label to add or one to delete is required\n' >&2
 }
 
-function rad_set_label ## <item> <add> [<delete>].. [--repo <rid|path>] - one 'rad <type> label'
+function rad_set_label ## <item> [<add>] [<delete>].. [--repo <rid|path>] - one 'rad <type> label'
 {
     ## One label added, and any number of labels deleted in the same write: that is what makes an
-    ## item carry one chain state at a time (the new one in, the previous one out).  A label the item
-    ## does not carry is rad's business, not this function's -- it hands rad exactly what it was
-    ## given and reports what it did.
+    ## item carry one chain state at a time (the new one in, the previous one out).  '<add>' may be
+    ## the empty word, which is no label at all -- a removal alone (a lone '*rmlabel:' clearing the
+    ## chain slot with no successor) is the same write with nothing to add, and at least one of the
+    ## two has to be given.  A label the item does not carry is rad's business, not this function's
+    ## -- it hands rad exactly what it was given and reports what it did.
     local -a deletes=() args=()
-    local raw value item="" add="" repo=""
+    local raw value item="" add="" seenadd="" repo=""
     for raw in "$@"; do
         if [[ "$raw" == --repo=* ]]; then
             args+=(--repo "${raw#--repo=}")
@@ -1871,27 +1885,114 @@ function rad_set_label ## <item> <add> [<delete>].. [--repo <rid|path>] - one 'r
         *)
             if [[ -z "$item" ]]; then
                 item="$raw"
-            elif [[ -z "$add" ]]; then
+            elif [[ -z "$seenadd" ]]; then
                 add="$raw"
+                seenadd=1
             else
                 deletes+=( "$raw" )
             fi
             ;;
         esac
     done
-    if [[ -z "$item" || -z "$add" ]]; then
-        rad_set_label_usage "an item and the label to add are required"
+    if [[ -z "$item" || ( -z "$add" && ${#deletes[@]} -eq 0 ) ]]; then
+        rad_set_label_usage "an item, and a label to add or one to delete, are required"
         return 2
     fi
     rad_metadata_item "$item"
-    local -a call=("$RAD_METADATA_SUB" label "$RAD_METADATA_ID" --quiet "--add=$add")
+    local -a call=("$RAD_METADATA_SUB" label "$RAD_METADATA_ID" --quiet)
+    [[ -n "$add" ]] && call+=( "--add=$add" )
     for value in ${deletes[@]+"${deletes[@]}"}; do
         call+=( "--delete=$value" )
     done
     rad_metadata_rad "$repo" "${call[@]}" || return $?
-    printf 'applied label item=%s add=%s' "$item" "$add"
+    printf 'applied label item=%s' "$item"
+    [[ -n "$add" ]] && printf ' add=%s' "$add"
     (( ${#deletes[@]} )) && printf ' delete=%s' "${deletes[*]}"
     printf '\n'
+}
+
+function rad_rm_label_usage ## [reason] - usage on stderr
+{
+    [[ -n "${1:-}" ]] && printf 'rad_rm_label: %s\n' "$1" >&2
+    printf 'usage: rad_rm_label <item> <glob>.. [--repo <rid|path>]\n' >&2
+    printf '       <item> issue:<id>, patch:<id> or a bare issue id\n' >&2
+    printf "       a glob matches the whole stored label, anchored at both ends ('*' and '?')\n" >&2
+}
+
+function rad_rm_label ## <item> <glob>.. [--repo <rid|path>] - remove the labels a glob matches
+{
+    ## The removal half of rad_set_label: what the item carries now is read fresh ('rad <type> list',
+    ## the mutation target, never remembered) and every stored label matching one of the globs goes
+    ## out in a single write.  A glob matches the whole stored label, anchored at both ends, so
+    ## 'pr:*' removes 'pr:<id>' and never 'xpr:<id>', and '*' removes every label -- the chain slot
+    ## included, which is an explicit act.  A glob which matches nothing writes nothing and says so:
+    ## nothing to remove is an answer, not a failure.  No identity is resolved -- a glob matches
+    ## labels, never identities.
+    local -a globs=() args=() removed=() call=()
+    local raw item="" repo="" label="" glob="" stored=""
+    for raw in "$@"; do
+        if [[ "$raw" == --repo=* ]]; then
+            args+=(--repo "${raw#--repo=}")
+        else
+            args+=("$raw")
+        fi
+    done
+    local -i i=0 count=${#args[@]}
+    while (( i < count )); do
+        raw="${args[i]}"
+        i=$(( i + 1 ))
+        case "$raw" in
+        -h | --help)
+            rad_rm_label_usage 2>&1
+            return 0
+            ;;
+        --repo)
+            if (( i >= count )) || [[ -z "${args[i]}" ]]; then
+                rad_rm_label_usage "'--repo' needs a non-empty value"
+                return 2
+            fi
+            repo="${args[i]}"
+            i=$(( i + 1 ))
+            ;;
+        -*)
+            rad_rm_label_usage "unknown argument '$raw'"
+            return 2
+            ;;
+        *)
+            if [[ -z "$item" ]]; then
+                item="$raw"
+            else
+                globs+=( "$raw" )
+            fi
+            ;;
+        esac
+    done
+    if [[ -z "$item" || ${#globs[@]} -eq 0 ]]; then
+        rad_rm_label_usage "an item and at least one glob are required"
+        return 2
+    fi
+    rad_metadata_item "$item"
+    stored="$(rad_metadata_labels "$repo" "$RAD_METADATA_SUB" "$RAD_METADATA_ID")" || return $?
+    while IFS= read -r label; do
+        [[ -n "$label" ]] || continue
+        for glob in "${globs[@]}"; do
+            # shellcheck disable=2053
+            if [[ "$label" == $glob ]]; then
+                removed+=( "$label" )
+                break
+            fi
+        done
+    done <<<"$stored"
+    if (( ${#removed[@]} == 0 )); then
+        printf 'no label item=%s (nothing the item carries matches %s)\n' "$item" "${globs[*]}"
+        return 0
+    fi
+    call=( "$RAD_METADATA_SUB" label "$RAD_METADATA_ID" --quiet )
+    for label in "${removed[@]}"; do
+        call+=( "--delete=$label" )
+    done
+    rad_metadata_rad "$repo" "${call[@]}" || return $?
+    printf 'removed label item=%s delete=%s\n' "$item" "${removed[*]}"
 }
 
 function rad_assign_usage ## [reason] - usage on stderr

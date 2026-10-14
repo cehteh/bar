@@ -1667,6 +1667,7 @@ MODULE API/RULES
                                                              '*unassign:' proposals of one item
       bar rad_topic <class> "<description>"                  open the topic tree of an item
       bar rad_reaction [--from <emoji>] <to> <target>..      set/transition/withdraw our own marker
+      bar rad_rm_label <item> <glob>..                      remove the stored labels a glob matches
       bar rad_import                                         import this repository into radicle
       bar rad_merge_accepted_prs [--dry-run] [--no-fetch] [--max <n>]
                                                              merge the patches a delegate accepted
@@ -1791,7 +1792,7 @@ MODULE API/RULES
     reader is the only way in.  These are not rules -- they are the API a rule (or the daemon the
     project builds elsewhere) composes, which is why they are named like the plumbing they are:
     
-      bar rad_set_label <item> <add> [<delete>]..      one 'rad issue|patch label' write
+      bar rad_set_label <item> [<add>] [<delete>]..    one 'rad issue|patch label' write
       bar rad_assign <item> <did|alias>                one 'rad issue|patch assign' add
       bar rad_unassign <item> <did|alias>              one 'rad issue|patch assign' delete
       bar rad_apply_from_comments <item>.. [--query <key>].. [--repo <rid|path>] [--trust <spec>]..
@@ -2138,12 +2139,27 @@ MODULE API/RULES
       rad_set_label_usage [reason]
         usage on stderr
 
-      rad_set_label <item> <add> [<delete>].. [--repo <rid|path>]
+      rad_set_label <item> [<add>] [<delete>].. [--repo <rid|path>]
         one 'rad <type> label'
         One label added, and any number of labels deleted in the same write: that is what makes an
-        item carry one chain state at a time (the new one in, the previous one out).  A label the item
-        does not carry is rad's business, not this function's -- it hands rad exactly what it was
-        given and reports what it did.
+        item carry one chain state at a time (the new one in, the previous one out).  '<add>' may be
+        the empty word, which is no label at all -- a removal alone (a lone '*rmlabel:' clearing the
+        chain slot with no successor) is the same write with nothing to add, and at least one of the
+        two has to be given.  A label the item does not carry is rad's business, not this function's
+        -- it hands rad exactly what it was given and reports what it did.
+
+      rad_rm_label_usage [reason]
+        usage on stderr
+
+      rad_rm_label <item> <glob>.. [--repo <rid|path>]
+        remove the labels a glob matches
+        The removal half of rad_set_label: what the item carries now is read fresh ('rad <type> list',
+        the mutation target, never remembered) and every stored label matching one of the globs goes
+        out in a single write.  A glob matches the whole stored label, anchored at both ends, so
+        'pr:*' removes 'pr:<id>' and never 'xpr:<id>', and '*' removes every label -- the chain slot
+        included, which is an explicit act.  A glob which matches nothing writes nothing and says so:
+        nothing to remove is an answer, not a failure.  No identity is resolved -- a glob matches
+        labels, never identities.
 
       rad_assign_usage [reason]
         usage on stderr
@@ -2393,6 +2409,16 @@ MODULE API/RULES
         and the merge is a push into the canonical branch, which only a delegate may make: an invocation
         under any other identity refuses before it writes.  '--dry-run' answers what is ready and writes
         nothing.  Exit 0 answered, 1 refused or could not answer, 2 usage, 3 no data.
+
+      rad_rm_label
+        The removal half of the write layer's label effect: the labels the item carries are read fresh
+        ('rad <type> list', the mutation target, never remembered) and every one matching a glob goes out
+        in a single 'rad <type> label --delete' invocation.  A glob matches the whole stored label,
+        anchored at both ends, with '*' and '?': 'pr:*' removes 'pr:<id>' and never 'xpr:<id>', and '*'
+        removes every label -- the chain slot included, an explicit act.  A glob matching nothing writes
+        nothing and is reported: nothing to remove is an answer, not a failure.  No identity is resolved,
+        a glob matches labels and never identities.  Exit 0 removed (or nothing matched), 1 the write 'rad'
+        refused or could not answer, 2 usage.
 
   rad_rules - The rules of the 'rad' module which everything else may depend on before a rulefile is read:
     the cheap guards of a radicle checkout and the hook into 'activate'.
