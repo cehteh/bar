@@ -39,7 +39,8 @@
 #   AC23 '--last' is per key (a key nobody asked for is not answered), and a newest block nobody can
 #        be attributed to is skipped so that an older trusted block still applies
 #   AC24 'rad_set_label' makes exactly one 'rad issue|patch label' write with the argv it promises,
-#        travels a RID as '-r', reports a refusal rad made and refuses a usage error
+#        travels a RID as '-r', reports a refusal rad made and refuses a usage error; an empty
+#        '<add>' is a removal alone -- no '--add' in the write, no 'add=' in the report
 #   AC25 'rad_assign'/'rad_unassign' resolve an alias through the facts command before writing the
 #        DID, take a DID as it stands, and refuse an alias nobody knows without writing anything
 #   AC26 'rad_apply_from_comments' applies the trusted proposals of an item: the new label carries
@@ -58,6 +59,9 @@
 #        against the revision the comment itself names
 #   AC31 what the store would refuse is refused before any call (a two codepoint emoji, a word, an
 #        empty reaction without an expectation), and so is a usage error or an id nobody holds
+#   AC32 'rad_rm_label' removes every stored label a glob matches in one write: the glob is anchored
+#        at both ends, a glob which matches nothing writes nothing and is reported (exit 0), the
+#        '<item>' forms and '--repo' are the write layer's, and the helper is registered
 
 set -euo pipefail
 
@@ -728,6 +732,17 @@ check "$RC" 1 "a write rad refuses is the exit code"
 err "$PROJECT" rad_set_label "issue:$ISSUE_ID" improvement
 contains "$OUT" "failed" "and the reason comes from rad"
 rm -f "$WORK/refuse"
+run "$PROJECT" rad_set_label "issue:$ISSUE_ID" "" "pr:$PATCH"
+check "$RC" 0 "an empty add is a write of its own: a removal alone"
+contains "$OUT" "applied label item=issue:$ISSUE_ID delete=pr:$PATCH" "the report names the delete and no add"
+check "$(lines_of "$OUT")" 1 "one line, as ever"
+check "$(tail -1 "$WORK/rad.calls")" "issue label $ISSUE_ID --quiet --delete=pr:$PATCH" \
+    "…and the write carries no '--add' at all"
+run "$PROJECT" rad_set_label "issue:$ISSUE_ID" "" "pr:$PATCH" "pr:$OTHER"
+check "$(tail -1 "$WORK/rad.calls")" "issue label $ISSUE_ID --quiet --delete=pr:$PATCH --delete=pr:$OTHER" \
+    "every delete follows, in the order the caller gave them"
+run "$PROJECT" rad_set_label "issue:$ISSUE_ID" ""
+check "$RC" 2 "an empty add with nothing to delete is still a usage error"
 run "$PROJECT" rad_set_label "issue:$ISSUE_ID"
 check "$RC" 2 "no label at all is a usage error"
 run "$PROJECT" rad_set_label "issue:$ISSUE_ID" idea --nonsense
@@ -947,6 +962,54 @@ run "$PROJECT" rad_reaction "" "➖" "zzzzzzz"
 check "$RC" 3 "an id nobody holds is no data"
 run "$PROJECT" rad_reaction "" 👀 "$REACT_ID" --nonsense
 check "$RC" 2 "an unknown argument"
+echo
+
+echo "AC32 rad_rm_label removes the stored labels a glob matches, in one write"
+printf 'idea, pr:%s, pr:%s, xpr:%s' "$PATCH" "$OTHER" "$PATCH" >"$WORK/labels.issue/$ISSUE_ID"
+: >"$WORK/rad.calls"
+run "$PROJECT" rad_rm_label "issue:$ISSUE_ID" 'pr:*'
+check "$RC" 0 "exit 0"
+check "$(lines_of "$OUT")" 1 "one line, the report"
+contains "$OUT" "removed label item=issue:$ISSUE_ID delete=pr:$PATCH pr:$OTHER" \
+    "every label the glob matched is named, and no other"
+check "$(lines_of "$(cat "$WORK/rad.calls")")" 1 "exactly one 'rad' invocation"
+check "$(cat "$WORK/rad.calls")" "issue label $ISSUE_ID --quiet --delete=pr:$PATCH --delete=pr:$OTHER" \
+    "with one delete per removed label, and nothing else"
+printf 'xpr:%s' "$PATCH" >"$WORK/labels.issue/$ISSUE_ID"
+: >"$WORK/rad.calls"
+run "$PROJECT" rad_rm_label "issue:$ISSUE_ID" 'pr:*'
+check "$RC" 0 "a glob which matches nothing is an answer, not a failure"
+check "$(lines_of "$(cat "$WORK/rad.calls")")" 0 "nothing is written"
+contains "$OUT" "no label item=issue:$ISSUE_ID" "and the empty answer says so"
+contains "$OUT" "pr:*" "naming the glob it looked for"
+absent "$OUT" "xpr:$PATCH" "the glob is anchored at both ends: 'pr:*' never takes 'xpr:…'"
+printf 'idea, pr:%s' "$PATCH" >"$WORK/labels.patch/$PATCH_ID"
+: >"$WORK/rad.calls"
+run "$PROJECT" rad_rm_label "patch:$PATCH_ID" '*'
+check "$RC" 0 "'*' is a glob like any other"
+contains "$OUT" "removed label item=patch:$PATCH_ID delete=idea pr:$PATCH" \
+    "the chain slot goes out with the rest -- an explicit act"
+check "$(cat "$WORK/rad.calls")" "patch label $PATCH_ID --quiet --delete=idea --delete=pr:$PATCH" \
+    "…through 'rad patch label', in the one write"
+printf 'idea' >"$WORK/labels.issue/$ISSUE_ID"
+: >"$WORK/rad.calls"
+run "$PROJECT" rad_rm_label "$ISSUE_ID" 'idea' --repo "$RID"
+check "$RC" 0 "a bare id is an issue and a RID may name the repository"
+check "$(tail -1 "$WORK/rad.calls")" "issue label $ISSUE_ID --quiet --delete=idea -r $RID" \
+    "…which travels as '-r'"
+run "$PROJECT" rad_rm_label "issue:$ISSUE_ID"
+check "$RC" 2 "a glob is required"
+run "$PROJECT" rad_rm_label
+check "$RC" 2 "so is an item"
+run "$PROJECT" rad_rm_label "issue:$ISSUE_ID" 'pr:*' --nonsense
+check "$RC" 2 "an unknown argument is a usage error"
+run "$PROJECT" rad_rm_label -h
+check "$RC" 0 "'-h' is the usage on stdout"
+contains "$OUT" "usage: rad_rm_label" "…which says how to call it"
+run "$PROJECT" helpers
+contains "$OUT" "rad_rm_label" "the repertoire lists the removal half"
+run "$PROJECT" helpers --check
+check "$RC" 0 "and the registration guard passes with it"
 echo
 
 echo
