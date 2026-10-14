@@ -1430,6 +1430,18 @@ MODULE API/RULES
 
     Functions:
 
+      init_install_modules <origin Bar.d> <target Bar.d>
+        installs the modules every bar needs
+        Only the modules which are loaded on every startup: 'std_lib' and 'rule_lib' (both
+        required by bar itself) and the '*_rules'.  Everything else is vendored on demand when a
+        rule first names it, which is what 'init_deps' does right after the installation.
+
+      init_deps - completes a vendored 'Bar.d' with the modules the Barf really needs
+        'bar init' installs the mandatory modules only ('init_install_modules'), this walks the
+        rules of the local 'Barf' and vendors every module they (transitively) require from the
+        installation bar was run from.  Run it again after the Barf grew a dependency to pick up
+        the modules it now needs.
+
       init_install [prefix]
         install links in [prefix] or '~/.local'.
         Bar will usually exist somewhere in a users home directory where it got checked
@@ -1444,12 +1456,21 @@ MODULE API/RULES
     Rules:
 
       init
-        Initialize bar in a workdir. This copies the main 'bar' script, a default 'Barf' and all
-        'Bar.d/' modules to current directory. When the workdir is a git repository then
-        '.gitignore' is updated to exclude the files and directories 'bar' will use for
-        temporary/testing storage. A user may edit the 'Barf' file to suit the project/personal
-        preference.  Unneeded modules in 'Bar.d' can be deleted. When that is done the new/changed
-        files should be committed to version control.
+        Initialize bar in a workdir. This copies the main 'bar' script, a default 'Barf' and the modules
+        bar loads on every startup ('std_lib', 'rule_lib' and the '*_rules') to the current directory,
+        then 'init_deps' installs the modules the new 'Barf' needs.  Every other module is vendored
+        from the installation the first time a rule names it, so a 'Bar.d/' which was trimmed on
+        purpose keeps working.  When the workdir is a git repository then '.gitignore' is updated to
+        exclude the files and directories 'bar' will use for temporary/testing storage.  A user may
+        edit the 'Barf' file to suit the project/personal preference, run 'init_deps' after that and
+        delete modules from 'Bar.d/' which are not needed.  When that is done the new/changed files
+        should be committed to version control.
+
+      init_deps
+        Install the modules the current 'Barf' needs into the vendored 'Bar.d'.  Rules which name a
+        module (as a dependency or in a 'require' line of their body) get it vendored from the
+        installation bar was run from, transitively.  Modules which are already there are left
+        untouched, this only ever adds.
 
       init_update_existing
         Updates a initialized working tree. That is 'bar' itself will be updated when a newer

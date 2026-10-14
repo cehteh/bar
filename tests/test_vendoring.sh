@@ -22,6 +22,7 @@
 #   AC3  an existing module is never overwritten, no temporary file is left behind
 #   AC4  BAR_INSTALL_DEPS walks the deps and the 'require' lines of the rules and vendors what
 #        they need (transitively), and does nothing when it is not set
+#   AC5  'bar init' installs the mandatory modules and completes the tree through init_deps
 #   AC6  without an origin a missing module stays a failure and nothing is written
 
 set -euo pipefail
@@ -191,6 +192,39 @@ check "$RC" "0" "AC4: BAR_INSTALL_DEPS=true still runs"
     || fail "AC4: 'lock' (required by testdir) was not vendored"
 [[ -f "$WORK/p4/Bar.d/memodb" ]] && pass "AC4: a module a rule body requires was vendored" \
     || fail "AC4: 'memodb' (required in a rule body) was not vendored"
+
+# --------------------------------------------------------------------------------------------
+# AC5 'bar init' installs the mandatory modules and completes the tree
+# --------------------------------------------------------------------------------------------
+mkdir -p "$WORK/p5"
+INIT_RC=0
+INIT_OUT="$(cd "$WORK/p5" && PATH="$ORIGIN/bin:$PATH" bar init 2>&1)" || INIT_RC=$?
+check "$INIT_RC" "0" "AC5: 'bar init' succeeds"
+module=""
+for module in $MANDATORY_MODULES; do
+    [[ -f "$WORK/p5/Bar.d/$module" ]] && pass "AC5: '$module' was installed" \
+        || fail "AC5: '$module' is missing"
+done
+[[ -f "$WORK/p5/bar" && -f "$WORK/p5/Barf" ]] && pass "AC5: bar and Barf were installed" \
+    || fail "AC5: bar or Barf is missing"
+# the '*_rules' are always installed
+for module in "$ORIGIN/share/bar/Bar.d/"*_rules; do
+    [[ -f "$WORK/p5/Bar.d/${module##*/}" ]] || fail "AC5: '${module##*/}' (a '*_rules' module) is missing"
+done
+pass "AC5: every '*_rules' module was installed"
+# but not the whole Bar.d: init_deps completes the tree from the Barf instead
+origin_modules="$(find "$ORIGIN/share/bar/Bar.d" -maxdepth 1 -type f | wc -l)"
+project_modules="$(find "$WORK/p5/Bar.d" -maxdepth 1 -type f | wc -l)"
+if (( project_modules < origin_modules )); then
+    pass "AC5: 'bar init' did not copy the whole Bar.d ($project_modules < $origin_modules modules)"
+else
+    fail "AC5: 'bar init' copied the whole Bar.d ($project_modules >= $origin_modules modules)"
+fi
+[[ -f "$WORK/p5/Bar.d/testdir" ]] && pass "AC5: init_deps vendored a module the Barf deps need" \
+    || fail "AC5: init_deps vendored nothing ('testdir' missing)"
+INIT_RC=0
+INIT_OUT="$(cd "$WORK/p5" && PATH="$ORIGIN/bin:$PATH" ./bar true 2>&1)" || INIT_RC=$?
+check "$INIT_RC" "0" "AC5: the initialized project runs on its own"
 
 # --------------------------------------------------------------------------------------------
 # AC6 without an origin a missing module stays a failure and nothing is written
