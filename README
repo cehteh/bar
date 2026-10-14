@@ -3663,12 +3663,32 @@ MAIN API
         [rule [arguments..]] - Target rule with arguments.
                                Default: MAIN
 
+      bar_origin_dir - the 'Bar.d' of the installation bar was run from, when it is not the one in use
+        A project may carry its own (vendored) 'Bar.d', then the installation bar was run from is
+        where modules missing from the project are taken from.  When bar runs from its
+        installation there is no origin.  'please' has no vendored copy either: its modules live
+        in a single, absolute directory.
+
+      bar_vendor_modules <modpath>
+        installs a module of Bar.d which is missing from the origin, prints what it installed
+        <modpath> - The path the module would have in 'Bar.d' (a glob is expanded there).
+        Copies the module(s) from the origin installation into 'Bar.d'.  An existing module is
+        never touched (that is what '--update' of the init rules is for) and the origin is never
+        written to, installing only ever adds a copy here.  Prints the installed paths, returns
+        non-zero when there is no origin, the name is not a module of this 'Bar.d' or the origin
+        does not have it either.
+
       require [--opt] [modules..]
         Loads modules.
         [--opt]     - Make the modules optional, when they do not exist then no warning is emitted
                       and no failure returned.
         [modules..] - List of module names to be loaded. Modules are loaded only once, further
-                      attempts to load it will be a no-op.
+                      attempts to load it will be a no-op.  A name may be a glob which expands
+                      to several modules.
+        A module which is missing from the 'Bar.d' in use is taken from the installation bar was
+        run from (see :func:`bar_vendor_modules`) and loaded from there.  When there is no origin
+        or the module does not exist there either it is missing: with '--opt' that is silent and
+        succeeds, without it a warning is emitted and a failure returned.
 
       bar_report_condense - True when the source location should be condensed on the console.
         The verbose 'file:line:func:' location is only condensed when the output goes to the

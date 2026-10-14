@@ -206,12 +206,61 @@ function find_toplevel
     [[ -d "$BAR_DIR" ]] || die "Bar directory '$BAR_DIR' does not exist"
 }
 
+function bar_origin_dir ## - the 'Bar.d' of the installation bar was run from, when it is not the one in use
+{
+    ## A project may carry its own (vendored) 'Bar.d', then the installation bar was run from is
+    ## where modules missing from the project are taken from.  When bar runs from its
+    ## installation there is no origin.  'please' has no vendored copy either: its modules live
+    ## in a single, absolute directory.
+    [[ -n "$BAR_PREFIX" && -d "$BAR_PREFIX/share/bar/Bar.d" ]] || return 1
+    [[ "$BAR_CALLED_AS" != please ]] || return 1
+    [[ "$(realpath "$BAR_DIR")" != "$(realpath "$BAR_PREFIX/share/bar/Bar.d")" ]] || return 1
+    printf '%s\n' "$BAR_PREFIX/share/bar/Bar.d"
+}
+
+function bar_vendor_modules ## <modpath> - installs a module of Bar.d which is missing from the origin, prints what it installed
+{
+    ## <modpath> - The path the module would have in 'Bar.d' (a glob is expanded there).
+    ##
+    ## Copies the module(s) from the origin installation into 'Bar.d'.  An existing module is
+    ## never touched (that is what '--update' of the init rules is for) and the origin is never
+    ## written to, installing only ever adds a copy here.  Prints the installed paths, returns
+    ## non-zero when there is no origin, the name is not a module of this 'Bar.d' or the origin
+    ## does not have it either.
+    local path="$1"
+    local origin
+    origin="$(bar_origin_dir)" || return 1
+    local rel="${path#"$BAR_DIR"/}"
+    [[ "$rel" != "$path" && "$rel" != */* ]] || return 1
+    local -a found=()
+    readarray -t found < <(compgen -G "$origin/$rel"; true)
+    (( ${#found[@]} )) || return 1
+    local -i installed=0
+    local src dst
+    for src in "${found[@]}"; do
+        dst="$BAR_DIR/${src##*/}"
+        [[ -f "$dst" ]] && continue
+        cp -L "$src" "$dst.tmp" || continue
+        mv "$dst.tmp" "$dst" || { rm -f "$dst.tmp"; continue; }
+        note "installed module '${src##*/}' from ${src%/*}"
+        printf '%s\n' "$dst"
+        installed+=1
+    done
+    (( installed ))
+}
+
 function require ## [--opt] [modules..] - Loads modules.
 {
     ## [--opt]     - Make the modules optional, when they do not exist then no warning is emitted
     ##               and no failure returned.
     ## [modules..] - List of module names to be loaded. Modules are loaded only once, further
-    ##               attempts to load it will be a no-op.
+    ##               attempts to load it will be a no-op.  A name may be a glob which expands
+    ##               to several modules.
+    ##
+    ## A module which is missing from the 'Bar.d' in use is taken from the installation bar was
+    ## run from (see :func:`bar_vendor_modules`) and loaded from there.  When there is no origin
+    ## or the module does not exist there either it is missing: with '--opt' that is silent and
+    ## succeeds, without it a warning is emitted and a failure returned.
 
     trace "$*"
     declare -i rc=0
@@ -220,25 +269,34 @@ function require ## [--opt] [modules..] - Loads modules.
         try_load=true
         shift
     fi
-    local mod
+    local mod modname mod_file
     #shellcheck disable=2167,2165
     for mod in "$@"; do
         local moddir="$BAR_DIR/"
         [[ "$mod" = */* ]] && moddir=
-        for mod in "$moddir"$mod; do
-            local modname="${mod##*/}"
+        local -a mods=()
+        readarray -t mods < <(compgen -G "$moddir$mod"; true)
+        if (( ${#mods[@]} == 0 )); then
+            # nothing of that name in 'Bar.d': a vendored project pulls it in from the origin.
+            # Keeping this on the file (not on 'not loaded yet') matters: a failed '--opt' probe
+            # records the name as false and a later bare 'require' of it is a no-op.
+            readarray -t mods < <(bar_vendor_modules "$moddir$mod"; true)
+        fi
+        (( ${#mods[@]} )) || mods=( "$moddir$mod" )
+        for mod_file in "${mods[@]}"; do
+            modname="${mod_file##*/}"
             if [[ ! -v BAR_REQUIRE_LOADED["$modname"] ]]; then
-                if [[ -f "$mod" ]]; then
-                    debug "loading: $mod"
+                if [[ -f "$mod_file" ]]; then
+                    debug "loading: $mod_file"
                     BAR_REQUIRE_LOADED["$modname"]=pending
                     # shellcheck disable=SC1090 # dynamic source
-                    source "$mod" && BAR_REQUIRE_LOADED["$modname"]=true
+                    source "$mod_file" && BAR_REQUIRE_LOADED["$modname"]=true
                 else
                     if [[ -z "$try_load" ]]; then
-                        warn "failed loading: $mod"
+                        warn "failed loading: $mod_file"
                         rc=1
                     else
-                        trace "failed try loading: $mod"
+                        trace "failed try loading: $mod_file"
                     fi
                     BAR_REQUIRE_LOADED["$modname"]=false
                 fi
