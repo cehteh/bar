@@ -20,6 +20,8 @@
 #   AC1  a vendored Bar.d pulls a missing module from the origin, and the module is there after
 #   AC2  a module which is nowhere is a warning and a failure, '--opt' stays silent and succeeds
 #   AC3  an existing module is never overwritten, no temporary file is left behind
+#   AC4  BAR_INSTALL_DEPS walks the deps and the 'require' lines of the rules and vendors what
+#        they need (transitively), and does nothing when it is not set
 #   AC6  without an origin a missing module stays a failure and nothing is written
 
 set -euo pipefail
@@ -83,6 +85,17 @@ run_vendored() {
     ERR=""
     RC=0
     OUT="$(cd "$dir" && PATH="$ORIGIN/bin:$PATH" ./bar "$@" 2>"$WORK/stderr")" || RC=$?
+    ERR="$(cat "$WORK/stderr")"
+}
+
+# <dir> [args..] - the same, but with BAR_INSTALL_DEPS=true
+run_vendored_deps() {
+    local dir="$1"
+    shift
+    OUT=""
+    ERR=""
+    RC=0
+    OUT="$(cd "$dir" && PATH="$ORIGIN/bin:$PATH" BAR_INSTALL_DEPS=true ./bar "$@" 2>"$WORK/stderr")" || RC=$?
     ERR="$(cat "$WORK/stderr")"
 }
 
@@ -153,6 +166,31 @@ else
 fi
 [[ -z "$(find "$WORK/p1/Bar.d" -name '*.tmp' -print -quit)" ]] && pass "AC3: no temporary file left behind" \
     || fail "AC3: a temporary file was left behind"
+
+# --------------------------------------------------------------------------------------------
+# AC4 BAR_INSTALL_DEPS walks the deps and the 'require' lines of the rules
+# --------------------------------------------------------------------------------------------
+mkvended "$WORK/p4" std_lib rule_lib
+cat >"$WORK/p4/Barf" <<'BARF'
+rule need_memodb: -- '
+     require memodb
+'
+
+rule check_deps: testdir_enter? -- true
+BARF
+# control: without BAR_INSTALL_DEPS nothing a rule names is loaded
+run_vendored "$WORK/p4" true
+absent "$(ls "$WORK/p4/Bar.d")" "testdir" "AC4: without BAR_INSTALL_DEPS no dep module is vendored"
+absent "$(ls "$WORK/p4/Bar.d")" "memodb" "AC4: without BAR_INSTALL_DEPS no body module is vendored"
+# with it: the deps and the 'require' lines of every rule are loaded, transitively
+run_vendored_deps "$WORK/p4" true
+check "$RC" "0" "AC4: BAR_INSTALL_DEPS=true still runs"
+[[ -f "$WORK/p4/Bar.d/testdir" ]] && pass "AC4: the module of a rule dep was vendored" \
+    || fail "AC4: the module of a rule dep ('testdir') was not vendored"
+[[ -f "$WORK/p4/Bar.d/lock" ]] && pass "AC4: a module a dep module requires was vendored (transitive)" \
+    || fail "AC4: 'lock' (required by testdir) was not vendored"
+[[ -f "$WORK/p4/Bar.d/memodb" ]] && pass "AC4: a module a rule body requires was vendored" \
+    || fail "AC4: 'memodb' (required in a rule body) was not vendored"
 
 # --------------------------------------------------------------------------------------------
 # AC6 without an origin a missing module stays a failure and nothing is written

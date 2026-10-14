@@ -2580,6 +2580,24 @@ MODULE API/RULES
     Functions:
         See RULE DEFINITION SYNTAX in help for details
 
+      rule_install_dep <name>
+        makes what a clause dependency names reachable
+        Called by :func:`rule_install_deps` while BAR_INSTALL_DEPS is set.  A dependency is
+        resolved the way the evaluator resolves it, only without failing: this runs at *definition*
+        time, where the rule that names the dependency is not evaluated at all, so a dependency
+        nothing provides must not stop the walk (it is a dependency of a rule this project never
+        calls, or one of the optional ones).  Loading the module a dependency lives in may define
+        further rules, which walk their own dependencies in turn.
+
+      rule_install_deps <body> [deps..]
+        loads what a clause's body and dependencies need
+        Called from :func:`rule` while BAR_INSTALL_DEPS is set.  Every dependency is made
+        reachable (and the module it lives in loaded, transitively) and the body is walked line by
+        line: a line which is a 'require' command is executed.  Nothing is evaluated, this only
+        makes sure the rules, commands and modules a clause names exist.
+        A dependency with a '??' suffix is one the evaluator only runs *when it exists* -- forcing
+        it here would install modules a project never uses, so it is skipped.
+
       newrule <name:> ...
         Creates a new rule, deletes the existing one.
         Used to replace already existing rules/clauses.
