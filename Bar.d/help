@@ -456,8 +456,15 @@ INITIAL INSTALLATION
        bar init          # creates bar, Barf, Bar.d/
        bar init --hidden # creates .bar, .Barf, .Bar.d/
 
-      After that Barf can be customized, unnecessary modules in Bar.d/ may be deleted.
-      Once that is done these files should be put under version control.
+      This installs the modules bar needs at startup and then completes 'Bar.d/' from the installed
+      'Barf' ('bar init_deps').  With 'bar init --no-install-deps' that last step is left out, so
+      the 'Barf' can be customized first: 'bar init_deps' afterwards vendors the modules the
+      edited 'Barf' names.
+
+      After that Barf can be customized, unnecessary modules in Bar.d/ may be deleted ('bar
+      modules_prune' deletes the ones which are still unmodified copies of the installed ones and
+      completes the tree again).  Once that is done these files should be put under version
+      control.
 
       When the installed bar from 1. becomes updated then a local version can be updated by:
 

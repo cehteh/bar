@@ -1458,13 +1458,16 @@ MODULE API/RULES
       init
         Initialize bar in a workdir. This copies the main 'bar' script, a default 'Barf' and the modules
         bar loads on every startup ('std_lib', 'rule_lib' and the '*_rules') to the current directory,
-        then 'init_deps' installs the modules the new 'Barf' needs.  Every other module is vendored
-        from the installation the first time a rule names it, so a 'Bar.d/' which was trimmed on
-        purpose keeps working.  When the workdir is a git repository then '.gitignore' is updated to
-        exclude the files and directories 'bar' will use for temporary/testing storage.  A user may
-        edit the 'Barf' file to suit the project/personal preference, run 'init_deps' after that and
-        delete modules from 'Bar.d/' which are not needed.  When that is done the new/changed files
-        should be committed to version control.
+        then 'init_deps' installs the modules the new 'Barf' needs.  With '--no-install-deps' that last
+        step is left out, so the 'Barf' can be customized first and 'bar init_deps' run afterwards to
+        vendor exactly what the edited 'Barf' names.  Every other module is vendored from the
+        installation the first time a rule names it, so a 'Bar.d/' which was trimmed on purpose keeps
+        working.  When the workdir is a git repository then '.gitignore' is updated to exclude the files
+        and directories 'bar' will use for temporary/testing storage.  A user may edit the 'Barf' file to
+        suit the project/personal preference, run 'init_deps' after that and delete modules from 'Bar.d/'
+        which are not needed ('bar modules_prune' deletes the ones which are still unmodified copies of
+        the installation's).  When that is done the new/changed files should be committed to version
+        control.
 
       init_deps
         Install the modules the current 'Barf' needs into the vendored 'Bar.d'.  Rules which name a
@@ -1631,6 +1634,51 @@ MODULE API/RULES
         Replays the result (stdout/stderr/exitcode) of the given 'cmd [args..]'.
         'cmd [args..]' must be the same as used when scheduling it to the background.
         Will error when the command was not previously scheduled and backgrounding is enabled.
+
+  modules - Module to prune the unmodified copies out of a vendored 'Bar.d'
+    
+    'bar init' and 'require' vendor the modules a project uses from the installation bar was run
+    from, so a project's 'Bar.d' grows with it and a module stays behind when the rules which named
+    it are dropped from the 'Barf'.  'modules_prune' removes those copies and completes the tree
+    again with 'init_deps'.
+    
+    The name is what the module autoloader resolves the command to (a rule loads the module named by
+    the word before its first '_'), so this lives here and not in the 'init' module which vendors
+    and completes the tree.
+
+    Functions:
+
+      modules_standard <module>
+        true for the modules a vendored 'Bar.d' always carries
+        The modules 'init_install_modules' installs unconditionally, because they are loaded on
+        every startup: 'std_lib' and 'rule_lib' (both required by bar itself) and the '*_rules'.
+        'modules_prune' never removes them, everything else is vendored on demand.
+
+      modules_prune [--dry-run]
+        removes the unmodified vendored modules, then completes the tree again
+        'bar init' vendors the modules a project needs from the installation bar was run from
+        (:func:`init_deps`) and 'require' vendors the ones it starts to use later (see
+        :func:`bar_vendor_modules` in the bar script), so a project's 'Bar.d' grows with it.  A
+        module which is not needed anymore -- the rules which named it were dropped from the 'Barf'
+        -- stays behind.  This removes every module which is a byte identical copy of the one in the
+        origin and runs :func:`init_deps` afterwards, which vendors back the modules the current
+        'Barf' really needs.  What stays is the modules the project uses plus the ones it customized.
+        A module is only ever removed when the origin has one of the same name and the two are
+        identical.  A customized module (the content to preserve), a module the origin does not have
+        at all (it was written here) and one which is not a regular file (a link into the origin)
+        are left alone, and so are the standard modules (:func:`modules_standard`).
+        With [--dry-run] the modules which would be removed are reported and nothing is written,
+        'init_deps' does not run either.  Returns non-zero when there is no origin to compare with,
+        that is when the 'Bar.d' in use is the installation's own.
+
+    Rules:
+
+      modules_prune
+        Removes every module of a vendored 'Bar.d' which is an unmodified copy of the installation's one
+        and then completes the tree again with 'init_deps': what only the dropped rules needed
+        disappears, a customized module and one the origin does not have are preserved.  Modules are
+        compared byte for byte, only the installation's own modules can be removed, never anything the
+        project wrote.  With '--dry-run' nothing is removed and 'init_deps' does not run.
 
   net - Low level networking functions
 
@@ -3515,8 +3563,15 @@ INITIAL INSTALLATION
        bar init          # creates bar, Barf, Bar.d/
        bar init --hidden # creates .bar, .Barf, .Bar.d/
 
-      After that Barf can be customized, unnecessary modules in Bar.d/ may be deleted.
-      Once that is done these files should be put under version control.
+      This installs the modules bar needs at startup and then completes 'Bar.d/' from the installed
+      'Barf' ('bar init_deps').  With 'bar init --no-install-deps' that last step is left out, so
+      the 'Barf' can be customized first: 'bar init_deps' afterwards vendors the modules the
+      edited 'Barf' names.
+
+      After that Barf can be customized, unnecessary modules in Bar.d/ may be deleted ('bar
+      modules_prune' deletes the ones which are still unmodified copies of the installed ones and
+      completes the tree again).  Once that is done these files should be put under version
+      control.
 
       When the installed bar from 1. becomes updated then a local version can be updated by:
 
