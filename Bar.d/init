@@ -5,7 +5,7 @@
 
 ### Module to install, initialize and update bar itself
 
-function init # --hidden|--update|--update-existing - initialize bar in a workdir.
+function init # --hidden|--update|--update-existing|--no-install-deps - initialize bar in a workdir.
 {
     # shellcheck disable=2155
     local origin="$(command -v bar)"
@@ -17,16 +17,27 @@ function init # --hidden|--update|--update-existing - initialize bar in a workdi
     local update=
     local update_existing=
     local hidden=
-    if [[ "${1:-}" == --update ]]; then
-        update=true
+    local install_deps=true
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+        --update)
+            update=true
+            ;;
+        --update-existing)
+            update_existing=true
+            ;;
+        --hidden)
+            hidden=true
+            ;;
+        --no-install-deps)
+            install_deps=
+            ;;
+        *)
+            break
+            ;;
+        esac
         shift
-    elif [[ "${1:-}" == --update-existing ]]; then
-        update_existing=true
-        shift
-    elif [[ "${1:-}" == --hidden ]]; then
-        hidden=true
-        shift
-    fi
+    done
 
     if [[ -z "$update" && ( -f bar || -f .bar )]]; then
         die "bar already initialized"
@@ -80,7 +91,9 @@ function init # --hidden|--update|--update-existing - initialize bar in a workdi
         mkdir -p .Bar.d
         init_install_modules "$prefix/share/bar/Bar.d" .Bar.d
     fi
-    init_deps
+    # '--no-install-deps' leaves the tree as 'init_install_modules' left it: the 'Barf' is the
+    # users file and is meant to be edited before 'init_deps' vendors exactly what it names.
+    [[ -z "$install_deps" ]] || init_deps
     return 0
 }
 
@@ -121,13 +134,16 @@ rule init_update_gitignore: is_git_toplevel? -- '
 
 ## Initialize bar in a workdir. This copies the main 'bar' script, a default 'Barf' and the modules
 ## bar loads on every startup ('std_lib', 'rule_lib' and the '*_rules') to the current directory,
-## then 'init_deps' installs the modules the new 'Barf' needs.  Every other module is vendored
-## from the installation the first time a rule names it, so a 'Bar.d/' which was trimmed on
-## purpose keeps working.  When the workdir is a git repository then '.gitignore' is updated to
-## exclude the files and directories 'bar' will use for temporary/testing storage.  A user may
-## edit the 'Barf' file to suit the project/personal preference, run 'init_deps' after that and
-## delete modules from 'Bar.d/' which are not needed.  When that is done the new/changed files
-## should be committed to version control.
+## then 'init_deps' installs the modules the new 'Barf' needs.  With '--no-install-deps' that last
+## step is left out, so the 'Barf' can be customized first and 'bar init_deps' run afterwards to
+## vendor exactly what the edited 'Barf' names.  Every other module is vendored from the
+## installation the first time a rule names it, so a 'Bar.d/' which was trimmed on purpose keeps
+## working.  When the workdir is a git repository then '.gitignore' is updated to exclude the files
+## and directories 'bar' will use for temporary/testing storage.  A user may edit the 'Barf' file to
+## suit the project/personal preference, run 'init_deps' after that and delete modules from 'Bar.d/'
+## which are not needed ('bar modules_prune' deletes the ones which are still unmodified copies of
+## the installation's).  When that is done the new/changed files should be committed to version
+## control.
 rule init: 'called_as? bar' -
 rule init: 'called_as? bar' init_update_gitignore
 rule init: '!called_as bar' -- error "not called as installed bar"

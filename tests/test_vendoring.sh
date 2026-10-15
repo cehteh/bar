@@ -24,6 +24,11 @@
 #        they need (transitively), and does nothing when it is not set
 #   AC5  'bar init' installs the mandatory modules and completes the tree through init_deps
 #   AC6  without an origin a missing module stays a failure and nothing is written
+#   AC7  'bar init --no-install-deps' installs the mandatory modules only, a later 'init_deps'
+#        completes the tree from the customized Barf
+#   AC8  'modules_prune' removes the unmodified modules, preserves the customized ones and
+#        completes the tree again ('--dry-run' reports without writing)
+#   AC9  'modules_prune' refuses to run without an origin, it can not know what is unmodified
 
 set -euo pipefail
 
@@ -249,6 +254,93 @@ check "$RC" "1" "AC6: without an origin a missing module fails"
 contains "$ERR" "failed loading" "AC6: without an origin a missing module is warned about"
 [[ -f "$WORK/p6/Bar.d/memodb" ]] && fail "AC6: something was vendored without an origin" \
     || pass "AC6: nothing was vendored without an origin"
+
+# --------------------------------------------------------------------------------------------
+# AC7 'bar init --no-install-deps' leaves the tree to the user, 'init_deps' completes it later
+# --------------------------------------------------------------------------------------------
+mkdir -p "$WORK/p7"
+INIT_RC=0
+INIT_OUT="$(cd "$WORK/p7" && PATH="$ORIGIN/bin:$PATH" bar init --no-install-deps 2>&1)" || INIT_RC=$?
+check "$INIT_RC" "0" "AC7: 'bar init --no-install-deps' succeeds"
+[[ -f "$WORK/p7/bar" && -f "$WORK/p7/Barf" ]] && pass "AC7: bar and Barf were installed" \
+    || fail "AC7: bar or Barf is missing"
+module=""
+for module in $MANDATORY_MODULES; do
+    [[ -f "$WORK/p7/Bar.d/$module" ]] && pass "AC7: '$module' was installed" \
+        || fail "AC7: '$module' is missing"
+done
+[[ -f "$WORK/p7/Bar.d/testdir" ]] && fail "AC7: 'init_deps' ran despite '--no-install-deps'" \
+    || pass "AC7: 'init_deps' did not run"
+# the point of the flag: the Barf is the users file, it is customized before the tree is completed
+cat >"$WORK/p7/Barf" <<'BARF'
+rule MAIN: -- true
+
+rule uses_memodb: -- '
+     require memodb
+'
+BARF
+run_vendored "$WORK/p7" init_deps
+check "$RC" "0" "AC7: 'init_deps' runs after the Barf was customized"
+[[ -f "$WORK/p7/Bar.d/memodb" ]] && pass "AC7: 'init_deps' vendored what the customized Barf names" \
+    || fail "AC7: 'init_deps' vendored nothing for the customized Barf"
+run_vendored "$WORK/p7" true
+check "$RC" "0" "AC7: the initialized project runs"
+
+# --------------------------------------------------------------------------------------------
+# AC8 'modules_prune' removes the unmodified copies and preserves everything else
+# --------------------------------------------------------------------------------------------
+mkdir -p "$WORK/p8"
+INIT_RC=0
+INIT_OUT="$(cd "$WORK/p8" && PATH="$ORIGIN/bin:$PATH" bar init 2>&1)" || INIT_RC=$?
+check "$INIT_RC" "0" "AC8: 'bar init' succeeds"
+[[ -f "$WORK/p8/Bar.d/memodb" && -f "$WORK/p8/Bar.d/testdir" && -f "$WORK/p8/Bar.d/tty_lib" ]] &&
+    pass "AC8: the tree carries the modules the shipped Barf needs" ||
+    fail "AC8: the shipped Barf did not vendor its modules"
+# the user customized a module and wrote one the installation does not have
+printf '\n# local edit\n' >>"$WORK/p8/Bar.d/tty_lib"
+printf '# a module of this project\n' >"$WORK/p8/Bar.d/localonly"
+# and dropped the rule which was the only user of 'memodb'
+cat >"$WORK/p8/Barf" <<'BARF'
+rule MAIN: testdir_enter? -- true
+BARF
+run_vendored "$WORK/p8" modules_prune --dry-run
+check "$RC" "0" "AC8: 'modules_prune --dry-run' succeeds"
+[[ -f "$WORK/p8/Bar.d/memodb" ]] && pass "AC8: '--dry-run' removed nothing" \
+    || fail "AC8: '--dry-run' removed a module"
+run_vendored "$WORK/p8" modules_prune
+check "$RC" "0" "AC8: 'modules_prune' succeeds"
+[[ -f "$WORK/p8/Bar.d/memodb" ]] && fail "AC8: the unmodified module nobody names was not removed" \
+    || pass "AC8: the unmodified module nobody names anymore was removed"
+[[ -f "$WORK/p8/Bar.d/localonly" ]] && pass "AC8: a module the origin does not have was preserved" \
+    || fail "AC8: a module the origin does not have was removed"
+if grep -q '^# local edit$' "$WORK/p8/Bar.d/tty_lib" 2>/dev/null; then
+    pass "AC8: the customized module was preserved"
+else
+    fail "AC8: the customized module was removed or rewritten"
+fi
+[[ -f "$WORK/p8/Bar.d/testdir" ]] && pass "AC8: 'init_deps' vendored back what the Barf needs" \
+    || fail "AC8: a module the Barf needs got lost"
+for module in $MANDATORY_MODULES; do
+    [[ -f "$WORK/p8/Bar.d/$module" ]] && pass "AC8: the standard '$module' was kept" \
+        || fail "AC8: the standard '$module' was removed"
+done
+for module in "$ORIGIN/share/bar/Bar.d/"*_rules; do
+    [[ -f "$WORK/p8/Bar.d/${module##*/}" ]] || fail "AC8: the standard '${module##*/}' was removed"
+done
+pass "AC8: the standard '*_rules' were kept"
+run_vendored "$WORK/p8" true
+check "$RC" "0" "AC8: the pruned project still runs"
+
+# --------------------------------------------------------------------------------------------
+# AC9 without an origin 'modules_prune' refuses, it can not know what is unmodified
+# --------------------------------------------------------------------------------------------
+mkdir -p "$WORK/p9"
+cp -Lr "$ORIGIN/share/bar/Bar.d" "$WORK/p9/Bar.d"
+cp -L "$ORIGIN/bin/bar" "$WORK/p9/bar"
+cp -L "$ORIGIN/share/bar/Barf" "$WORK/p9/Barf"
+run_vendored_no_origin "$WORK/p9" modules_prune
+check "$RC" "1" "AC9: without an origin 'modules_prune' fails"
+contains "$ERR" "no installation to compare with" "AC9: and says why"
 
 echo
 if (( failures == 0 )); then

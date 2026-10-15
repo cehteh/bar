@@ -1,0 +1,104 @@
+# -*- mode: sh; sh-shell: bash -*-
+# vim: set ft=bash:
+# shellcheck shell=bash
+
+### Module to prune the unmodified copies out of a vendored 'Bar.d'
+###
+### 'bar init' and 'require' vendor the modules a project uses from the installation bar was run
+### from, so a project's 'Bar.d' grows with it and a module stays behind when the rules which named
+### it are dropped from the 'Barf'.  'modules_prune' removes those copies and completes the tree
+### again with 'init_deps'.
+###
+### The name is what the module autoloader resolves the command to (a rule loads the module named by
+### the word before its first '_'), so this lives here and not in the 'init' module which vendors
+### and completes the tree.
+
+require init
+
+function modules_standard ## <module> - true for the modules a vendored 'Bar.d' always carries
+{
+    ## The modules 'init_install_modules' installs unconditionally, because they are loaded on
+    ## every startup: 'std_lib' and 'rule_lib' (both required by bar itself) and the '*_rules'.
+    ## 'modules_prune' never removes them, everything else is vendored on demand.
+    case "$1" in
+    std_lib | rule_lib | *_rules)
+        return 0
+        ;;
+    esac
+    return 1
+}
+
+function modules_prune ## [--dry-run] - removes the unmodified vendored modules, then completes the tree again
+{
+    ## 'bar init' vendors the modules a project needs from the installation bar was run from
+    ## (:func:`init_deps`) and 'require' vendors the ones it starts to use later (see
+    ## :func:`bar_vendor_modules` in the bar script), so a project's 'Bar.d' grows with it.  A
+    ## module which is not needed anymore -- the rules which named it were dropped from the 'Barf'
+    ## -- stays behind.  This removes every module which is a byte identical copy of the one in the
+    ## origin and runs :func:`init_deps` afterwards, which vendors back the modules the current
+    ## 'Barf' really needs.  What stays is the modules the project uses plus the ones it customized.
+    ##
+    ## A module is only ever removed when the origin has one of the same name and the two are
+    ## identical.  A customized module (the content to preserve), a module the origin does not have
+    ## at all (it was written here) and one which is not a regular file (a link into the origin)
+    ## are left alone, and so are the standard modules (:func:`modules_standard`).
+    ##
+    ## With [--dry-run] the modules which would be removed are reported and nothing is written,
+    ## 'init_deps' does not run either.  Returns non-zero when there is no origin to compare with,
+    ## that is when the 'Bar.d' in use is the installation's own.
+    local dry_run=
+    case "${1:-}" in
+    --dry-run)
+        dry_run=true
+        ;;
+    -?*)
+        error "unknown option '$1'"
+        return 2
+        ;;
+    esac
+
+    local origin
+    if ! origin="$(bar_origin_dir)"; then
+        error "no installation to compare with, the 'Bar.d' in use is the installation's own"
+        return 1
+    fi
+
+    local module name
+    local -i removed=0
+    for module in "$BAR_DIR"/*; do
+        [[ -f "$module" && ! -L "$module" ]] || continue
+        name="${module##*/}"
+        modules_standard "$name" && continue
+        [[ -f "$origin/$name" ]] || continue
+        cmp -s "$module" "$origin/$name" || continue
+        if [[ -z "$dry_run" ]]; then
+            rm -f "$module" || {
+                error "can not remove module '$name'"
+                continue
+            }
+            note "removed module '$name'"
+        else
+            note "would remove module '$name'"
+        fi
+        removed+=1
+    done
+
+    if [[ -n "$dry_run" ]]; then
+        note "$removed module(s) would be removed, run 'modules_prune' without '--dry-run' to do it"
+        return 0
+    fi
+    if (( removed > 0 )); then
+        note "removed $removed module(s), completing the tree again"
+    else
+        note "no module to remove, 'Bar.d' carries no unmodified copy"
+    fi
+    init_deps
+}
+
+## Removes every module of a vendored 'Bar.d' which is an unmodified copy of the installation's one
+## and then completes the tree again with 'init_deps': what only the dropped rules needed
+## disappears, a customized module and one the origin does not have are preserved.  Modules are
+## compared byte for byte, only the installation's own modules can be removed, never anything the
+## project wrote.  With '--dry-run' nothing is removed and 'init_deps' does not run.
+rule modules_prune: 'called_as? bar' -
+rule modules_prune: '!called_as bar' -- error "not called as installed bar"
