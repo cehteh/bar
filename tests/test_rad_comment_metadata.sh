@@ -62,6 +62,10 @@
 #   AC32 'rad_rm_label' removes every stored label a glob matches in one write: the glob is anchored
 #        at both ends, a glob which matches nothing writes nothing and is reported (exit 0), the
 #        '<item>' forms and '--repo' are the write layer's, and the helper is registered
+#   AC33 the label model: a chain transition deletes the stored *colon-free* label only (a namespaced
+#        'issue:<id>' stays and is reported), '*rmlabel:' is applied through the write layer and runs
+#        before the labels of the same block, and an item which carries a label while no trusted
+#        proposal names one is reported, never cleaned up
 
 set -euo pipefail
 
@@ -400,6 +404,34 @@ OWN_TIP="$(op "$OUTSIDER_NID" issue "$OWN" "Comment" \
     '{"body":"*label:outsider-wip\nfrom an identity nobody trusts here","type":"comment"}' \
     "$OWN_TIP" "outsider" "$OUTSIDER_NID" "2026-10-11T10:31:00+02:00")"
 
+# -- the label model: the colon protects, '*rmlabel:' removes, an absent proposal deletes nothing ---
+# Three items, because the applier has three cases to tell apart: a chain transition beside a
+# protected label, a removal whose glob matches nothing, and an item which carries a label while no
+# trusted proposal names one.
+MODEL="7777777777777777777777777777777777777777"
+MODEL_ID="${MODEL:0:7}"
+MODEL_TIP="$(op "$DELEGATE_NID" issue "$MODEL" "Create issue" \
+    '{"body":"*label:idea\nthe label model","type":"issue","title":"the label model"}' \
+    "" "delegate" "$DELEGATE_NID" "2026-10-11T10:32:00+02:00")"
+MODEL_TIP="$(op "$DELEGATE_NID" issue "$MODEL" "Comment" \
+    '{"body":"*label:done two\n*rmlabel:pr:*\nthe chain slot moves, the link labels go","type":"comment"}' \
+    "$MODEL_TIP" "delegate" "$DELEGATE_NID" "2026-10-11T10:33:00+02:00")"
+
+MODEL2="3333333333333333333333333333333333333333"
+MODEL2_ID="${MODEL2:0:7}"
+MODEL2_TIP="$(op "$DELEGATE_NID" issue "$MODEL2" "Create issue" \
+    '{"body":"*label:carried\nthe protected label stays","type":"issue","title":"a protected label"}' \
+    "" "delegate" "$DELEGATE_NID" "2026-10-11T10:34:00+02:00")"
+MODEL2_TIP="$(op "$DELEGATE_NID" issue "$MODEL2" "Comment" \
+    '{"body":"*label:done\n*rmlabel:nothing:*\nno glob matches that","type":"comment"}' \
+    "$MODEL2_TIP" "delegate" "$DELEGATE_NID" "2026-10-11T10:35:00+02:00")"
+
+MODEL3="2222222222222222222222222222222222222222"
+MODEL3_ID="${MODEL3:0:7}"
+MODEL3_TIP="$(op "$DELEGATE_NID" issue "$MODEL3" "Create issue" \
+    '{"body":"*assign:cehteh\nnothing here proposes a label","type":"issue","title":"no proposal"}' \
+    "" "delegate" "$DELEGATE_NID" "2026-10-11T10:36:00+02:00")"
+
 # -- the patch: a delegate comment carries a marker, and the tricky bodies -----------------------
 PATCH_TIP="$(op "$DELEGATE_NID" patch "$PATCH" "Initial revision" \
     '{"type":"revision","description":"a patch","oid":"0000000000000000000000000000000000000000","base":"1111111111111111111111111111111111111111"}' \
@@ -455,11 +487,11 @@ run "$PROJECT" rad_comment_metadata "$ISSUE_ID" --query label --trust "did:key:$
 check "$(lines_of "$OUT")" 5 "the 'did:key:' spelling names the same identity"
 echo
 
-echo "AC3 the block must start at the comment, values are single words"
+echo "AC3 the block must start at the comment, a value runs to the end of the line"
 run "$PROJECT" rad_comment_metadata "$PATCH_ID" --query label
-check "$(lines_of "$OUT")" 2 "the patch's two real label blocks"
+check "$(lines_of "$OUT")" 3 "the patch's three real label blocks"
 absent "$OUT" "value=notaproposal" "a marker later in the body is prose"
-absent "$OUT" "value=two" "a value with whitespace is dropped"
+contains "$OUT" "value=two words" "a value with whitespace is a proposal like any other"
 check "$(printf '%s\n' "$OUT" | grep -c 'value=$' || true)" 0 "an empty value is dropped"
 contains "$OUT" "value=improvement" "the edited body is the newest word on that comment"
 echo
@@ -636,7 +668,7 @@ echo
 echo "AC20 the key form is open: any key is read back, and the bounds of a key end the block"
 run "$PROJECT" rad_comment_metadata "$KEYS_ID"
 check "$RC" 0 "exit 0"
-check "$(lines_of "$OUT")" 4 "four proposals: issue, Note and two labels"
+check "$(lines_of "$OUT")" 5 "five proposals: issue, Note and three labels"
 contains "$OUT" "issue item=issue:$KEYS_ID" "a key with no registered effect is read back"
 contains "$OUT" "value=5555555" "and carries its value"
 contains "$OUT" "Note item=issue:$KEYS_ID" "a key is read as it is written (a capital letter is a key too)"
@@ -644,8 +676,9 @@ run "$PROJECT" rad_comment_metadata "$KEYS_ID" --query Note
 check "$(lines_of "$OUT")" 1 "asking for that key answers for it alone"
 absent "$OUT" "value=seen" "…and no other key leaks into the answer"
 run "$PROJECT" rad_comment_metadata "$KEYS_ID" --query label
-check "$(lines_of "$OUT")" 2 "two label blocks of that item"
-contains "$OUT" "value=after-empty" "an empty value and one with whitespace are dropped, the block goes on"
+check "$(lines_of "$OUT")" 3 "three label blocks of that item"
+contains "$OUT" "value=after-empty" "an empty value is no proposal and the block goes on"
+contains "$OUT" "value=two words" "a value runs to the end of the line, spaces included"
 absent "$OUT" "value=after-digits" "a key not starting with a letter is no marker: the block ends"
 absent "$OUT" "value=after-dot" "so is a key with a character outside the charset"
 absent "$OUT" "value=after-keyless" "and so is a line without a key at all"
@@ -661,7 +694,7 @@ run "$PROJECT" rad_comment_metadata "$ISSUE_ID" --query label --query unassign
 check "$RC" 0 "two keys in one call exit 0"
 check "$(lines_of "$OUT")" 4 "four labels and no unassign on the issue"
 run "$PROJECT" rad_comment_metadata "$PATCH_ID" --query label --query unassign
-check "$(lines_of "$OUT")" 3 "the patch's two labels and its one unassign"
+check "$(lines_of "$OUT")" 4 "the patch's three labels and its one unassign"
 run "$PROJECT" rad_comment_metadata "$ISSUE_ID" --query label --query label
 check "$(lines_of "$OUT")" 4 "a key asked for twice is not answered twice"
 echo
@@ -699,11 +732,11 @@ run "$PROJECT" rad_comment_metadata "$PATCH_ID" --query unassign --last
 check "$(lines_of "$OUT")" 1 "…but it is answered when it is asked for"
 contains "$OUT" "value=ct_vibes" "with its own value"
 run "$PROJECT" rad_comment_metadata "$KEYS_ID" --query label --last
-check "$(lines_of "$OUT")" 1 "the newest label of the key fixture"
+check "$(lines_of "$OUT")" 2 "the newest label of the key fixture"
 contains "$OUT" "value=after-empty" "which is the last block carrying that key"
 run "$PROJECT" rad_comment_metadata "$KEYS_ID" --query label --query issue --last
 check "$RC" 0 "two keys, one call"
-check "$(lines_of "$OUT")" 2 "each key answers with its own newest block"
+check "$(lines_of "$OUT")" 3 "each key answers with its own newest block"
 check "$(printf '%s\n' "$OUT" | grep -n "issue item=" | cut -d: -f1)" 1 "in chain order: the description's key first"
 run "$PROJECT" rad_comment_metadata "$THIRD_ID" --query label --last
 check "$(lines_of "$OUT")" 1 "the newest op of that item has no radicle identity"
@@ -825,8 +858,11 @@ contains "$OUT" "skip issue item=issue:$KEYS_ID value=5555555 (no effect is regi
     "a key with no registered effect is reported"
 contains "$OUT" "skip Note item=issue:$KEYS_ID value=hello (no effect is registered for that key)" \
     "…like every other one"
-contains "$OUT" "applied label item=issue:$KEYS_ID add=after-empty" "while the keys which have one are applied"
-check "$(lines_of "$(cat "$WORK/rad.calls")")" 1 "and that is the only write"
+contains "$OUT" "applied label item=issue:$KEYS_ID add=two-words" \
+    "while the keys which have one are applied, the value in radicle's own form"
+contains "$OUT" "applied label item=issue:$KEYS_ID add=after-empty delete=two-words" \
+    "and the block's last chain state carries the first one out"
+check "$(lines_of "$(cat "$WORK/rad.calls")")" 2 "two writes, one per label of the block"
 echo
 
 echo "AC28 rad_reaction compares against our own reduced state, never the op stream"
@@ -1010,6 +1046,46 @@ run "$PROJECT" helpers
 contains "$OUT" "rad_rm_label" "the repertoire lists the removal half"
 run "$PROJECT" helpers --check
 check "$RC" 0 "and the registration guard passes with it"
+echo
+
+echo "AC33 the label model: the colon protects, '*rmlabel:' removes, an unproposed label stays"
+printf 'pr:%s, wip' "$PATCH" >"$WORK/labels.issue/$MODEL_ID"
+: >"$WORK/rad.calls"
+run "$PROJECT" rad_apply_from_comments "$MODEL_ID"
+check "$RC" 0 "exit 0"
+check "$(sed -n 1p "$WORK/rad.calls")" "issue label $MODEL_ID --quiet --delete=pr:$PATCH" \
+    "the removal is the first write, and it is the write layer's glob call"
+contains "$OUT" "removed label item=issue:$MODEL_ID delete=pr:$PATCH" "which names the label that went"
+check "$(sed -n 2p "$WORK/rad.calls")" "issue label $MODEL_ID --quiet --add=done-two --delete=wip" \
+    "then the chain slot is swapped, and nothing else is deleted"
+contains "$OUT" "applied label item=issue:$MODEL_ID add=done-two delete=wip" \
+    "which is reported in turn, and a value with a space is written the way radicle writes it"
+check "$(lines_of "$(cat "$WORK/rad.calls")")" 2 "two writes, and no third"
+: >"$WORK/rad.calls"
+run "$PROJECT" rad_apply_from_comments "$MODEL_ID" --dry-run
+check "$RC" 0 "a dry run exits 0"
+contains "$OUT" "would remove label item=issue:$MODEL_ID glob=pr:*" "it names the removal"
+contains "$OUT" "would label item=issue:$MODEL_ID add=done-two delete=wip" "and the transition it would write"
+check "$(lines_of "$(cat "$WORK/rad.calls")")" 0 "and it writes nothing"
+printf 'issue:%s, wip' "$ISSUE" >"$WORK/labels.issue/$MODEL2_ID"
+: >"$WORK/rad.calls"
+run "$PROJECT" rad_apply_from_comments "$MODEL2_ID"
+check "$RC" 0 "exit 0"
+check "$(cat "$WORK/rad.calls")" "issue label $MODEL2_ID --quiet --add=done --delete=wip" \
+    "a namespaced label is never part of the delete set"
+contains "$OUT" "skip label item=issue:$MODEL2_ID (issue:$ISSUE is protected, only a removal takes it out)" \
+    "it is reported as staying instead of being silently dropped"
+contains "$OUT" "no label item=issue:$MODEL2_ID (nothing the item carries matches nothing:*)" \
+    "a glob which matches nothing is an answer, not a failure"
+printf 'wip' >"$WORK/labels.issue/$MODEL3_ID"
+: >"$WORK/rad.calls"
+run "$PROJECT" rad_apply_from_comments "$MODEL3_ID"
+check "$RC" 0 "exit 0"
+contains "$OUT" "skip label item=issue:$MODEL3_ID (wip is stored, no trusted proposal names it)" \
+    "a stored label no proposal names is reported, never deleted"
+check "$(lines_of "$(cat "$WORK/rad.calls")")" 1 "only the key which does carry a proposal is written"
+check "$(cat "$WORK/rad.calls")" "issue assign $MODEL3_ID --quiet --add=did:key:$DELEGATE_NID" \
+    "which is the assignment"
 echo
 
 echo

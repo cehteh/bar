@@ -16,12 +16,13 @@
 ###   bar rad_patches [--state <s>] [--author <a>] [--json] [--max <n>]
 ###                                                          only the patches, filtered
 ###   bar rad_trust --repo <rid> --author <who>              is that author a trusted source
-###   bar rad_comment_metadata <item> --query <label|assign|unassign>
-###                                                          the trusted '*label:'/'*assign:'/
-###                                                          '*unassign:' proposals of one item
+###   bar rad_comment_metadata <item> --query <label|rmlabel|assign|unassign>
+###                                                          the trusted '*label:'/'*rmlabel:'/
+###                                                          '*assign:'/'*unassign:' proposals of
+###                                                          one item
 ###   bar rad_topic <class> "<description>"                  open the topic tree of an item
 ###   bar rad_reaction [--from <emoji>] <to> <target>..      set/transition/withdraw our own marker
-###   bar rad_rm_label <item> <glob>..                      remove the stored labels a glob matches
+###   bar rad_rm_label <item> <glob>..                       remove the stored labels a glob matches
 ###   bar rad_import                                         import this repository into radicle
 ###   bar rad_merge_accepted_prs [--dry-run] [--no-fetch] [--max <n>]
 ###                                                          merge the patches a delegate accepted
@@ -118,12 +119,14 @@
 ###
 ### The form is '*<key>:<value>' and the vocabulary is open: a key is a word of letters, digits, '_'
 ### and '-' which starts with a letter, and *any* key is read back -- what a key means is the
-### caller's business, and only the keys with a registered effect ('label', 'assign', 'unassign')
-### are ever applied (see the write layer below).  The block ends at the first line which is not a
-### marker, so a marker quoted inside a reply is prose, and a value is a single word -- anything else
-### is dropped, never handed back half cut.  '--query' names the keys to answer for and repeats;
-### with no '--query' at all the answer carries every key a comment proposes, and every line names
-### its own key.
+### caller's business, and only the keys with a registered effect ('label', 'rmlabel', 'assign',
+### 'unassign') are ever applied (see the write layer below).  The block ends at the first line which
+### is not a marker, so a marker quoted inside a reply is prose.  A **value runs to the end of the
+### line** and may carry spaces: what a value may hold belongs to the directive that owns the key, so
+### the reader hands the line out as it is and only the label effect normalises it (a label is a word
+### without whitespace -- radicle writes a space as '-', and so does 'rad_label_name').  '--query'
+### names the keys to answer for and repeats; with no '--query' at all the answer carries every key a
+### comment proposes, and every line names its own key.
 ###
 ### '<item>' is the issue or patch the question is about, short or full -- one item only, not the
 ### whole repository: the ref listing is a single call, the chains (the ops and their payloads) are
@@ -160,13 +163,29 @@
 ###
 ### 'rad_apply_from_comments' reads the newest trusted block per key (that is what applies; a block a
 ### later one superseded is history) and dispatches every entry to the applier of its key: 'label',
-### 'assign', 'unassign'.  Any other key is reported and never guessed at.  An entry whose author
-### cannot be attributed never reaches it -- the reader drops those, silently, like every proposal
-### which is not trusted.  A label the item already says is not written again ('skip when the labels
-### already say it'), the previous chain state is deleted in the same write as the new label (that is
-### what makes an item carry one chain state at a time), and '--dry-run' prints what would be applied
-### without writing anything.  Nothing is remembered between calls: what the item carries is read
-### fresh, from 'rad issue|patch list', every time.
+### 'rmlabel', 'assign' and 'unassign'.  Any other key is reported and never guessed at.  An entry
+### whose author cannot be attributed never reaches it -- the reader drops those, silently, like every
+### proposal which is not trusted.  A label the item already says is not written again ('skip when the
+### labels already say it'), and '--dry-run' prints what would be applied without writing anything.
+### Nothing is remembered between calls: what the item carries is read fresh, from 'rad issue|patch
+### list', every time.
+###
+### The labels are *one* state, and the colon decides which of them the applier maintains by itself.
+### A label carrying a ':' is namespaced -- the 'pr:<id>'/'issue:<id>' link labels and every other
+### '<namespace>:<rest>' -- and it is therefore **protected**: a chain transition never deletes it,
+### and it leaves the item only when a '*rmlabel:' glob or a direct write names it.  The colon-free
+### labels are the *chain slot*, and exactly one of those is kept: the delete set of a transition is
+### the stored colon-free labels, and the new one goes in with the old one out in the same write.
+### (Before the colon decided this, *every* stored label the newest block did not name was deleted,
+### which is what ate the link labels.)  A stored label no proposal names is reported and left alone
+### -- deleting on the strength of an absent proposal would reverse a delegate's write, and a
+### delegate may label by hand with no comment at all.
+###
+### '*rmlabel:<glob>' is the explicit removal, and it runs *before* the labels of the same block: the
+### glob is matched against the whole stored label, anchored at both ends ('pr:*' takes 'pr:<id>' and
+### never 'xpr:<id>', '*' takes everything), a glob which matches nothing writes nothing and says so
+### (exit 0 -- nothing to remove is an answer), and the removal has to come first so that a block
+### carrying both a '*rmlabel:' and a '*label:' in the same namespace ends with the new label in.
 ###
 ### 'rad_reaction' is the same idea for the reaction markers, and those are a different animal: a
 ### reaction is *private per identity* and can never be delegated, so there is no trust question here
@@ -265,8 +284,8 @@ rule rad_patches: -
 ## The trust verdict of the triage policy; exit 0 trusted, 1 untrusted, 2 could not answer.
 rule rad_trust: -
 
-# helper: rad_comment_metadata | the structured metadata the comments of one item carry at their start ('*label:', '*assign:', '*unassign:'), authenticated against trust | rad_comment_metadata <item> --query <label,assign,unassign> [--repo <rid,path>] [--trust <spec>].. [--last] [--json] | one '<query> item=<issue,patch>:<id> author=<alias> did=<did> trust=<delegate,named,assignee,contributor(<n>)> date=<iso> value=<value>' line per trusted entry, oldest first; '--json' the same as one object, plus the item's assignees
-## The trusted '*label:'/'*assign:'/'*unassign:' proposals of an item's comments; exit 0 answered,
+# helper: rad_comment_metadata | the structured metadata the comments of one item carry at their start ('*label:', '*rmlabel:', '*assign:', '*unassign:'), authenticated against trust | rad_comment_metadata <item> --query <label,rmlabel,assign,unassign> [--repo <rid,path>] [--trust <spec>].. [--last] [--json] | one '<query> item=<issue,patch>:<id> author=<alias> did=<did> trust=<delegate,named,assignee,contributor(<n>)> date=<iso> value=<value>' line per trusted entry, oldest first; '--json' the same as one object, plus the item's assignees
+## The trusted '*label:'/'*rmlabel:'/'*assign:'/'*unassign:' proposals of an item's comments; exit 0 answered,
 ## 2 usage, 3 no storage for that repository.
 ##
 ## Who is trusted is read when the question is asked, from the repository (its delegates), from the
@@ -1172,8 +1191,13 @@ function rad_metadata_marks ## <body> - the marker lines at the very start of <b
     ## form and no fixed vocabulary: what a key *means* is the caller's business (this reads any key
     ## back, and only the keys with a registered effect are ever applied).  The block starts at the
     ## comment and ends at the first line which is not a marker: a marker quoted inside a reply is
-    ## prose, not a proposal.  A value is a single word -- a label name, a DID, an alias -- and a
-    ## line which carries more is dropped rather than handed back half cut.
+    ## prose, not a proposal.
+    ##
+    ## A value runs to the **end of the line** and may contain spaces -- what a value may hold is the
+    ## business of the directive that owns the key (a label follows radicle's rules, which is what
+    ## 'rad_label_name' is for; a trigger takes one of four words), so this reader hands the line out
+    ## as it is instead of deciding for its callers.  Only the surrounding whitespace is trimmed: an
+    ## empty value is no proposal and the block goes on, exactly like any other line.
     local body="$1" line rest key value
     while IFS= read -r line; do
         [[ "$line" == '*'* ]] || break
@@ -1185,9 +1209,24 @@ function rad_metadata_marks ## <body> - the marker lines at the very start of <b
         value="${value#"${value%%[![:space:]]*}"}"
         value="${value%"${value##*[![:space:]]}"}"
         [[ -n "$value" ]] || continue
-        [[ "$value" == *[[:space:]]* ]] && continue
         printf '%s%s%s\n' "$key" "$RAD_US" "$value"
     done <<<"$body"
+}
+
+function rad_label_name ## <value> - the label a proposal's value names
+{
+    ## Radicle's own rule, applied where it belongs: what a label *is* is the applier's business, so
+    ## the reader hands the line out whole and the label effect normalises the value.  A label is a
+    ## non-empty string **without whitespace** (the store's 'Label::new': no length limit, no other
+    ## rejection), and radicle writes a space as a '-', which is why a value carrying one is written
+    ## the same way here -- each run of whitespace becomes one '-'.  So '*label:two words' proposes
+    ## 'two-words', the label a writer composing that directive is told to emit in the first place.
+    local value="${1:-}" out="" word
+    for word in $value; do
+        [[ -n "$out" ]] && out+="-"
+        out+="$word"
+    done
+    printf '%s\n' "$out"
 }
 
 function rad_metadata_authored ## <rid> <nid> - the commits that identity authored, '-' when unknown
@@ -2079,26 +2118,53 @@ function rad_unassign ## <item> <did|alias> [--repo <rid|path>] - one 'rad <type
     rad_metadata_assign rad_unassign 1 "$@"
 }
 
+function rad_label_is_protected ## <label> - 0 when the label is namespaced, hence protected
+{
+    ## The one rule of the label model, in one place: a label carrying a ':' is *namespaced* --
+    ## 'pr:<id>', 'issue:<id>' and every other '<namespace>:<rest>' -- and such a label is
+    ## **protected**: the applier never deletes it implicitly, so it survives every chain
+    ## transition, and it leaves the item only when a '*rmlabel:' glob or a direct write names it.
+    ## A colon-free label is a candidate for the *chain slot*, and exactly one of those is kept per
+    ## item: a new '*label:<colon-free>' replaces the stored one in the same write.
+    ##
+    ## The colon and nothing else decides this -- a hyphen or an underscore protects nothing, which
+    ## is why 'needs-info' is a chain state like any other.  Values only: what matters is the stored
+    ## label's own text, never where it came from.
+    [[ "${1:-}" == *:* ]]
+}
+
 function rad_apply_labels ## <repo> <dry> <entry>.. - the label state of one item, reconciled and applied
 {
     ## The label entries of one item are one *state*: the labels the chain proposes against the
-    ## labels the item carries, which are read fresh (nothing is remembered between calls).  The
-    ## first write of the item carries the labels the proposal does not carry -- the previous chain
-    ## state -- so the item ends with the state the trusted block asks for, and a label the item
-    ## already says is not written again.
+    ## labels the item carries, which are read fresh (nothing is remembered between calls).  Three
+    ## rules are the whole model:
     ##
-    ## An <entry> is one line of the reader's answer as 'key<TAB>item<TAB>id<TAB>value'.  Entries
-    ## which are not labels are not this function's business.  A stored label no proposal asks for is
-    ## reported and left alone: deleting state nobody proposed is not what the proposals asked for.
+    ##  * the **chain slot** is the colon-free label ('rad_label_is_protected').  Exactly one is
+    ##    kept, so a proposed colon-free label carries the stored one out in the same write, and a
+    ##    second one in the same block carries the first out in turn -- the block's last one wins,
+    ##    which is the 'a new *label:nopunct overwrites this' rule read within one block.
+    ##  * a **protected** label ('pr:<id>', 'issue:<id>') is never deleted implicitly.  It leaves the
+    ##    item only through a '*rmlabel:' or a direct write, so one the block does not name is
+    ##    reported and left alone.
+    ##  * a **proposal is what a write is made of**.  A block which names no colon-free label says
+    ##    nothing about the slot -- adding 'pr:<id>' is not a statement about the chain state -- and
+    ##    a block which carries no label at all writes nothing at all: what the item carries is
+    ##    reported instead.  Deleting on the strength of an absent proposal would reverse a
+    ##    delegate's write, and a delegate may label by hand with no comment at all; a missing line
+    ##    is ambiguous, never an instruction.
+    ##
+    ## An <entry> is one line of the reader's answer as 'key<TAB>item<TAB>id<TAB>value'; the entries
+    ## which are not labels are not this function's business, except that they name the item.  A
+    ## label the item already says is not written again, and the label form is 'rad_label_name's.
     local repo="$1" dry="$2"
     shift 2
-    local -a entries=( "$@" ) derived=() adds=() deletes=() repopt=() call=()
-    local entry key type id value label itemref="" stored="" rc=0
+    local -a entries=( "$@" ) derived=() adds=() slot=() drop=() kept=() unmatched=() carried=() repopt=() call=()
+    local entry key type id value label itemref="" stored="" prev="" rc=0
     local -i i=0
 
     for entry in ${entries[@]+"${entries[@]}"}; do
         IFS="$RAD_US" read -r key type id value <<<"$entry"
-        [[ "$key" == label ]] || continue
+        [[ -n "$type" && -n "$id" ]] || continue
         itemref="$type:$id"
         break
     done
@@ -2107,11 +2173,12 @@ function rad_apply_labels ## <repo> <dry> <entry>.. - the label state of one ite
     type="${itemref%%:*}"
     id="${itemref#*:}"
 
-    ## What the chain proposes (every label of the item's block) and what the item carries now.
+    ## What the chain proposes (every label of the item's block, in the write's own label form) and
+    ## what the item carries now.
     for entry in ${entries[@]+"${entries[@]}"}; do
         IFS="$RAD_US" read -r key type id value <<<"$entry"
         [[ "$key" == label && "$type:$id" == "$itemref" ]] || continue
-        derived+=( "$value" )
+        derived+=( "$(rad_label_name "$value")" )
     done
     type="${itemref%%:*}"
     id="${itemref#*:}"
@@ -2119,42 +2186,80 @@ function rad_apply_labels ## <repo> <dry> <entry>.. - the label state of one ite
     while IFS= read -r label; do
         [[ -n "$label" ]] || continue
         [[ " ${derived[*]} " == *" $label "* ]] && continue
-        deletes+=( "$label" )
+        if rad_label_is_protected "$label"; then
+            kept+=( "$label" )
+            continue
+        fi
+        unmatched+=( "$label" )
     done <<<"$stored"
 
-    ## What to add, in the order the block wrote it, and what is already said.
+    ## No label proposed at all: report what the item carries, write nothing.
+    if (( ${#derived[@]} == 0 )); then
+        carried=( ${unmatched[@]+"${unmatched[@]}"} ${kept[@]+"${kept[@]}"} )
+        if (( ${#carried[@]} )); then
+            printf 'skip label item=%s (%s is stored, no trusted proposal names it)\n' \
+                "$itemref" "${carried[*]}"
+        fi
+        return $rc
+    fi
+    ## A protected label the block does not name stays where it is, and says so.
+    (( ${#kept[@]} )) &&
+        printf 'skip label item=%s (%s is protected, only a removal takes it out)\n' "$itemref" "${kept[*]}"
+
+    ## What to add, in the order the block wrote it -- and which of them is the chain slot.
     for entry in ${entries[@]+"${entries[@]}"}; do
         IFS="$RAD_US" read -r key type id value <<<"$entry"
         [[ "$key" == label && "$type:$id" == "$itemref" ]] || continue
-        if [[ $'\n'"$stored"$'\n' == *$'\n'"$value"$'\n'* ]]; then
+        value="$(rad_label_name "$value")"
+        if [[ $'\n'"$stored"$'\n' == *$'\n'"$value"$'\n'* || " ${adds[*]} " == *" $value "* ]]; then
             printf 'skip label item=%s add=%s (the item already says it)\n' "$itemref" "$value"
             continue
         fi
         adds+=( "$value" )
+        rad_label_is_protected "$value" || slot+=( "$value" )
     done
 
-    if (( ${#adds[@]} == 0 )); then
-        if (( ${#deletes[@]} )); then
-            printf 'skip label item=%s (%s is carried by the item, no proposal asks for it)\n' \
-                "$itemref" "${deletes[*]}"
+    ## A block which names no colon-free label says nothing about the chain slot.
+    if (( ${#slot[@]} == 0 )); then
+        if (( ${#unmatched[@]} )); then
+            printf 'skip label item=%s (%s is stored, the block names no chain state)\n' \
+                "$itemref" "${unmatched[*]}"
         fi
-        return $rc
+        unmatched=()
     fi
-    for i in "${!adds[@]}"; do
+
+    ## Nothing to add and nothing to fix: what is left is the slot's own replacement, a removal
+    ## alone, which the write layer takes as an add-less call.
+    if (( ${#adds[@]} == 0 )); then
+        (( ${#unmatched[@]} )) || return $rc
         if [[ -n "$dry" ]]; then
-            printf 'would label item=%s add=%s' "$itemref" "${adds[i]}"
-            (( i == 0 && ${#deletes[@]} )) && printf ' delete=%s' "${deletes[*]}"
-            printf '\n'
-            continue
+            printf 'would label item=%s delete=%s\n' "$itemref" "${unmatched[*]}"
+            return $rc
         fi
-        call=( "$itemref" "${adds[i]}" )
-        (( i == 0 )) && call+=( ${deletes[@]+"${deletes[@]}"} )
+        call=( "$itemref" "" )
+        call+=( ${unmatched[@]+"${unmatched[@]}"} )
         call+=( ${repopt[@]+"${repopt[@]}"} )
         rad_set_label "${call[@]}" || rc=1
+        return $rc
+    fi
+
+    for i in "${!adds[@]}"; do
+        drop=()
+        (( i == 0 )) && drop+=( ${unmatched[@]+"${unmatched[@]}"} )
+        [[ -n "$prev" ]] && drop+=( "$prev" )
+        if [[ -n "$dry" ]]; then
+            printf 'would label item=%s add=%s' "$itemref" "${adds[i]}"
+            (( ${#drop[@]} )) && printf ' delete=%s' "${drop[*]}"
+            printf '\n'
+        else
+            call=( "$itemref" "${adds[i]}" ${drop[@]+"${drop[@]}"} )
+            call+=( ${repopt[@]+"${repopt[@]}"} )
+            rad_set_label "${call[@]}" || rc=1
+        fi
+        rad_label_is_protected "${adds[i]}" || prev="${adds[i]}"
     done
     return $rc
 }
-
 function rad_apply_from_comments_usage ## [reason] - usage on stderr
 {
     [[ -n "${1:-}" ]] && printf 'rad_apply_from_comments: %s\n' "$1" >&2
@@ -2171,7 +2276,10 @@ function rad_apply_from_comments ## see the module header
     ## dispatches every entry to the applier of its key.  The reader owns the trust decision -- an
     ## entry whose author cannot be attributed never reaches this function, and it is not reported
     ## here because it was never an entry -- and this function owns the effect.  The keys it knows
-    ## are 'label', 'assign' and 'unassign'; any other key is reported and never guessed at.
+    ## are 'label', 'rmlabel', 'assign' and 'unassign'; any other key is reported and never guessed
+    ## at.  The removals run first: a block may carry both a '*rmlabel:' and a '*label:' in the same
+    ## namespace, and the add has to be the later act (otherwise the removal takes the new label out
+    ## again).
     local -a args=() items=() entries=() queries=() specs=() parts=() repopt=() call=()
     local raw value json="" repo="" dry="" item="" entry="" key="" type="" id="" itemref="" did=""
     local rc=0 failed=0
@@ -2244,12 +2352,25 @@ function rad_apply_from_comments ## see the module header
         while IFS= read -r entry; do
             [[ -n "$entry" ]] && entries+=( "$entry" )
         done < <(printf '%s' "$json" | jq -r '.entries[] | [.key,.item,.id,.value] | @tsv' | tr '\t' "$RAD_US")
-        ## The labels first: they are one state of the item, and the write which changes it may have
-        ## to delete the state it replaces.  Then everything else in the order it was written.
+        ## The removals first ('*rmlabel:'): a protected label ('pr:<id>', 'issue:<id>') leaves the
+        ## item only this way, and a block carrying both a removal and an add in the same namespace
+        ## has to end with the new label in -- which it does only when the removal ran before it.
+        for entry in ${entries[@]+"${entries[@]}"}; do
+            IFS="$RAD_US" read -r key type id value <<<"$entry"
+            [[ "$key" == rmlabel ]] || continue
+            itemref="$type:$id"
+            if [[ -n "$dry" ]]; then
+                printf 'would remove label item=%s glob=%s\n' "$itemref" "$value"
+                continue
+            fi
+            rad_rm_label "$itemref" "$value" ${repopt[@]+"${repopt[@]}"} || failed=1
+        done
+        ## The labels then: they are one state of the item, and the write which changes it may have
+        ## to delete the chain slot it replaces.  Then everything else in the order it was written.
         rad_apply_labels "$repo" "$dry" ${entries[@]+"${entries[@]}"} || failed=1
         for entry in ${entries[@]+"${entries[@]}"}; do
             IFS="$RAD_US" read -r key type id value <<<"$entry"
-            [[ "$key" == label ]] && continue
+            case "$key" in label | rmlabel) continue ;; esac
             itemref="$type:$id"
             case "$key" in
             assign | unassign)
