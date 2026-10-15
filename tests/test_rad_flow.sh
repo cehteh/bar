@@ -13,6 +13,11 @@
 #   AC3  rad_trust: --threshold reaches the fact tool, an unresolvable author is exit 2
 #   AC4  rad_trust: usage errors are exit 2 with stdout empty, a missing tool too
 #   AC5  rad_trust: --json is one object which carries the same numbers as the line
+#   AC16 rad_trust: '--dump' answers every ground, evaluates nothing and exits 0
+#   AC17 rad_trust: '--grounds' decides the verdict; the item grounds need an item, never fail
+#   AC18 rad_trust: '--threshold' counts commits, '<n>%' the share of the repository's authored ones
+#   AC19 rad_trust: an item the node does not hold, or one of the other type, is exit 2
+#   AC20 rad_trust: 'owner' is the identity which established the repository, not its latest reviser
 #   AC6  rad_topic: creates '<class>-<description>' on the branch of the same name, exit 0
 #   AC7  rad_topic: the main checkout stays clean, '.worktrees/' is excluded, base is the trunk
 #   AC8  rad_topic: the description is slugified, a name over 40 characters is refused
@@ -235,6 +240,186 @@ check "$(printf '%s' "$OUT" | jq -r '.bar_rad')" "1" "the object is marked"
 check "$(printf '%s' "$OUT" | jq -r '.verdict')" "trusted" "the verdict is in the object"
 check "$(printf '%s' "$OUT" | jq -r '.author.total_authored')" "396" "the authored count is in the object"
 check "$(printf '%s' "$OUT" | jq -r '.threshold')" "10" "the threshold is in the object"
+
+# -------------------------------------------------------------------------------------------------
+# AC16..AC20 - rad_trust: the grounds, the dump, the relative threshold
+# -------------------------------------------------------------------------------------------------
+
+# a fake node: 'rad path' is the only thing the helper asks it, and the storage below it is built by
+# hand -- an identity document whose *initial* revision the owner authored, and one issue whose create
+# op the opener wrote and whose newest assign op names the assignee
+mkfakerad() { # <file> <radicle-home>
+    cat >"$1" <<FAKE
+#!/bin/sh
+case "\${1:-}" in
+path) printf '%s\n' "$2" ;;
+*) printf 'unexpected rad invocation: %s\n' "\$*" >&2; exit 1 ;;
+esac
+FAKE
+    chmod +x "$1"
+}
+
+mkop() { # <store> <nid> <subject> <payload-json|->
+    local store="$1" nid="$2" subject="$3" payload="$4"
+    shift 4
+    local tree=""
+    if [[ "$payload" == "-" ]]; then
+        tree="$(printf '' | git --git-dir="$store" mktree)"
+    else
+        local blob manifest
+        blob="$(printf '%s' "$payload" | git --git-dir="$store" hash-object -w --stdin)"
+        manifest="$(printf '{"typeName":"xyz.radicle.issue","version":1}' |
+            git --git-dir="$store" hash-object -w --stdin)"
+        tree="$(printf '100644 blob %s\t0\n100644 blob %s\tmanifest\n' "$blob" "$manifest" |
+            git --git-dir="$store" mktree)"
+    fi
+    GIT_AUTHOR_NAME="$nid" GIT_AUTHOR_EMAIL="$nid@$nid" \
+    GIT_AUTHOR_DATE="2026-10-15T12:00:00+02:00" \
+    GIT_COMMITTER_NAME="$nid" GIT_COMMITTER_EMAIL="$nid@$nid" \
+    GIT_COMMITTER_DATE="2026-10-15T12:00:00+02:00" \
+    git --git-dir="$store" commit-tree "$tree" "$@" -m "$subject"
+}
+
+FACT_RID="rad:zFAKE"
+OPENER="z6Mkopener"
+ASSIGNEE="z6Mkassignee"
+OWNER="z6Mkowner"
+REVISER="z6Mkreviser"
+ITEM="d89673599766b6b4f472e267b6e2ebaba7b1c543"
+
+FAKEHOME="$WORK/fakehome"
+FAKEHOME2="$WORK/fakehome2"
+FAKERAD="$WORK/fake-rad"
+mkfakerad "$FAKERAD" "$FAKEHOME"
+mkfakerad "$WORK/fake-rad2" "$FAKEHOME2"
+
+# <home> <creator> <reviser> <opener> <assignee> - a storage with the identity document and one issue
+mkstore() { # the author of the *initial* revision is the owner, the newest revision is somebody else
+    local home="$1" creator="$2" reviser="$3" opener="$4" assignee="$5"
+    local store="$home/storage/${FACT_RID#rad:}"
+    mkdir -p "$store"
+    git init -q --bare "$store"
+    local first second create assign
+    empty="$(printf '' | git --git-dir="$store" mktree)"
+    first="$(mkop "$store" "$creator" "Initialize identity" -)"
+    second="$(mkop "$store" "$reviser" "Propose revision" - -p "$first")"
+    create="$(mkop "$store" "$opener" "Create issue" '{"type":"comment","body":"the item"}' -p "$second")"
+    assign="$(mkop "$store" "$opener" "Assign" \
+        "{\"type\":\"assign\",\"assignees\":[\"did:key:$assignee\"],\"message\":\"\"}" -p "$create")"
+    git --git-dir="$store" update-ref refs/rad/id "$second"
+    git --git-dir="$store" update-ref "refs/namespaces/$creator/refs/cobs/xyz.radicle.issue/$ITEM" "$assign"
+}
+
+fact_json() { # <did> <is_delegate> <authored>
+    printf '{"rid":"%s","threshold":10,"delegates":[],"author":{"alias":"who","did":"%s","is_delegate":%s,"total_authored":%s},"contributor":null,"reason":"stub"}' \
+        "$FACT_RID" "$1" "$2" "$3"
+}
+
+mkstore "$FAKEHOME" "$OWNER" "$REVISER" "$OPENER" "$ASSIGNEE"
+# a second node which holds no storage at all: the grounds about the repository cannot be answered
+mkdir -p "$FAKEHOME2/storage"
+
+echo "--- AC16 --dump: every ground, nothing evaluated ---"
+run_bar_env "$TRUST" "RAD_TRIAGE_FACTS=$STUB" "RAD_BIN=$FAKERAD" "STUB_ARGS=/dev/null" \
+    "STUB_JSON=$(fact_json "did:key:$OPENER" true 2)" \
+    -- rad_trust --repo "$FACT_RID" --author "$OPENER" --dump --issue "$ITEM"
+check "$RC" "0" "a dump is an answer, exit 0"
+check "$(printf '%s' "$OUT" | jq -r '.grounds.delegate')" "true" "the delegate ground is in the dump"
+check "$(printf '%s' "$OUT" | jq -r '.grounds.owner')" "false" "the owner ground is in the dump, and the opener is not it"
+check "$(printf '%s' "$OUT" | jq -r '.grounds.opened')" "true" "the opener is in the dump"
+check "$(printf '%s' "$OUT" | jq -r '.grounds.assigned')" "false" "and the assignment names somebody else"
+check "$(printf '%s' "$OUT" | jq -r '.grounds.contributed.commits')" "2" "the author's own commits are in the dump"
+check "$(printf '%s' "$OUT" | jq -r '.grounds.contributed.share')" "0.5" "the share is measured against the repository"
+check "$(printf '%s' "$OUT" | jq -r '.grounds.contributed.threshold')" "10" "the threshold in the dump is the one in force"
+check "$(printf '%s' "$OUT" | jq -r '.verdict // "none"')" "none" "a dump carries no verdict"
+check "$(printf '%s' "$OUT" | jq -r '.ground' )" "null" "and no ground that decided"
+run_bar_env "$TRUST" "RAD_TRIAGE_FACTS=$STUB" "RAD_BIN=$FAKERAD" "STUB_ARGS=/dev/null" \
+    "STUB_JSON=$(fact_json "did:key:$ASSIGNEE" false 1)" \
+    -- rad_trust --repo "$FACT_RID" --author "$ASSIGNEE" --dump --issue "$ITEM" --json
+check "$(printf '%s' "$OUT" | jq -r '.grounds.assigned')" "true" "the assignee carries the assigned ground"
+check "$(printf '%s' "$OUT" | jq -r '.grounds.opened')" "false" "and not the one of the opener"
+check "$(printf '%s' "$OUT" | jq -r '.grounds.owner')" "false" "nor the owner's"
+
+echo "--- AC17 --grounds decides, the item grounds need an item ---"
+run_bar_env "$TRUST" "RAD_TRIAGE_FACTS=$STUB" "RAD_BIN=$FAKERAD" "STUB_ARGS=/dev/null" \
+    "STUB_JSON=$(fact_json "did:key:$ASSIGNEE" false 1)" \
+    -- rad_trust --repo "$FACT_RID" --author "$ASSIGNEE" --grounds assigned --issue "$ITEM"
+check "$RC" "0" "the assignee is trusted when the assignment is the ground"
+contains "$OUT" "ground=assigned" "the ground that decided is named"
+run_bar_env "$TRUST" "RAD_TRIAGE_FACTS=$STUB" "RAD_BIN=$FAKERAD" "STUB_ARGS=/dev/null" \
+    "STUB_JSON=$(fact_json "did:key:$ASSIGNEE" false 1)" \
+    -- rad_trust --repo "$FACT_RID" --author "$ASSIGNEE" --grounds opened --issue "$ITEM"
+check "$RC" "1" "the same author lacks the 'opened' ground"
+contains "$OUT" "ground=-" "no ground decided, and that is said"
+run_bar_env "$TRUST" "RAD_TRIAGE_FACTS=$STUB" "RAD_BIN=$FAKERAD" "STUB_ARGS=/dev/null" \
+    "STUB_JSON=$(fact_json "did:key:$ASSIGNEE" false 1)" \
+    -- rad_trust --repo "$FACT_RID" --author "$ASSIGNEE" --grounds opened,assigned --issue "$ITEM"
+check "$(printf '%s' "$OUT" | wc -l)" "0" "the answer is one line"
+contains "$OUT" "ground=assigned" "the first listed ground which holds is the one reported"
+run_bar_env "$TRUST" "RAD_TRIAGE_FACTS=$STUB" "RAD_BIN=$FAKERAD" "STUB_ARGS=/dev/null" \
+    "STUB_JSON=$(fact_json "did:key:$ASSIGNEE" false 1)" \
+    -- rad_trust --repo "$FACT_RID" --author "$ASSIGNEE" --grounds opened --json
+check "$RC" "1" "an item ground without an item is false, not an error"
+check "$(printf '%s' "$OUT" | jq -r '.grounds.opened')" "false" "and the ground is 'false' in the object"
+run_bar_env "$TRUST" "RAD_TRIAGE_FACTS=$STUB" "RAD_BIN=$FAKERAD" "STUB_ARGS=/dev/null" \
+    "STUB_JSON=$(fact_json "did:key:$ASSIGNEE" false 1)" \
+    -- rad_trust --repo "$FACT_RID" --author "$ASSIGNEE" --grounds delegate,contributed
+check "$RC" "1" "the default rule is 'delegate,contributed', unchanged"
+run_bar "$TRUST" rad_trust --repo "$FACT_RID" --author x --grounds facette
+check "$RC" "2" "an unknown ground is a usage error"
+contains "$ERR" "unknown ground 'facette'" "the unknown ground is named"
+contains "$ERR" "delegate, owner, opened, assigned, contributed" "and the vocabulary is offered"
+
+echo "--- AC18 the threshold: commits, or the share of the repository's authored ones ---"
+run_bar_env "$TRUST" "RAD_TRIAGE_FACTS=$STUB" "RAD_BIN=$FAKERAD" "STUB_ARGS=/dev/null" \
+    "STUB_JSON=$(fact_json "did:key:$OPENER" false 2)" \
+    -- rad_trust --repo "$FACT_RID" --author "$OPENER" --grounds contributed --threshold 10%
+check "$RC" "0" "half of the repository's authored commits clears 10%"
+contains "$OUT" "threshold=10%" "the threshold is echoed as it was asked"
+run_bar_env "$TRUST" "RAD_TRIAGE_FACTS=$STUB" "RAD_BIN=$FAKERAD" "STUB_ARGS=/dev/null" \
+    "STUB_JSON=$(fact_json "did:key:$OPENER" false 2)" \
+    -- rad_trust --repo "$FACT_RID" --author "$OPENER" --grounds contributed --threshold 90%
+check "$RC" "1" "and does not clear 90%"
+run_bar_env "$TRUST" "RAD_TRIAGE_FACTS=$STUB" "RAD_BIN=$FAKERAD" "STUB_ARGS=/dev/null" \
+    "STUB_JSON=$(fact_json "did:key:$OPENER" false 2)" \
+    -- rad_trust --repo "$FACT_RID" --author "$OPENER" --grounds contributed --threshold 0.5% --json
+check "$RC" "0" "a fractional percentage parses and is compared"
+check "$(printf '%s' "$OUT" | jq -r '.grounds.contributed.threshold')" "0.5%" "the object carries the threshold"
+check "$(printf '%s' "$OUT" | jq -r '.grounds.contributed.share')" "0.5" "and the share it was compared against"
+run_bar "$TRUST" rad_trust --repo "$FACT_RID" --author x --threshold 10.5
+check "$RC" "2" "a fractional *count* is still a usage error"
+run_bar "$TRUST" rad_trust --repo "$FACT_RID" --author x --threshold %
+check "$RC" "2" "a percent without a number is a usage error"
+
+echo "--- AC19 an item this node cannot show is 'could not answer' ---"
+run_bar_env "$TRUST" "RAD_TRIAGE_FACTS=$STUB" "RAD_BIN=$FAKERAD" "STUB_ARGS=/dev/null" \
+    "STUB_JSON=$(fact_json "did:key:$OPENER" true 2)" \
+    -- rad_trust --repo "$FACT_RID" --author "$OPENER" --grounds opened --issue deadbee5
+check "$RC" "2" "an id the node does not hold is exit 2, never 'false'"
+contains "$ERR" "the node holds no issue deadbee5" "and it says so"
+run_bar_env "$TRUST" "RAD_TRIAGE_FACTS=$STUB" "RAD_BIN=$FAKERAD" "STUB_ARGS=/dev/null" \
+    "STUB_JSON=$(fact_json "did:key:$OPENER" true 2)" \
+    -- rad_trust --repo "$FACT_RID" --author "$OPENER" --grounds opened --patch "$ITEM"
+check "$RC" "2" "an item of the other type is exit 2 too"
+contains "$ERR" "is a issue, not a patch" "and the type it is is named"
+run_bar_env "$TRUST" "RAD_TRIAGE_FACTS=$STUB" "RAD_BIN=$WORK/fake-rad2" "STUB_ARGS=/dev/null" \
+    "STUB_JSON=$(fact_json "did:key:$OPENER" true 2)" \
+    -- rad_trust --repo "$FACT_RID" --author "$OPENER" --grounds owner
+check "$RC" "2" "a repository the node holds no storage for is exit 2"
+run_bar_env "$TRUST" "RAD_TRIAGE_FACTS=$STUB" "RAD_BIN=$WORK/fake-rad2" "STUB_ARGS=/dev/null" \
+    "STUB_JSON=$(fact_json "did:key:$OPENER" true 2)" \
+    -- rad_trust --repo "$FACT_RID" --author "$OPENER" --grounds delegate
+check "$RC" "0" "while the grounds the fact tool answers need no storage at all"
+
+echo "--- AC20 'owner' is the identity which built the repository, not its latest reviser ---"
+run_bar_env "$TRUST" "RAD_TRIAGE_FACTS=$STUB" "RAD_BIN=$FAKERAD" "STUB_ARGS=/dev/null" \
+    "STUB_JSON=$(fact_json "did:key:$OWNER" false 1)" \
+    -- rad_trust --repo "$FACT_RID" --author "$OWNER" --grounds owner --issue "$ITEM"
+check "$RC" "0" "the author of the initial identity revision is the owner"
+run_bar_env "$TRUST" "RAD_TRIAGE_FACTS=$STUB" "RAD_BIN=$FAKERAD" "STUB_ARGS=/dev/null" \
+    "STUB_JSON=$(fact_json "did:key:$REVISER" false 1)" \
+    -- rad_trust --repo "$FACT_RID" --author "$REVISER" --grounds owner --issue "$ITEM"
+check "$RC" "1" "the identity of a later revision is not"
 
 # -------------------------------------------------------------------------------------------------
 # AC6..AC13 - rad_topic

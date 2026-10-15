@@ -1709,11 +1709,11 @@ MODULE API/RULES
       bar rad_state [--json] [--max <n>]                     the whole state, one screen
       bar rad_patches [--state <s>] [--author <a>] [--json] [--max <n>]
                                                              only the patches, filtered
-      bar rad_trust --repo <rid> --author <who>              is that author a trusted source
-      bar rad_comment_metadata <item> --query <label|rmlabel|assign|unassign>
-                                                             the trusted '*label:'/'*rmlabel:'/
-                                                             '*assign:'/'*unassign:' proposals of
-                                                             one item
+      bar rad_trust --repo <rid> --author <who> [--grounds <..>] [--dump]
+                                                             which grounds of trust that author has
+      bar rad_comment_metadata <item> --query <label|assign|unassign>
+                                                             the trusted '*label:'/'*assign:'/
+                                                             '*unassign:' proposals of one item
       bar rad_topic <class> "<description>"                  open the topic tree of an item
       bar rad_reaction [--from <emoji>] <to> <target>..      set/transition/withdraw our own marker
       bar rad_rm_label <item> <glob>..                       remove the stored labels a glob matches
@@ -1782,15 +1782,41 @@ MODULE API/RULES
       1  could not answer: 'rad' is missing or failed, or its output was not understood
     
     'rad_trust' answers whether the author of an incoming issue or patch counts as a *trusted
-    source* for the triage policy (`incoming-issue-triage` §3): a delegate of that repository, or an
-    identity with at least <threshold> authored commits.  The numbers come from the fact tool the
-    setting 'RAD_TRIAGE_FACTS' names (delegates from the identity document, the commits an
-    identity authored as its own NID from the COB commits, plus the code commits of the humans
-    behind its patches); this helper is the one action which turns them into the verdict and the exit
-    code, so the question costs no agent turn and no prose:
+    source* for the triage policy (`incoming-issue-triage` §3) -- and, above that, **which grounds of
+    trust** that author has, so the caller decides per action instead of paying for one fixed rule.
+    The grounds are a disjoint list (any one of them suffices, an implied OR, no expressions):
+    
+      delegate      the author is a delegate of this repository
+      owner         the author is the identity which established the repository
+      opened        the author opened the item under discussion
+      assigned      the author is an assignee of that item
+      contributed   the commits the identity authored as itself reach the threshold
+    
+    'owner' and the two item grounds are facts about the repository's own copy and its item, so they
+    need '--issue <id>' or '--patch <id>'; without an item they are 'false', never an error.
     
       bar rad_trust --repo rad:z3WhBdHt… --author cehteh
-      trusted author=cehteh delegate=yes authored=396 threshold=10 reason=delegate of this repository repo=rad:z3WhBdHt1VVNyeQ61zpY66pNzuSrP
+      trusted author=cehteh delegate=yes authored=396 threshold=10 ground=delegate reason=delegate of this repository repo=rad:z3WhBdHt1VVNyeQ61zpY66pNzuSrP
+    
+      bar rad_trust --repo rad:z3WhBdHt… --author cehteh --grounds delegate,assigned --issue d896735
+      bar rad_trust --repo rad:z3WhBdHt… --author cehteh --dump --issue d896735    every ground, no verdict
+      bar rad_trust --repo rad:z3WhBdHt… --author cehteh --grounds contributed --threshold 10%
+    
+    '--grounds' names the grounds which suffice (default 'delegate,contributed', the one rule this
+    helper answered before), and the 'ground' it reports is the first of them which holds, in the order
+    they were listed.  '--dump' answers every ground and evaluates *nothing*: no verdict, no threshold,
+    exit 0.  That is the call a caller makes once per scope and then caches -- the grounds are values,
+    the decision is the caller's -- so a second call in the same scope is wasted work.
+    
+    '--threshold' decides 'contributed' alone: a bare number counts commits (default 10), a percent
+    ('10%', '0.5%') is the share of the commits every identity authored in this repository, which is
+    what lets one setting mean the same in a big and in a small one.  The numbers come from the fact
+    tool 'RAD_TRIAGE_FACTS' names (delegates from the identity document, the commits an identity
+    authored as its own NID from the COB commits, plus the code commits of the humans behind its
+    patches); the grounds about the repository's own copy -- owner, opened, assigned and the total the
+    share is measured against -- are read from the node storage, and only when a ground asks for them.
+    The '--json' form is the whole object the tool answered plus 'grounds', and in verdict mode
+    'verdict', 'ground' and 'reason' as well.
     
       exit 0 trusted -- 1 untrusted -- 2 could not answer (unknown author, no data, usage)
     
@@ -1986,6 +2012,12 @@ MODULE API/RULES
         the timestamp the ages are relative to
         Default: 0
 
+      RAD_TRUST_STORAGE (g)
+        the node storage of it, once it is resolved
+
+      RAD_TRUST_ITEM_REF (g)
+        the COB of the item asked about, once it is resolved
+
       RAD_COMMENT_METADATA_AUTHORED (gA)
         '<rid>|<nid>' -> the commits that identity authored
         Default: ()
@@ -2031,20 +2063,60 @@ MODULE API/RULES
       rad_slug <text>
         the description as a name slug, empty when nothing is left
 
+      rad_trust_ground_known <name>
+        0 when <name> is one of the grounds
+
       rad_trust_usage [reason]
         usage on stderr
+        Which repository, and where its COBs are: every ground which is a fact about the node's own copy
+        ('owner', 'opened', 'assigned') and a relative threshold need it -- the two facts the fact tool
+        answers do not, and resolving it costs a 'rad' invocation, so it happens only when a ground asks
+        for it.  A repository the node does not hold is *could not answer* (2): nothing about it can be
+        established, not even 'false'.
+        The 'owner' ground.  Radicle has no owner field: a repository belongs to its delegates and the
+        identity document (payload, delegates, threshold) names no single owner.  The one identity a
+        'whose repository is this' question can be answered with is the identity that *established* it:
+        the author of the initial revision of the identity document, which is the one 'rad init' gave
+        the project to.  An identity document which is not there, or which has no history, answers
+        nothing -- the ground is 'false' then, never an error.
+        The denominator of a relative threshold: the commits authored as *some* identity
+        ('<alias>@<NID>'), counted over all refs of the node's copy the same way the fact tool counts the
+        author's own -- which is what lets one setting ('10%') mean the same in a big and in a small
+        repository.  A count, never a failure: no commits means zero.
+        The item the 'opened' and 'assigned' grounds are about, by its id (short or full) and of the type
+        the caller named.  An id the node does not hold, or one which is the other type, is the caller's
+        error and not 'false': a caller asking about an item this node cannot show cannot act on a no.
+        The item's author is the author of the op which *created* it.  A COB is chained onto the identity
+        commits -- and a patch COB onto the patch's own commits -- so the create op is found by its
+        subject ('Create issue'/'Create patch') and confirmed by the manifest next to it, which names the
+        item type: a foreign op in the same chain is not the create op, and an op whose manifest says
+        otherwise is skipped rather than believed.
 
       rad_trust see the module header
-        Body of the 'rad_trust' rule: one verdict line and the exit code which carries it.  The
-        facts come from the backing tool, this function adds the policy (which is what the triage
-        skill would otherwise spell out per item).
-        The tool exits non-zero when it cannot answer (an unresolvable author is one of those), and
-        still prints the JSON which says why -- so the exit code is reported, never interpreted: an
-        empty answer is 'could not answer', anything else is read and the reason travels on.
-        One jq pass, so the text form and the machine form carry the same numbers.  An author the
-        repository cannot resolve is *not* an error of the tool: it has no data, and that is the
-        'unknown' verdict (exit 2), never 'untrusted'.  The fields are joined with US (0x1f) and not
-        with a tab: an empty field has to survive the read, and IFS whitespace would collapse it.
+        Which grounds are asked for: the named ones, or -- with no '--grounds' -- the rule this helper
+        has always answered (a delegate, or the authored commits reaching the threshold).  '--dump'
+        means all of them, and evaluates nothing.
+        The tool's '--threshold' is an absolute count, so a relative threshold is not handed to it: that
+        comparison is made here, from the same count and the repository's own total.  The tool's own
+        'contributor' verdict is not used either -- the grounds are what decides, once.
+        The tool exits non-zero when it cannot answer (an unresolvable author is one of those), and still
+        prints the JSON which says why -- so the exit code is reported, never interpreted: an empty
+        answer is 'could not answer', anything else is read and the reason travels on.
+        One jq pass, so the text form and the machine form carry the same numbers.  The fields are joined
+        with US (0x1f) and not with a tab: an empty field has to survive the read, and IFS whitespace
+        would collapse it.
+        An author the repository cannot resolve is *not* an error of the tool: it has no data, and that
+        is 'unknown' (exit 2), never 'untrusted'.  Nothing can be established for it, so no ground is.
+        'contributed': the commits this identity authored as itself against the threshold -- absolute, or
+        as the share of the commits every identity authored in this repository.  The total is read when a
+        relative threshold compares it, and in '--dump' (the cache call wants the share of a repository,
+        not only of a relative threshold).
+        'owner' and the two item grounds are facts about the node's own copy of the repository, so they
+        need its storage -- resolved once, and only when one of them is asked for.
+        No item named: the two item grounds cannot be established.  They are 'false', never an error
+        -- a caller which asks about them without an item has nothing to decide either.
+        The verdict: the first ground which holds **in the order the caller listed them**, so a caller
+        lists its grounds in the order it wants them reported.
 
       rad_metadata_nid <did-or-nid>
         the bare NID of an identity
