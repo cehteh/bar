@@ -70,6 +70,10 @@
 #   AC34 the state compared is the one 'rad cob show' reports, never an op chain a reader reduces
 #        itself: the marker rad reports is the state, a stale expectation of the caller's is refused and
 #        writes nothing, and the expectation which does match goes through and takes it back
+#   AC35 one call changes one marker: '<from>' names exactly one marker and is asked as *membership*,
+#        so a step beside a second marker of ours is a normal transition (the second is left alone, and
+#        a '<to>' which is already live is a no-op add), while a value naming several markers is a
+#        usage error -- the document AC35 works from is the one a live node answered for that state
 
 set -euo pipefail
 
@@ -1226,6 +1230,61 @@ contains "$OUT" "from=💤 to=✅ withdrawn=yes" "…and the transition takes it
 echo
 
 echo
+echo
+
+echo "AC35 one step changes one marker: '<from>' is membership, a second marker is left alone"
+# The document below is the one a live node answered for exactly this state (playground repo,
+# 2026-10-16): rad keeps one entry per emoji, so setting a second marker beside a live one leaves both,
+# and that is what 'rad cob show' reports.  The measurements the reader is built on -- set and withdraw
+# are values and never toggles, and in one op the last action wins -- are in rad_metadata_reactions.
+cob_document xyz.radicle.patch "$CAS" \
+    "{\"revisions\":{\"$CAS_ROOT\":{\"reactions\":[{\"location\":null,\"emoji\":\"✅\",\"authors\":[\"$SELF_NID\"]},{\"location\":null,\"emoji\":\"❓\",\"authors\":[\"$SELF_NID\"]}],\"discussion\":{\"comments\":{}}}}}"
+: >"$WORK/rad.calls"
+: >"$WORK/rad.actions"
+run "$PROJECT" rad_reaction --from ✅ 👀 "$CAS_ROOT"
+check "$RC" 0 "the marker the caller read is live, so the expectation holds beside a second one"
+check "$(lines_of "$(cat "$WORK/rad.actions")")" 2 \
+    "the step writes the marker to set and the one to take back, and nothing else"
+check "$(sed -n 1p "$WORK/rad.actions")" \
+    "{\"type\":\"revision.react\",\"revision\":\"$CAS_ROOT\",\"reaction\":\"👀\",\"active\":true}" \
+    "…the marker to set first, which is the action that survives the op"
+check "$(sed -n 2p "$WORK/rad.actions")" \
+    "{\"type\":\"revision.react\",\"revision\":\"$CAS_ROOT\",\"reaction\":\"✅\",\"active\":false}" \
+    "…and the one the caller expected, taken back in the same op"
+absent "$(cat "$WORK/rad.actions")" "❓" "…the second marker of ours is not touched at all"
+contains "$OUT" "from=✅ to=👀 withdrawn=yes" "…and the report names the swap"
+: >"$WORK/rad.calls"
+: >"$WORK/rad.actions"
+err "$PROJECT" rad_reaction --from "✅ ❓" 👀 "$CAS_ROOT"
+check "$RC" 2 "a value naming several markers is a usage error, not a state"
+contains "$OUT" "names more than one marker" "…saying that a transition changes exactly one"
+check "$(lines_of "$(cat "$WORK/rad.calls")")" 0 "and it writes nothing"
+: >"$WORK/rad.calls"
+: >"$WORK/rad.actions"
+err "$PROJECT" rad_reaction --from 👀 ✅ "$CAS_ROOT"
+check "$RC" 1 "a marker of ours which is not live is refused like any other expectation"
+contains "$OUT" "is '✅ ❓' where '👀' was expected" "…naming the state it found"
+check "$(lines_of "$(cat "$WORK/rad.calls")")" 0 "which writes nothing"
+: >"$WORK/rad.calls"
+: >"$WORK/rad.actions"
+err "$PROJECT" rad_reaction --from "" 👀 "$CAS_ROOT"
+check "$RC" 1 "'no live marker of mine' does not hold while two of ours are live"
+check "$(lines_of "$(cat "$WORK/rad.calls")")" 0 "and nothing is written for it either"
+: >"$WORK/rad.calls"
+: >"$WORK/rad.actions"
+err "$PROJECT" rad_reaction --from ⏳ 👀 "$CAS_ROOT"
+check "$RC" 2 "the one marker is checked against the allow list before any call"
+contains "$OUT" "is not a reaction the store accepts" "…and refused by name"
+check "$(lines_of "$(cat "$WORK/rad.calls")")" 0 "which writes nothing"
+: >"$WORK/rad.calls"
+: >"$WORK/rad.actions"
+run "$PROJECT" rad_reaction --from ❓ "" "$CAS_ROOT"
+check "$RC" 0 "an empty <to> takes the one marker the caller expected back and sets nothing"
+check "$(lines_of "$(cat "$WORK/rad.actions")")" 1 "…in one action"
+check "$(sed -n 1p "$WORK/rad.actions")" \
+    "{\"type\":\"revision.react\",\"revision\":\"$CAS_ROOT\",\"reaction\":\"❓\",\"active\":false}" \
+    "…the marker named, never the other one"
+
 if (( failures )); then
     echo "=== $failures check(s) failed ==="
     exit 1

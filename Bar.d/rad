@@ -222,6 +222,16 @@
 ### against; a reader reducing the op chain itself cannot tell a marker from one its author took back
 ### in the very op next to it, and reports a superseded marker as live for ever (bar issue 9a815de).
 ###
+### The state of one target is a *set*: rad keeps one entry per emoji, so the same marker cannot be
+### live twice, while two *different* markers of ours can be.  One call is still one marker's business:
+### '<from>' names exactly one, the comparison asks only whether that one *is* live (never that it is
+### the whole state), and the step takes it back and sets '<to>'.  A second marker standing there is
+### left where it is, and a '<to>' which is already live is a no-op add.  'active' is a value and never
+### a toggle: a marker is taken back by its own action, not by writing it a second time.  The read is
+### the *current* state only -- 'rad cob show'
+### takes no '--from'/'--until' -- which is what a caller needs before it writes; the state at some
+### point in time is 'rad cob log --from/--until' instead.
+###
 ###   bar rad_reaction [--from <emoji>] [--repo <rid|path>] <to> <target>..
 ###   bar rad_reaction <from> <to> <target>.. [--repo <rid|path>]
 ###
@@ -231,15 +241,20 @@
 ### '<patch-or-revision-id>' (a patch id is its root revision) or '<patch-or-revision-id>
 ### <comment-id>'.
 ###
-### '<from>' is what the caller expects to be live there: omitted is no expectation at all, the empty
-### string is 'no live marker of mine', anything else must be the state -- and a state which does not
-### match fails without writing anything.  A transition takes '<from>' back in the same step, at
-### every level: the write is one 'rad cob update' whose action list carries the marker to set and the
-### one to withdraw, and rad lands that list as a single op, so the target ends with one live marker of
-### ours.  The typed commands are deliberately not used -- 'rad issue react' cannot take a marker back
-### at all ('--undo' is patch only in rad 1.10.3) and the patch commands would be a second code path
-### for the same effect.  An empty '<to>' takes '<from>' back and sets nothing, and it needs '--from',
-### because the expectation is what names the marker.
+### '<from>' is the one marker the caller expects to be live there: omitted is no expectation at all,
+### the empty string is 'no live marker of mine', anything else must be live -- and an expectation which
+### does not hold fails without writing anything.  Exactly one marker, because the step changes exactly
+### one: it takes '<from>' back and sets '<to>' in the same op, so any other marker standing on the
+### target is none of this call's business, and a '<to>' which is already live costs nothing.  A value
+### naming several markers ('--from "✅ ❓"') is therefore a usage error, not a state.  The action list
+### carries the marker to set first and the withdrawal after it, and rad lands that list as a single op
+### -- in one op the actions apply in order and the last one wins, which is why the marker to set comes
+### first.  Its '<from>' is gone and its '<to>' is live afterwards; any other marker stays.  The typed
+### commands are
+### deliberately not used -- 'rad issue react' cannot take a marker back at all ('--undo' is patch only
+### in rad 1.10.3) and the patch commands would be a second code path for the same effect.  An empty
+### '<to>' takes the named markers back and sets nothing, and it needs '--from', because the
+### expectation is what names the markers.
 ###
 ### 'rad_topic' opens the topic tree of that work in one action: it mints the name from the
 ### branch *class* and the description, resolves the clone and the freshest base, keeps '.worktrees/'
@@ -2759,6 +2774,25 @@ function rad_metadata_reactions ## <storage> <ref> <kind> <target> <nid> - our l
     ## it set the next one in (one op, two actions) cannot be read as live, and a caller whose
     ## expectation comes from the same source can always complete its transition.
     ##
+    ## What is read on top of, measured on a live node with 'rad cob update' (playground repo,
+    ## 2026-10-16: every case written as an action file and read back with 'rad cob show'):
+    ##
+    ##   * the state is a *set*, never a stack: one entry per (location, emoji) carrying the identities
+    ##     that have it set, so the same marker cannot be live twice -- while two *different* markers of
+    ##     one identity can be, which is the shape the last paragraph below is about.
+    ##   * 'active' is a value, not a toggle: setting a marker that is already live is a no-op (rc 0,
+    ##     the state keeps it) and withdrawing one that is not live is silently ignored (rc 0, nothing
+    ##     changes).  The toggle is the typed CLI's convenience ('rad issue react'), never the store's,
+    ##     so a writer states 'active' and takes a marker back with an action of its own.
+    ##   * inside one op the actions apply in order and the last one wins: '[A active, A inactive]'
+    ##     ends with nothing live, '[A inactive, A active]' with it live -- which is what lets one op
+    ##     be a whole transition, the marker to set first and the one to take back after it.
+    ##
+    ## The read is the *current* state and nothing else: 'rad cob show' takes no '--from'/'--until',
+    ## and that is what a caller wants before it writes.  The state of a target at some point in time
+    ## is the history route instead ('rad cob log --from/--until', one JSON document per op); it costs
+    ## a walk of the whole chain and is deliberately not built here.
+    ##
     ## The document differs per COB type -- an issue carries '.thread.comments[<id>].reactions' as
     ## '<author> <emoji>' pairs, a patch nests '.revisions[<id>].reactions' and
     ## '.revisions[<id>].discussion.comments[<id>].reactions' as '{location, emoji, authors}' objects
@@ -2771,12 +2805,14 @@ function rad_metadata_reactions ## <storage> <ref> <kind> <target> <nid> - our l
     ## The COB id and its type are read off the ref (bar asks for a ref, 'rad cob show' for an object)
     ## and the RID off the storage directory, which is named after it -- the caller hands in neither.
     ##
-    ## Two markers of ours alive on one target are reported as the *set* they are: the reduction holds
-    ## no order which would call one newer, and one marker per target is the invariant the write side
-    ## keeps, so a caller comparing a single emoji is refused instead of served one of them.  A target
-    ## the document does not carry is refused as well (3): an unread document and a document without
-    ## that target must not both answer 'no live marker of mine', because the caller's CAS would then
-    ## write over a state nobody looked at.
+    ## Two markers of ours alive on one target are reported as the *set* they are -- rad allows exactly
+    ## that ('✅' beside '❓', measured), while the same marker live twice it does not -- and the
+    ## reduction holds no order which would call one of them newer.  This reader answers the state, all
+    ## of it; what a caller asks of it is rad_reaction's business, and there '<from>' is one marker,
+    ## tested for *membership*: the step takes back what it expected and sets what it wants, leaving any
+    ## second marker alone, so a state of two is resolved one marker at a time.  A target the document does not carry is refused as well (3): an unread document and a
+    ## document without that target must not both answer 'no live marker of mine', because the caller's
+    ## CAS would then write over a state nobody looked at.
     local storage="$1" ref="$2" kind="$3" target="$4" nid="$5"
     local typename="${ref%/*}" cob="${ref##*/}" rid="" document="" answer="" found=""
     typename="${typename##*/}"
@@ -2929,8 +2965,12 @@ function rad_reaction_usage ## [reason] - usage on stderr
     printf 'usage: rad_reaction [--from <emoji>] [--repo <rid|path>] <to> <target>..\n' >&2
     printf '       rad_reaction <from> <to> <target>.. [--repo <rid|path>]\n' >&2
     printf '       <to>     the marker to set; empty withdraws <from> and sets nothing\n' >&2
-    printf '       <from>   the marker the caller expects there; omitted is no expectation at all,\n' >&2
-    printf '                the empty string is "no live marker of mine"\n' >&2
+    printf '       <from>   the one marker the caller expects to be live; omitted is no expectation\n' >&2
+    printf '                at all and only sets <to> (a target already carrying one of ours then\n' >&2
+    printf '                holds both), the empty string is "no live marker of mine", and anything\n' >&2
+    printf '                else must be live.  One marker, because the step changes one: <from> is\n' >&2
+    printf '                taken back and <to> set in the same op, so a second marker stays and a\n' >&2
+    printf '                <to> which is already live is a no-op\n' >&2
     printf '       <target> <issue-id> (the issue itself), <issue-id> <comment-id>,\n' >&2
     printf '                <patch-or-revision-id> (the patch is its root revision),\n' >&2
     printf '                <patch-or-revision-id> <comment-id>\n' >&2
@@ -2939,12 +2979,16 @@ function rad_reaction_usage ## [reason] - usage on stderr
 function rad_reaction ## see the module header
 {
     ## Compare and swap on the caller's *own* reaction state: one target, one marker, and the write
-    ## happens only when what the caller expects is what the store reduces.  rad has no way to set a
-    ## reaction to a state, only to add one, so 'from -> to' is what a transition is.
+    ## happens only when what the caller expects is what the store reduces.  rad has no action that
+    ## states a target's whole reaction state in one go -- a marker is set and taken back per emoji --
+    ## so a transition is the pair 'from -> to' written as one op.
     ##
     ## The write is one 'rad cob update' at every level: the action file carries the marker to set and
     ## the one to withdraw, rad lands the pair as a single op, and the target ends with one live marker
-    ## of ours.  The typed commands are not used -- 'rad issue react' can only add, and 'rad patch
+    ## of ours.  Both halves are needed and both are stated: 'active' is a value, not a toggle (re-
+    ## setting a marker takes nothing back), so a write which only set the new one would leave the old
+    ## one live beside it.  One op's actions apply in order, the last one winning, which is why the
+    ## marker to set goes first -- the semantics are measured, see rad_metadata_reactions.  The typed commands are not used -- 'rad issue react' can only add, and 'rad patch
     ## react'/'rad patch comment --react' would be a second code path for the same effect.
     local -a args=() positional=() targets=() actions=()
     local raw value from="" to="" repo="" kind="" level="" storage="" ref="" rid="" nid="" type=""
@@ -3020,7 +3064,18 @@ function rad_reaction ## see the module header
         return 2
     fi
     if [[ -z "$to" ]] && [[ -z "$from" || -z "$from_given" ]]; then
-        rad_reaction_usage "an empty reaction only takes back the one the caller expects"
+        rad_reaction_usage "an empty reaction only takes back the ones the caller expects"
+        return 2
+    fi
+    ## The step changes exactly one marker, so '<from>' names exactly one: a value carrying several
+    ## ('--from "✅ ❓"') is refused here -- it is no state a single step could both expect and resolve
+    ## -- and the one marker is checked against the same allow list as '<to>' before any call.
+    if [[ -n "$from" && "$from" != "${from//[[:space:]]/}" ]]; then
+        rad_reaction_usage "'$from' names more than one marker: a transition changes exactly one"
+        return 2
+    fi
+    if [[ -n "$from" ]] && ! rad_reaction_accepts "$from"; then
+        rad_reaction_usage "'$from' is not a reaction the store accepts"
         return 2
     fi
     if [[ -n "$from_given" && "$from" == "$to" ]]; then
@@ -3073,12 +3128,22 @@ function rad_reaction ## see the module header
         [[ -n "$marker" ]] || continue
         live+="${live:+ }$marker"
     done <<<"$state"
-    if [[ -n "$from_given" && "$live" != "$from" ]]; then
-        local found="no marker" expected="no marker"
-        [[ -n "$live" ]] && found="'$live'"
-        [[ -n "$from" ]] && expected="'$from'"
-        error "the state of $type:${target} is $found where $expected was expected: nothing was written"
-        return 1
+    ## What is compared is *membership*: is the one marker the caller read still live?  rad reports an
+    ## entry per emoji, and a second marker of ours beside it is a state this call has nothing to say
+    ## about -- the step takes back the marker named and sets '<to>', so such a state is resolved one
+    ## marker at a time instead of being refused ('--from "✅" 👀' beside a live '❓' is a transition).
+    local found="no marker"
+    [[ -n "$live" ]] && found="'$live'"
+    if [[ -n "$from_given" ]]; then
+        if [[ -z "$from" ]]; then
+            if [[ -n "$live" ]]; then
+                error "the state of $type:${target} is $found where no marker was expected: nothing was written"
+                return 1
+            fi
+        elif [[ " $live " != *" $from "* ]]; then
+            error "the state of $type:${target} is $found where '$from' was expected: nothing was written"
+            return 1
+        fi
     fi
 
     ## Which COB type the action belongs to, and the ids it has to name in full: 'rad cob update'
@@ -3109,7 +3174,10 @@ function rad_reaction ## see the module header
         actions+=( "$(rad_reaction_action "$to" true "$action_id" "$action_revision" "$action_comment")" ) ||
             return $?
     fi
-    if [[ -n "$from" && "$from" == "$live" ]]; then
+    ## …and the marker the caller expected is taken back in the same op: one expectation, one
+    ## withdrawal, exactly one marker changed.  '<from>' equal to '<to>' is refused above, so the pair
+    ## is never the same emoji and the order of the two actions cannot decide the outcome.
+    if [[ -n "$from" ]]; then
         actions+=( "$(rad_reaction_action "$from" false "$action_id" "$action_revision" "$action_comment")" ) ||
             return $?
         withdrawn=yes
