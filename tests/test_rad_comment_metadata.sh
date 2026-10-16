@@ -48,11 +48,12 @@
 #        state is read fresh), '--dry-run' reports the writes and makes none
 #   AC27 a key with no registered effect is reported and never applied, and a block whose author is
 #        not trusted never reaches an applier at all
-#   AC28 'rad_reaction' compares against the caller's own reduced state: our newest live marker is
-#        the state (an op stream entry its author took back is not, and neither is another identity's
-#        marker), a mismatch writes nothing, and the whole transition -- the issue itself reached
-#        through its root comment included -- is one 'rad cob update' whose action list carries what
-#        rad writes itself, ids in the full form the store validates ('invalid length')
+#   AC28 'rad_reaction' compares against the state 'rad cob show' reports for the caller's own
+#        identity: our live marker is the state (another identity's marker is not, and the two shapes
+#        an issue and a patch answer in are read alike), a mismatch writes nothing, and the whole
+#        transition -- the issue itself reached through its root comment included -- is one 'rad cob
+#        update' whose action list carries what rad writes itself, ids in the full form the store
+#        validates ('invalid length')
 #   AC29 a transition takes the marker it replaces back in the same op, at every level, and an empty
 #        reaction takes one back and sets nothing (which the typed issue command cannot do at all)
 #   AC30 a revision id names the patch COB that holds it, and a comment of that revision is written
@@ -66,6 +67,9 @@
 #        'issue:<id>' stays and is reported), '*rmlabel:' is applied through the write layer and runs
 #        before the labels of the same block, and an item which carries a label while no trusted
 #        proposal names one is reported, never cleaned up
+#   AC34 the state compared is the one 'rad cob show' reports, never an op chain a reader reduces
+#        itself: the marker rad reports is the state, a stale expectation of the caller's is refused and
+#        writes nothing, and the expectation which does match goes through and takes it back
 
 set -euo pipefail
 
@@ -169,6 +173,23 @@ cob)
         done
         printf 'cob update --type %s --object %s --message %s%s\n' "\$t" "\$o" "\$m" "\${r:+ -r \$r}" >>"$WORK/rad.calls"
         cat "\$f" >>"$WORK/rad.actions" 2>/dev/null
+    elif [ "\$2" = show ]; then
+        shift 2
+        t=""; o=""
+        while [ \$# -gt 0 ]; do
+            case "\$1" in
+            --type) t="\$2"; shift 2 ;;
+            --object) o="\$2"; shift 2 ;;
+            --format) shift 2 ;;
+            *) shift ;;
+            esac
+        done
+        printf 'cob show --type %s --object %s\n' "\$t" "\$o" >>"$WORK/rad.reads"
+        if [ -f "$WORK/cob.show.\$t.\$o" ]; then
+            cat "$WORK/cob.show.\$t.\$o"
+        else
+            printf '{}\n'
+        fi
     fi
     ;;
 issue | patch)
@@ -222,6 +243,7 @@ chmod +x "$FACTS"
 : >"$WORK/facts.calls"
 : >"$WORK/rad.calls"
 : >"$WORK/rad.actions"
+: >"$WORK/rad.reads"
 
 # <ns> <type> <cob> <subject> <payload> [parent] [name] [nid] [date] - one COB op, prints its sha
 op() {
@@ -244,6 +266,43 @@ replicate() {
     local ns="$1" type="$2" cob="$3" sha
     sha="$(git --git-dir="$STORAGE" rev-parse "refs/namespaces/$DELEGATE_NID/refs/cobs/xyz.radicle.$type/$cob")"
     git --git-dir="$STORAGE" update-ref "refs/namespaces/$ns/refs/cobs/xyz.radicle.$type/$cob" "$sha"
+}
+
+# <ns> <type> <cob> <subject> <parent> <name> <nid> <date> <action>.. - one COB op carrying several
+# actions, plus the manifest every radicle op has.  This is the shape a reaction *transition* is
+# written in: the marker to set and the marker it replaces ride the same op, entry 0 and entry 1, so
+# a reader that stops at the first entry sees the add and never the withdrawal beside it.
+op_actions() {
+    local ns="$1" type="$2" cob="$3" subject="$4" parent="$5" name="$6" nid="$7" date="$8"
+    shift 8
+    local tree="" action="" blob sha
+    local -i index=0
+    for action in "$@"; do
+        blob="$(printf '%s' "$action" | git --git-dir="$STORAGE" hash-object -w --stdin)"
+        tree+="100644 blob $blob"$'\t'"$index"$'\n'
+        index=$(( index + 1 ))
+    done
+    blob="$(printf '{"typeName":"xyz.radicle.%s","version":1}' "$type" | git --git-dir="$STORAGE" hash-object -w --stdin)"
+    tree+="100644 blob $blob"$'\t'"manifest"$'\n'
+    tree="$(printf '%s' "$tree" | git --git-dir="$STORAGE" mktree)"
+    local -a args=()
+    [[ -n "$parent" ]] && args+=(-p "$parent")
+    sha="$(GIT_AUTHOR_NAME="$name" GIT_AUTHOR_EMAIL="$name@$nid" GIT_AUTHOR_DATE="$date" \
+           GIT_COMMITTER_NAME="$name" GIT_COMMITTER_EMAIL="$name@$nid" GIT_COMMITTER_DATE="$date" \
+           git --git-dir="$STORAGE" commit-tree "$tree" ${args[@]+"${args[@]}"} -m "$subject")"
+    git --git-dir="$STORAGE" update-ref "refs/namespaces/$ns/refs/cobs/xyz.radicle.$type/$cob" "$sha"
+    printf '%s' "$sha"
+}
+
+# <type> <cob> <document> - the object 'rad cob show --format json' answers with: the reduced reaction
+# state, which is the reader's only source of truth.  Measured on a live node: an issue carries
+# '.thread.comments[<id>].reactions' as '<author> <emoji>' pairs, a patch nests
+# '.revisions[<id>].reactions' and '.revisions[<id>].discussion.comments[<id>].reactions' as
+# '{location, emoji, authors}' objects.  The fixture writes that document per object instead of
+# reducing an op chain a second time: the reduction is rad's, and what is under test here is our
+# reader -- which shape it normalises, whose markers it keeps, and the CAS it derives from them.
+cob_document() {
+    printf '%s\n' "$3" >"$WORK/cob.show.$1.$2"
 }
 
 # -- the issue: the description proposes a label, a delegate proposes later, an outsider too ----
@@ -393,6 +452,54 @@ RATCH_REVISION="$(op "$DELEGATE_NID" patch "$RATCH" "Add revision" \
 RATCH_TIP="$(op "$DELEGATE_NID" patch "$RATCH" "React" \
     "{\"active\":true,\"revision\":\"$RATCH_ROOT\",\"reaction\":\"✅\",\"type\":\"revision.react\"}" \
     "$RATCH_REVISION" "self" "$SELF_NID" "2026-10-11T10:50:00+02:00")"
+
+# -- a fourth patch: the state rad reports, against the expectation a caller carries -----------------
+# The incident this pins (bar issue 9a815de): a caller derived its expectation from the COB and was
+# refused for ever, because the state it was compared against was an older marker than the newest live
+# one.  The reader no longer reduces the chain itself -- it takes the state from 'rad cob show', whose
+# reduction is the store's own -- so the fixture hands that document in (see 'cob_document' above) and
+# the chain built here carries what the write still needs: the op ids a full id is resolved from.  Two
+# comments: one rad reports nothing of ours for (so 'no live marker of mine' holds), one it reports a
+# 💤 on (the 👀 of days earlier is refused, and the 💤 the caller does carry goes through).
+CAS="abcdef0123456789abcdef0123456789abcdef01"
+CAS_ID="${CAS:0:7}"
+CAS_ROOT="$(op "$DELEGATE_NID" patch "$CAS" "Initial revision" \
+    '{"type":"revision","description":"a patch whose comment markers move","oid":"4444444444444444444444444444444444444444","base":"1111111111111111111111111111111111111111"}' \
+    "" "delegate" "$DELEGATE_NID" "2026-10-11T10:52:00+02:00")"
+CAS_COMMENT="$(op "$DELEGATE_NID" patch "$CAS" "Comment" \
+    "{\"body\":\"a comment whose marker moved\",\"revision\":\"$CAS_ROOT\",\"type\":\"comment\"}" \
+    "$CAS_ROOT" "delegate" "$DELEGATE_NID" "2026-10-11T10:53:00+02:00")"
+# ours: the marker a caller would have to move
+CAS_TIP="$(op "$DELEGATE_NID" patch "$CAS" "React" \
+    "{\"active\":true,\"revision\":\"$CAS_ROOT\",\"comment\":\"$CAS_COMMENT\",\"reaction\":\"👀\",\"type\":\"revision.comment.react\"}" \
+    "$CAS_COMMENT" "self" "$SELF_NID" "2026-10-11T10:54:00+02:00")"
+# …moved: the set and the withdrawal of the one it replaces, in one op with two actions
+CAS_TIP="$(op_actions "$DELEGATE_NID" patch "$CAS" "React" "$CAS_TIP" "self" "$SELF_NID" \
+    "2026-10-11T10:55:00+02:00" \
+    "{\"active\":true,\"revision\":\"$CAS_ROOT\",\"comment\":\"$CAS_COMMENT\",\"reaction\":\"💤\",\"type\":\"revision.comment.react\"}" \
+    "{\"active\":false,\"revision\":\"$CAS_ROOT\",\"comment\":\"$CAS_COMMENT\",\"reaction\":\"👀\",\"type\":\"revision.comment.react\"}")"
+# …and taken back again, so nothing of ours is live on that comment
+CAS_TIP="$(op "$DELEGATE_NID" patch "$CAS" "React" \
+    "{\"active\":false,\"revision\":\"$CAS_ROOT\",\"comment\":\"$CAS_COMMENT\",\"reaction\":\"💤\",\"type\":\"revision.comment.react\"}" \
+    "$CAS_TIP" "self" "$SELF_NID" "2026-10-11T10:56:00+02:00")"
+# the second comment of that revision: rad reports a 💤 of ours on it, whose predecessor is gone --
+# the shape a caller carrying a stale expectation meets
+CAS_MOVED="$(op "$DELEGATE_NID" patch "$CAS" "Comment" \
+    "{\"body\":\"a second comment\",\"revision\":\"$CAS_ROOT\",\"type\":\"comment\"}" \
+    "$CAS_TIP" "delegate" "$DELEGATE_NID" "2026-10-11T10:57:00+02:00")"
+CAS_TIP="$CAS_MOVED"
+
+# -- the reduced documents the reader compares against, one per COB the reaction tests touch ---------
+# An issue: the root comment is the item itself, and the delegate's ✅ beside ours must never be read as
+# the caller's own state.
+cob_document xyz.radicle.issue "$REACT" \
+    "{\"thread\":{\"comments\":{\"$REACT\":{\"reactions\":[[\"$DELEGATE_NID\",\"✅\"],[\"$SELF_NID\",\"➖\"]]},\"$REACT_COMMENT\":{\"reactions\":[]}}}}"
+# A patch: two revisions, a ✅ of ours on the root one, and a comment of it nobody of ours reacted to.
+cob_document xyz.radicle.patch "$RATCH" \
+    "{\"revisions\":{\"$RATCH_ROOT\":{\"reactions\":[{\"location\":null,\"emoji\":\"✅\",\"authors\":[\"$SELF_NID\"]}],\"discussion\":{\"comments\":{\"$RATCH_COMMENT\":{\"reactions\":[]}}}},\"$RATCH_REVISION\":{\"reactions\":[],\"discussion\":{\"comments\":{}}}}}"
+# The CAS patch: nothing of ours live on the first comment, a 💤 on the second.
+cob_document xyz.radicle.patch "$CAS" \
+    "{\"revisions\":{\"$CAS_ROOT\":{\"reactions\":[],\"discussion\":{\"comments\":{\"$CAS_COMMENT\":{\"reactions\":[]},\"$CAS_MOVED\":{\"reactions\":[{\"location\":null,\"emoji\":\"💤\",\"authors\":[\"$SELF_NID\"]}]}}}}}}"
 
 # -- a seventh issue: its newest label block is an outsider's, which only a trust spec hands over ---
 OWN="dddddddddddddddddddddddddddddddddddddddd"
@@ -865,7 +972,7 @@ contains "$OUT" "applied label item=issue:$KEYS_ID add=after-empty delete=two-wo
 check "$(lines_of "$(cat "$WORK/rad.calls")")" 2 "two writes, one per label of the block"
 echo
 
-echo "AC28 rad_reaction compares against our own reduced state, never the op stream"
+echo "AC28 rad_reaction compares against the state rad reduces, never the op stream"
 : >"$WORK/rad.calls"
 : >"$WORK/rad.actions"
 run "$PROJECT" rad_reaction "" 👀 "$REACT_ID"
@@ -1086,6 +1193,36 @@ contains "$OUT" "skip label item=issue:$MODEL3_ID (wip is stored, no trusted pro
 check "$(lines_of "$(cat "$WORK/rad.calls")")" 1 "only the key which does carry a proposal is written"
 check "$(cat "$WORK/rad.calls")" "issue assign $MODEL3_ID --quiet --add=did:key:$DELEGATE_NID" \
     "which is the assignment"
+echo
+
+echo "AC34 the state is the one 'rad' reports: the stale expectation is refused, the live one goes through"
+: >"$WORK/rad.calls"
+: >"$WORK/rad.actions"
+: >"$WORK/rad.reads"
+run "$PROJECT" rad_reaction "" ❓ "$CAS_ID" "$CAS_COMMENT"
+check "$RC" 0 "'no live marker of mine' holds on a comment rad reports nothing of ours for"
+check "$(cat "$WORK/rad.reads")" "cob show --type xyz.radicle.patch --object $CAS" \
+    "…and the state is read from 'rad cob show', never from the op chain"
+check "$(tail -1 "$WORK/rad.actions")" \
+    "{\"type\":\"revision.comment.react\",\"revision\":\"$CAS_ROOT\",\"comment\":\"$CAS_COMMENT\",\"reaction\":\"❓\",\"active\":true}" \
+    "…and the write names the comment and the revision it was made on"
+: >"$WORK/rad.calls"
+: >"$WORK/rad.actions"
+err "$PROJECT" rad_reaction 👀 ✅ "$CAS_ID" "$CAS_COMMENT"
+check "$RC" 1 "a stale marker a caller still carries is not the state"
+contains "$OUT" "is no marker where '👀' was expected" "…naming the state it really found"
+check "$(lines_of "$(cat "$WORK/rad.calls")")" 0 "and it writes nothing"
+: >"$WORK/rad.calls"
+: >"$WORK/rad.actions"
+err "$PROJECT" rad_reaction 👀 ✅ "$CAS_ID" "$CAS_MOVED"
+check "$RC" 1 "…and where rad reports a 💤, the 👀 of days earlier is not the state either"
+contains "$OUT" "is '💤' where '👀' was expected" "the newest live marker of ours is"
+check "$(lines_of "$(cat "$WORK/rad.calls")")" 0 "which writes nothing as well"
+: >"$WORK/rad.calls"
+: >"$WORK/rad.actions"
+run "$PROJECT" rad_reaction 💤 ✅ "$CAS_ID" "$CAS_MOVED"
+check "$RC" 0 "the state the caller does carry is accepted"
+contains "$OUT" "from=💤 to=✅ withdrawn=yes" "…and the transition takes it back in the same op"
 echo
 
 echo

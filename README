@@ -1909,9 +1909,12 @@ MODULE API/RULES
     
     'rad_reaction' is the same idea for the reaction markers, and those are a different animal: a
     reaction is *private per identity* and can never be delegated, so there is no trust question here
-    -- what the caller compares and swaps is its *own* state, reduced the way the store reduces it:
-    the newest op per target and emoji of ours, with 'active' read off that survivor, ordered by the
-    op's position in the chain (an add and its undo land in the same second routinely).
+    -- what the caller compares and swaps is its *own* state, and that state is read from 'rad cob
+    show --format json': the store's own reduction of the COB, whose per-type shapes are unified here
+    into one list of the live markers of ours on the target.  A transition writes the marker to set
+    beside the one it takes back (one op, two actions), which is the shape the reduction is read
+    against; a reader reducing the op chain itself cannot tell a marker from one its author took back
+    in the very op next to it, and reports a superseded marker as live for ever (bar issue 9a815de).
     
       bar rad_reaction [--from <emoji>] [--repo <rid|path>] <to> <target>..
       bar rad_reaction <from> <to> <target>.. [--repo <rid|path>]
@@ -2393,22 +2396,27 @@ MODULE API/RULES
         U+1F300..U+1F5FF, U+2700..U+27BF, U+1F900..U+1F9FF, U+1F680..U+1F6FF
 
       rad_metadata_reactions <storage> <ref> <kind> <target> <nid>
-        our markers on one target
-        The reaction state of one target as the store reduces it, for *our* identity alone: the newest
-        op per (target, emoji) whose author mail carries our NID, with 'active' read off that survivor.
-        A withdrawal supersedes the add it withdraws without deleting it, so reading 'active' off the
-        op stream would keep reporting markers their author took back.  The order is the op's position
-        in the chain (parent before child), never the op sha: an add and its undo land in the same
-        second routinely.
-        Which ops are reaction ops is read from the payload's 'type' alone, never from the commit
-        subject: the write is 'rad cob update', which stores *our* message as the subject.
-        <kind> says which reaction of which COB is meant: 'comment' matches the op's 'id' (an issue's
-        root comment carries the issue id, a comment its own), 'revision' matches 'revision' (the
-        patch id is its root revision's id) and 'revision-comment' matches 'comment'.  <target> may be
-        short: the payload carries the full id.  Prints '<position>US<emoji>US<active>US<op>' per
-        survivor, oldest first.
-        The fields over 'RAD_US', not over a tab: a tab is *whitespace* to 'read' and empty fields
-        would collapse, which would shift every field behind them.
+        our live markers on one target
+        The state of one target as *rad itself* reduces it, never as the op stream spells it: what the
+        caller compares is 'rad cob show --format json', so a marker its author took back in the same op
+        it set the next one in (one op, two actions) cannot be read as live, and a caller whose
+        expectation comes from the same source can always complete its transition.
+        The document differs per COB type -- an issue carries '.thread.comments[<id>].reactions' as
+        '<author> <emoji>' pairs, a patch nests '.revisions[<id>].reactions' and
+        '.revisions[<id>].discussion.comments[<id>].reactions' as '{location, emoji, authors}' objects
+        -- so the shapes are unified right here, once, and every caller sees one structure: the live
+        reactions of *our* identity on the target, one per line.  <kind> says which part of the
+        document the target is ('comment' an issue's comment or the issue itself, 'revision' a revision
+        of a patch, 'revision-comment' a comment of one) and <target> may be short: the document's keys
+        carry the full ids.
+        The COB id and its type are read off the ref (bar asks for a ref, 'rad cob show' for an object)
+        and the RID off the storage directory, which is named after it -- the caller hands in neither.
+        Two markers of ours alive on one target are reported as the *set* they are: the reduction holds
+        no order which would call one newer, and one marker per target is the invariant the write side
+        keeps, so a caller comparing a single emoji is refused instead of served one of them.  A target
+        the document does not carry is refused as well (3): an unread document and a document without
+        that target must not both answer 'no live marker of mine', because the caller's CAS would then
+        write over a state nobody looked at.
         A patch or issue id names the COB itself and the reader's listing says which; a *revision* id
         is an op inside a patch COB, and 'git for-each-ref --contains' finds the COB whose chain
         carries it -- the same resolution 'rad patch react' makes when it is handed a revision.
@@ -2453,7 +2461,9 @@ MODULE API/RULES
         Which COB the target names, and which of its reactions: the issue itself (its root comment),
         a comment of the issue, the patch (whose id is its root revision) or one revision of it, or a
         comment of a revision.
-        Our own state on that target, newest survivor last.
+        Our own state on that target, as the store reduces it: the live markers of ours, one per line.
+        The read is checked -- an unreadable document must never answer like an empty one, because the
+        CAS below would then write over a state nobody read.
         Which COB type the action belongs to, and the ids it has to name in full: 'rad cob update'
         stores what it is handed, so what the caller named in shorthand is resolved here (see
         rad_reaction_full_id).  The object itself is the COB the state was read from -- the issue, or
