@@ -178,7 +178,7 @@ rule test_ttylib: 'clause_local BAR_VERBOSITY_LEVEL BAR_CHECK_LEVEL' -- '
      BAR_VERBOSITY_LEVEL=6
      #DBG DBG
      #die PANIC
-     echo "${TTYERR[R_B]:-}PANIC:${TTYERR[n]:-} panic" >&2
+     echo "${TTYERR[panic]}PANIC:${TTYERR[reset]} panic" >&2
      error error
      warn warn
      note note

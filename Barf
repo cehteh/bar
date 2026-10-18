@@ -71,6 +71,7 @@ rule tests: test_rad_state
 rule tests: test_report_condense
 rule tests: test_sourcetree
 rule tests: test_toplevel
+rule tests: test_tty_lib
 rule tests: test_user_requirements
 rule tests: test_vendoring
 rule tests: test_verbosity
@@ -101,6 +102,7 @@ rule test_rad_state: -- tests/test_rad_state.sh
 rule test_report_condense: -- tests/test_report_condense.sh
 rule test_sourcetree: -- tests/test_sourcetree.sh
 rule test_toplevel: -- tests/test_toplevel.sh
+rule test_tty_lib: -- tests/test_tty_lib.sh
 rule test_user_requirements: -- tests/test_user_requirements.sh
 rule test_vendoring: -- tests/test_vendoring.sh
 rule test_verbosity: -- tests/test_verbosity.sh

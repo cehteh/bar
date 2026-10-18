@@ -94,12 +94,12 @@ function progress # [message..] - elusive progress notice, will be overwritten b
     if (( BAR_CHECK_LEVEL > 0 )); then
         (( "${BAR_VERBOSITY_LEVEL:-5}" > 2 )) && {
             tty_newline
-            tty_echo "${TTYERR[K_B]:-}  RUN: $*${TTYERR[n]:-}"
+            tty_echo "${TTYERR[label]}  RUN: $*${TTYERR[reset]}"
         }
     else
         (( "${BAR_VERBOSITY_LEVEL:-5}" > 1 )) && {
             tty_newline
-            tty_echo -n "${TTYERR[K_B]:-}  RUN: $*${TTYERR[ce]:-}${TTYERR[cr]:-}${TTYERR[n]:-}"
+            tty_echo -n "${TTYERR[label]}  RUN: $*${TTYERR[clear_eol]}${TTYERR[cr]}${TTYERR[reset]}"
         }
     fi >&2
     return 0
@@ -110,12 +110,12 @@ function success # [message..] - Message for success.
     if (( BAR_CHECK_LEVEL > 0 )); then
         (( "${BAR_VERBOSITY_LEVEL:-5}" > 2 )) && {
             tty_newline
-            echo -e "${TTYERR[g_B]:-}CHECK:${TTYERR[n]:-} $*"
+            echo -e "${TTYERR[ok]}CHECK:${TTYERR[reset]} $*"
         }
     else
         (( "${BAR_VERBOSITY_LEVEL:-5}" > 1 )) && {
             tty_newline
-            echo -e "${TTYERR[g_B]:-}   OK:${TTYERR[n]:-} $*"
+            echo -e "${TTYERR[ok]}   OK:${TTYERR[reset]} $*"
         }
     fi >&2
     return 0
@@ -126,12 +126,12 @@ function failure # [message..] - Message for failure.
     if (( BAR_CHECK_LEVEL > 0 )); then
         (( "${BAR_VERBOSITY_LEVEL:-5}" > 2 )) && {
             tty_newline
-            echo -e "${TTYERR[K_B]:-}CHECK: ${TTYERR[__S]:-}$*${TTYERR[n]:-}"
+            echo -e "${TTYERR[label]}CHECK: ${TTYERR[strike]}$*${TTYERR[reset]}"
         }
     else
         (( "${BAR_VERBOSITY_LEVEL:-5}" > 1 )) && {
             tty_newline
-            echo -e "${TTYERR[r_B]:-} FAIL:${TTYERR[n]:-} $*"
+            echo -e "${TTYERR[fail]} FAIL:${TTYERR[reset]} $*"
         }
     fi >&2
     return 0
@@ -144,9 +144,9 @@ function uncond_call # <rc> [message..] - Message for unconditional dependency c
     if (( "${BAR_VERBOSITY_LEVEL:-5}" > 2 )); then
         tty_newline
         if (( rc == 0 )); then
-            echo -e "${TTYERR[g_B]:-} EVAL:${TTYERR[n]:-} $*"
+            echo -e "${TTYERR[ok]} EVAL:${TTYERR[reset]} $*"
         else
-            echo -e "${TTYERR[K_B]:-} EVAL:${TTYERR[n]:-} $*"
+            echo -e "${TTYERR[label]} EVAL:${TTYERR[reset]} $*"
         fi
     fi >&2
 }

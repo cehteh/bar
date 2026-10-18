@@ -3595,51 +3595,70 @@ MODULE API/RULES
 
   tty_lib - Module for terminal control codes
     
-    These codes are stored in the 'TTYCTL' associative array.  The 'TTYNIL' mirrors the keys
-    from 'TTYCTL' but maps them to empty strings.  Finally 'TTYOUT' and 'TTYERR' refer to
-    'TTYCTL' when the associated output stream is a non dumb terminals and refer to 'TTYNIL'
-    when it is not a terminal or a dumb terminal.
+    The codes are two associative arrays with the same names: 'TTYCTL' maps a style name to the
+    escape sequence that produces it, 'TTYNIL' maps every one of those names to the empty string.
+    'TTYOUT' and 'TTYERR' are names for one of the two, decided once when the module loads:
+    'TTYCTL' when the stream is a terminal and colour was not refused, 'TTYNIL' otherwise.  A
+    caller writes '${TTYERR[fail]}text${TTYERR[reset]}' and never tests a terminal itself.
     
-    The keys in 'TTYCTL/TTYNIL' are as following.
+    The names are styles, not colours: what 'fail' looks like is this module's decision, and a
+    project which wants a different look replaces the table instead of rewriting every message.
     
-    Two character control sequences:
-     'ce' - Clears from cursor to the end of the line.
-     'cl' - Puts the cursor in column 1 and clears the line.
-     'cs' - Clears the entire screen.
-     'cr' - Puts the cursor in column 1.
+      reset      ends a styled run
+      label      the tag of a line, 'RUN:', 'CHECK:'
+      ok         a check passed, 'OK:', 'CHECK:'
+      fail       a check failed or an unexpected problem, 'FAIL:', 'ERROR:'
+      panic      a fatal problem, 'PANIC:'
+      warn       'WARN:', 'NOTE:'
+      info       'INFO:'
+      debug      'DEBUG:'
+      trace      'TRACE:'
+      dbg        the 'DBG:' line
+      strike     struck-through text inside a 'CHECK:'
+      clear_eol  clears from the cursor to the end of the line
+      clear_line column one, then clears the line
+      cr         column one of the same line
     
-    Three character styles:
-      The first two characters set the foreground and background color:
-       '_' - no change.
-       'k' - black
-       'r' - red.
-       'g' - green
-       'b' - blue.
-       'y' - yellow.
-       'm' - magenta.
-       'c' - cyan.
-       'K' - bright black
-       'R' - bright red.
-       'G' - bright green
-       'B' - bright blue.
-       'Y' - bright yellow.
-       'M' - bright magenta.
-       'C' - bright cyan.
-      The third character set the style uppercase enables, lowercase disables:
-       '_' - no change.
-       'B' - bold.
-       'D' - dim.
-       'U' - underline.
-       'I' - italic.
-       'R' - reverse.
-       'S' - strike-through.
-       'n' - normal (has no uppercase).
+    There is no fallback for a name the table does not have: the call sites write
+    '${TTYERR[fail]}' without a ':-' and bar runs under 'set -u', so a misspelt style is an error
+    naming it, not a message which quietly lost its colour.
     
-    Finally there is a the one character 'n' code that resets the style completely.
+    ADDING A STYLE
     
-    For an example to see how this is used look at the 'std_lib' module.
+    'TTYCTL' and 'TTYNIL' are writable, and 'tty_style' sets a name in both at once:
+    
+      tty_style mine $'\e[38;5;33m'     # the escape sequence itself, not a description of it
+      echo "${TTYOUT[mine]}mine${TTYOUT[reset]}"
+    
+    The value is the sequence, the empty string goes to 'TTYNIL', so a style a project adds prints
+    nothing when the stream is not a terminal -- the same rule the built in ones follow.
+    
+    THE CODES
+    
+    A style is the CSI sequence '\e[' <parameter> 'm'.  The parameters are the SGR (Select Graphic
+    Rendition) numbers below, separated by ';' when there is more than one of them:
+    
+      0  reset                 1  bold              2  dim                3  italic
+      4  underline             5  blink             7  reverse            9  strike-through
+      22 neither bold nor dim  23 italic off        24 underline off
+      27 reverse off           29 strike-through off
+    
+      30-37 foreground            40-47 background
+      90-97 bright foreground    100-107 bright background
+      38;5;<n> 256 colours foreground     48;5;<n> 256 colours background
+      39 default foreground        49 default background
+    
+    The eight colours of 30-37 and 40-47 are black, red, green, yellow, blue, magenta, cyan and
+    white, 90-97 and 100-107 are those eight in their bright form.  'warn' is '\e[35;1m', magenta
+    and bold, and the 'std_lib' module is the example of how the names are used.
 
     Functions:
+
+      tty_style <name> <sequence>
+        Defines a style, or replaces one.
+        <sequence> is the escape sequence itself, e.g. $'\e[38;5;33m'; the codes are in the module
+        documentation above.  The name goes into 'TTYCTL' with that sequence and into 'TTYNIL' with
+        the empty string, so it disappears when the stream is not a terminal.
 
       tty_echo [echo_args]
         Echos only when the output is a tty.

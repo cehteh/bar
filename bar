@@ -61,11 +61,20 @@ function bar_main ## [rulefile] [--bare] [rule [arguments..]] - Loads a rulefile
     declare -gxr BAR_PWD="$PWD"                        ## Initial working directory.
     declare -gxi BAR_VERBOSITY_LEVEL="${BAR_VERBOSITY_LEVEL:-2}" ## Verbosity level from 0 (silent) to 6 (trace).
     declare -gA  BAR_REQUIRE_LOADED
-    # empty arrays here in case the tty_lib is not loaded, the tty_lib will replace these
-    # shellcheck disable=2034
-    declare -gA TTYCTL TTYNIL
+    # The style names of 'tty_lib' before it is loaded.  The module is found through 'BAR_DIR',
+    # which 'find_toplevel' resolves below, and that function reports through these very tables:
+    # with empty values the bootstrap -- and a project without 'tty_lib' -- prints unstyled,
+    # which is what a stream that is no terminal gets.  'tty_lib' replaces both tables with the
+    # real codes and binds 'TTYOUT'/'TTYERR' to them when it loads, 'Bar.d/tty_lib' names them.
     # shellcheck disable=2034
     declare -gA TTYOUT TTYERR
+    local _style
+    for _style in reset label ok fail panic warn info debug trace dbg strike clear_eol \
+                       clear_line cr; do
+        # shellcheck disable=2034
+        TTYOUT[$_style]='' TTYERR[$_style]=''
+    done
+    unset _style
 
     # bootstrap/load std_lib (which defines 'require')
     # shellcheck disable=SC1091
@@ -370,7 +379,7 @@ function DBG ## [message..] - For print-style debugging, should not be present i
 {
     {
         tty_newline
-        echo "${TTYERR[r_R]:-}${TTYERR[__B]:-}  DBG:${TTYERR[n]:-} $(source_info 1) $*"
+        echo "${TTYERR[dbg]}  DBG:${TTYERR[reset]} $(source_info 1) $*"
     } >&2
 }
 
@@ -383,9 +392,9 @@ function die ## [message..] - Prints 'message' to stderr and exits with failure
         tty_newline
         bar_report_loc 1
         if bar_report_condensed; then
-            echo "${TTYERR[R_B]:-}$(printf '%*s' "$(( ${#BAR_REPORT_LOC} + 6 ))" '')${TTYERR[n]:-}: $*"
+            echo "${TTYERR[panic]}$(printf '%*s' "$(( ${#BAR_REPORT_LOC} + 6 ))" '')${TTYERR[reset]}: $*"
         else
-            echo "${TTYERR[R_B]:-}PANIC:${TTYERR[n]:-} ${BAR_REPORT_LOC} $*"
+            echo "${TTYERR[panic]}PANIC:${TTYERR[reset]} ${BAR_REPORT_LOC} $*"
         fi
     fi >&2
     exit 1
@@ -402,9 +411,9 @@ function error ## [message..] - Print a error message to stderr.
         tty_newline
         bar_report_loc 1
         if bar_report_condensed; then
-            echo "${TTYERR[r_B]:-}$(printf '%*s' "$(( ${#BAR_REPORT_LOC} + 6 ))" '')${TTYERR[n]:-}: $*"
+            echo "${TTYERR[fail]}$(printf '%*s' "$(( ${#BAR_REPORT_LOC} + 6 ))" '')${TTYERR[reset]}: $*"
         else
-            echo "${TTYERR[r_B]:-}ERROR:${TTYERR[n]:-} ${BAR_REPORT_LOC} $*"
+            echo "${TTYERR[fail]}ERROR:${TTYERR[reset]} ${BAR_REPORT_LOC} $*"
         fi
     fi >&2
 }
@@ -415,7 +424,7 @@ function warn ## [message..] - Print an warning to stderr.
     BAR_LAST_SITE=""
     if (( BAR_VERBOSITY_LEVEL > 1 )); then
         tty_newline
-        echo "${TTYERR[m_B]:-} WARN:${TTYERR[n]:-} $*" >&2
+        echo "${TTYERR[warn]} WARN:${TTYERR[reset]} $*" >&2
     fi >&2
 }
 
@@ -425,7 +434,7 @@ function note ## [message..] - Print an important notice to stderr.
     BAR_LAST_SITE=""
     if (( BAR_VERBOSITY_LEVEL > 2 )); then
         tty_newline
-        echo "${TTYERR[m_B]:-} NOTE:${TTYERR[n]:-} $*"
+        echo "${TTYERR[warn]} NOTE:${TTYERR[reset]} $*"
     fi >&2
 }
 
@@ -435,7 +444,7 @@ function info ## [message..] - Print an informal message to stderr.
     BAR_LAST_SITE=""
     if (( BAR_VERBOSITY_LEVEL > 3 )); then
         tty_newline
-        echo "${TTYERR[b_B]:-} INFO:${TTYERR[n]:-} $*"
+        echo "${TTYERR[info]} INFO:${TTYERR[reset]} $*"
     fi >&2
 }
 
@@ -444,7 +453,7 @@ function debug ## [message..] - Print a debug message to stderr.
     ## Finer grained progress messages.
     if (( BAR_VERBOSITY_LEVEL > 4 )); then
         tty_newline
-        echo "${TTYERR[c_B]:-}DEBUG:${TTYERR[n]:-} $(source_info 1) $*"
+        echo "${TTYERR[debug]}DEBUG:${TTYERR[reset]} $(source_info 1) $*"
     fi >&2
 }
 
@@ -453,7 +462,7 @@ function trace ## [message] - Prints a trace message to stderr.
     ## Very verbose function call or finer messages.
     if (( BAR_VERBOSITY_LEVEL > 5 )); then
         tty_newline
-        echo "${TTYERR[C_B]:-}TRACE:${TTYERR[n]:-} $(source_info 1) $*"
+        echo "${TTYERR[trace]}TRACE:${TTYERR[reset]} $(source_info 1) $*"
     fi >&2
 }
 

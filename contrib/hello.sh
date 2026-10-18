@@ -1,1 +1,1 @@
-echo "${TTYOUT[cl]}Hello from hello.sh"
+echo "${TTYOUT[clear_line]}Hello from hello.sh"
