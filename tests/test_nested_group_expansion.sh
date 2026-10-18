@@ -1,6 +1,6 @@
 #!/bin/bash
 # Test for nested group and alternative expansion in completion
-# Tests the requirements from .github/copilot-instructions.md
+# Tests the requirements from AGENTS.md
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(dirname "$SCRIPT_DIR")"
