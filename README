@@ -1709,7 +1709,7 @@ MODULE API/RULES
       bar rad_state [--json] [--max <n>]                     the whole state, one screen
       bar rad_patches [--state <s>] [--author <a>] [--json] [--max <n>]
                                                              only the patches, filtered
-      bar rad_trust --repo <rid> --author <who> [--grounds <..>] [--dump]
+      bar rad_trust --repo <rid> --author <who> [--grounds <..>] [--dump] [--second-party]
                                                              which grounds of trust that author has
       bar rad_comment_metadata <item> --query <label|assign|unassign>
                                                              the trusted '*label:'/'*assign:'/
@@ -1807,6 +1807,13 @@ MODULE API/RULES
     they were listed.  '--dump' answers every ground and evaluates *nothing*: no verdict, no threshold,
     exit 0.  That is the call a caller makes once per scope and then caches -- the grounds are values,
     the decision is the caller's -- so a second call in the same scope is wasted work.
+    
+    '--second-party' answers the one question an approval asks: is this actor somebody *other* than
+    the identity which opened the item -- the second party a consent needs.  It is the dump above
+    plus one field, 'second_party': 'false' when the actor opened the item, 'true' otherwise.  A
+    verdict about no item has no opener to compare against, so it needs '--issue <id>' or
+    '--patch <id>' and is a usage error (2) without one.  Whatever the grounds say, our own identity
+    answering on an item it opened is not a second party.
     
     '--threshold' decides 'contributed' alone: a bare number counts commits (default 10), a percent
     ('10%', '0.5%') is the share of the commits every identity authored in this repository, which is

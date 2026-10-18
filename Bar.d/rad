@@ -15,7 +15,7 @@
 ###   bar rad_state [--json] [--max <n>]                     the whole state, one screen
 ###   bar rad_patches [--state <s>] [--author <a>] [--json] [--max <n>]
 ###                                                          only the patches, filtered
-###   bar rad_trust --repo <rid> --author <who> [--grounds <..>] [--dump]
+###   bar rad_trust --repo <rid> --author <who> [--grounds <..>] [--dump] [--second-party]
 ###                                                          which grounds of trust that author has
 ###   bar rad_comment_metadata <item> --query <label|assign|unassign>
 ###                                                          the trusted '*label:'/'*assign:'/
@@ -113,6 +113,13 @@
 ### they were listed.  '--dump' answers every ground and evaluates *nothing*: no verdict, no threshold,
 ### exit 0.  That is the call a caller makes once per scope and then caches -- the grounds are values,
 ### the decision is the caller's -- so a second call in the same scope is wasted work.
+###
+### '--second-party' answers the one question an approval asks: is this actor somebody *other* than
+### the identity which opened the item -- the second party a consent needs.  It is the dump above
+### plus one field, 'second_party': 'false' when the actor opened the item, 'true' otherwise.  A
+### verdict about no item has no opener to compare against, so it needs '--issue <id>' or
+### '--patch <id>' and is a usage error (2) without one.  Whatever the grounds say, our own identity
+### answering on an item it opened is not a second party.
 ###
 ### '--threshold' decides 'contributed' alone: a bare number counts commits (default 10), a percent
 ### ('10%', '0.5%') is the share of the commits every identity authored in this repository, which is
@@ -324,7 +331,7 @@ rule rad_state: -
 ## The patches of this checkout, by state and by author.
 rule rad_patches: -
 
-# helper: rad_trust | whether the author of an incoming Radicle issue or patch counts as a trusted source, and which grounds of trust it has: a delegate, the identity which established the repository, the opener or an assignee of the item, and the commits the identity authored as itself | rad_trust --repo <rid-or-path> --author <did-or-nid-or-alias> [--issue <id>] [--patch <id>] [--grounds <ground,..>] [--threshold <n-or-n%>] [--dump] [--json] | one '<verdict> author=… delegate=… authored=… threshold=… ground=… reason=… repo=…' line, <verdict> one of trusted, untrusted, unknown and <ground> one of delegate, owner, opened, assigned, contributed; '--json' the same facts as one object plus 'grounds'; '--dump' every ground and no verdict at all (implies '--json')
+# helper: rad_trust | whether the author of an incoming Radicle issue or patch counts as a trusted source, and which grounds of trust it has: a delegate, the identity which established the repository, the opener or an assignee of the item, and the commits the identity authored as itself; '--second-party' asks instead whether the actor is somebody other than the item's opener | rad_trust --repo <rid-or-path> --author <did-or-nid-or-alias> [--issue <id>] [--patch <id>] [--grounds <ground,..>] [--threshold <n-or-n%>] [--dump] [--json] [--second-party] | one '<verdict> author=… delegate=… authored=… threshold=… ground=… reason=… repo=…' line, <verdict> one of trusted, untrusted, unknown and <ground> one of delegate, owner, opened, assigned, contributed; '--json' the same facts as one object plus 'grounds'; '--dump' every ground and no verdict at all (implies '--json'); '--second-party' the dump plus 'second_party', the actor against the item's opener
 ## The trust verdict of the triage policy; exit 0 trusted, 1 untrusted, 2 could not answer.
 rule rad_trust: -
 
@@ -1089,10 +1096,12 @@ function rad_trust_usage ## [reason] - usage on stderr
 {
     [[ -n "${1:-}" ]] && printf 'rad_trust: %s\n' "$1" >&2
     printf 'usage: rad_trust --repo <rid|path> --author <did|nid|alias> [--issue <id>|--patch <id>]\n' >&2
-    printf '                [--grounds <ground,..>] [--threshold <n|n%%>] [--dump] [--json]\n' >&2
+    printf '                [--grounds <ground,..>] [--threshold <n|n%%>] [--dump] [--json] [--second-party]\n' >&2
     printf '       <ground> one of delegate, owner, opened, assigned, contributed; --grounds names the\n' >&2
     printf '                ones which suffice (default delegate,contributed)\n' >&2
     printf '       --dump   every ground and nothing evaluated -- no verdict (implies --json)\n' >&2
+    printf '       --second-party\n' >&2
+    printf '                is the actor somebody other than the item opener (implies --dump, needs an item)\n' >&2
     printf "       <n>      commits (absolute, default 10); <n>%% the share of the commits every\n" >&2
     printf "                identity authored in this repository (it decides 'contributed' alone)\n" >&2
 }
@@ -1196,9 +1205,9 @@ function rad_trust ## see the module header
 {
     local -a args=() grounds=() parts=() cmd=() ground_json=() ground_true=()
     local raw="" arg="" value="" part=""
-    local json="" dump="" repo="" author="" threshold="" item="" item_type=""
+    local json="" dump="" repo="" author="" threshold="" item="" item_type="" second_party=""
     local tool="" facts="" fields="" did="" nid="" alias="" delegate="no" authored="" reason="" rid=""
-    local thr="" commits="" total="" share="" owner_nid="" item_nid="" verdict="" ground="" grounds_json=""
+    local thr="" commits="" total="" share="" owner_nid="" item_nid="" verdict="" ground="" grounds_json="" sp=""
     local want_delegate=no want_owner=no want_opened=no want_assigned=no want_contributed=no
     local delegate_ok=no contributed_ok=no owner_ok=no opened_ok=no assigned_ok=no reached=no
     local object="" did_i=""
@@ -1223,6 +1232,7 @@ function rad_trust ## see the module header
             ;;
         --json) json=1 ;;
         --dump) dump=1 ;;
+        --second-party) second_party=1 ;;
         --repo | --author | --threshold | --grounds | --issue | --patch)
             if (( i >= count )) || [[ -z "${args[i]}" ]]; then
                 rad_trust_usage "'$arg' needs a non-empty value"
@@ -1265,6 +1275,13 @@ function rad_trust ## see the module header
         rad_trust_usage "invalid --threshold '$threshold', want a non-negative number or a percent like '10%'"
         return 2
     fi
+    # A second party is one *other* than the opener, so the item is the question: without one there is
+    # nothing to compare the actor against, and 'true' would be the answer for everybody.
+    if [[ -n "$second_party" && -z "$item" ]]; then
+        rad_trust_usage "'--second-party' needs '--issue <id>' or '--patch <id>': a second party is somebody other than the item's opener"
+        return 2
+    fi
+    [[ -n "$second_party" ]] && dump=1
 
     ## Which grounds are asked for: the named ones, or -- with no '--grounds' -- the rule this helper
     ## has always answered (a delegate, or the authored commits reaching the threshold).  '--dump'
@@ -1289,6 +1306,9 @@ function rad_trust ## see the module header
         contributed) want_contributed=yes ;;
         esac
     done
+    # The comparison is the 'opened' ground, so it is always computed -- even where an explicit
+    # '--grounds' did not name it.
+    [[ -n "$second_party" ]] && want_opened=yes
     [[ -n "$dump" ]] && json=1
 
     tool="${RAD_TRIAGE_FACTS:-}"
@@ -1456,11 +1476,21 @@ function rad_trust ## see the module header
     fi
 
     grounds_json="{$(IFS=,; printf '%s' "${ground_json[*]}")}"
+    if [[ -n "$second_party" ]]; then
+        sp=false
+        [[ "$opened_ok" == yes ]] || sp=true
+    fi
     if [[ -n "$json" ]]; then
         if [[ -n "$dump" ]]; then
-            printf '%s' "$facts" | jq -c --argjson grounds "$grounds_json" \
-                '. + {bar_rad: 1, grounds: $grounds}' 2>/dev/null ||
-                printf '{"bar_rad":1,"grounds":%s}\n' "$grounds_json"
+            if [[ -n "$second_party" ]]; then
+                printf '%s' "$facts" | jq -c --argjson grounds "$grounds_json" --argjson second_party "$sp" \
+                    '. + {bar_rad: 1, grounds: $grounds, second_party: $second_party}' 2>/dev/null ||
+                    printf '{"bar_rad":1,"grounds":%s,"second_party":%s}\n' "$grounds_json" "$sp"
+            else
+                printf '%s' "$facts" | jq -c --argjson grounds "$grounds_json" \
+                    '. + {bar_rad: 1, grounds: $grounds}' 2>/dev/null ||
+                    printf '{"bar_rad":1,"grounds":%s}\n' "$grounds_json"
+            fi
         else
             printf '%s' "$facts" | jq -c --arg verdict "$verdict" --arg ground "$ground" \
                 --argjson grounds "$grounds_json" \
