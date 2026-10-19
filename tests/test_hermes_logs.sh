@@ -141,23 +141,55 @@ EXPECT_FILES=$(( EXPECT_LOGS + EXPECT_WORKERS + EXPECT_CRON + EXPECT_SESSIONS ))
 EXPECT_ALL=$(( EXPECT_FILES + EXPECT_STORE ))
 check "$EXPECT_LOGS" "9" "fixture: the independent sweep finds 9 matching log lines (8 plus the rotated log)"
 check "$EXPECT_FILES" "15" "fixture: 15 matching lines outside the store"
-check "$EXPECT_ALL" "18" "fixture: 18 matching records in the whole corpus"
+# sqlite3 is optional (see the header): without it the store is not a source, so every number below
+# that the store contributes to is derived, never spelled out.
+if has sqlite3; then
+    check "$EXPECT_STORE" "3" "fixture: 3 matching content lines in the store"
+    check "$EXPECT_ALL" "18" "fixture: 18 matching records in the whole corpus"
+else
+    check "$EXPECT_ALL" "15" "fixture: 15 matching records (no sqlite3, the store is not a source)"
+fi
+SOURCES="logs workers cron sessions"
+SOURCES_CSV="logs,workers,cron,sessions"
+if has sqlite3; then
+    SOURCES="$SOURCES store"
+    SOURCES_CSV="$SOURCES_CSV,store"
+fi
+# two records are older than a day: one log line, and one store row when the store is scanned
+EXPECT_RECENT=$(( EXPECT_ALL - 1 - (EXPECT_STORE > 0 ? 1 : 0) ))
+# the AC13 query is '.', which matches every non empty line of every source: an independent sweep
+EXPECT_DOT_STORE=0
+if has sqlite3; then
+    EXPECT_DOT_STORE="$(sqlite3 -readonly "$CORPUS/state.db" \
+        "select count(*) from messages where length(content) > 0;")"
+fi
+EXPECT_DOT_FILES=0
+for f in "$CORPUS"/logs/*.log "$CORPUS"/kanban/logs/*.log "$CORPUS"/sessions/*.jsonl; do
+    [[ -f "$f" ]] && EXPECT_DOT_FILES=$(( EXPECT_DOT_FILES + $(grep -c '.' "$f") ))
+done
+if has gzip; then
+    for f in "$CORPUS"/logs/*.log.gz; do
+        [[ -f "$f" ]] && EXPECT_DOT_FILES=$(( EXPECT_DOT_FILES + $(gzip -dc "$f" | grep -c '.') ))
+    done
+fi
+EXPECT_DOT_FILES=$(( EXPECT_DOT_FILES + $(find "$CORPUS/cron/output" -type f -exec cat {} + 2>/dev/null | grep -c '.') ))
+EXPECT_DOT_ALL=$(( EXPECT_DOT_FILES + EXPECT_DOT_STORE ))
 
 # --------------------------------------------------------------------------------------------
 # AC1  a grep over the corpus: bounded digest, exact total, exit 0
 # --------------------------------------------------------------------------------------------
 run --root "$CORPUS" --grep needle --since 1d
 check "$RC" "0" "AC1: '--grep needle --since 1d' exits 0"
-contains "$OUT" "matches: 16" "AC1: the exact total (18 minus the two records older than a day)"
-contains "$OUT" "of 16 (limit 20 lines, 1200 chars)" \
+contains "$OUT" "matches: $EXPECT_RECENT" "AC1: the exact total ($EXPECT_ALL minus the two records older than a day)"
+contains "$OUT" "of $EXPECT_RECENT (limit 20 lines, 1200 chars)" \
     "AC1: the digest is bounded by the line limit and the byte budget, and says so"
 contains "$OUT" "max: " "AC1: and an elided answer names the full match list"
 absent "$OUT" "unreadable:" "AC1: every source was readable"
-contains "$OUT" "corpus: $CORPUS [logs workers cron sessions store]" \
+contains "$OUT" "corpus: $CORPUS [$SOURCES]" \
     "AC1: the 'corpus:' line names the root and the sources it scanned"
 contains "$OUT" "clipped: 1 snippet(s) at 160 chars" "AC1: the totals are lines of their own"
-if (( $(digest_lines "$OUT") <= 16 )); then
-    pass "AC1: the digest holds $(digest_lines "$OUT") of the 16 records (budget 1200 chars)"
+if (( $(digest_lines "$OUT") <= EXPECT_RECENT )); then
+    pass "AC1: the digest holds $(digest_lines "$OUT") of the $EXPECT_RECENT records (budget 1200 chars)"
 else
     fail "AC1: the digest holds more records than the corpus has"
 fi
@@ -206,12 +238,12 @@ check "$(count_of --root "$CORPUS" --grep needle --json)" "$EXPECT_ALL" \
     "AC3: '--count' wins over '--json' (a number is already machine readable)"
 
 run --root "$CORPUS" --grep needle --limit 4
-contains "$OUT" "shown: 4 of 18 (limit 4 lines, 1200 chars)" \
+contains "$OUT" "shown: 4 of $EXPECT_ALL (limit 4 lines, 1200 chars)" \
     "AC3: the digest is bounded and says how much it withheld"
 contains "$OUT" "max: " "AC3: elided output prints the full-match file path"
 MAX="$(printf '%s\n' "$OUT" | sed -n 's/^max: \([^ ]*\).*/\1/p')"
 if [[ -f "$MAX" ]]; then pass "AC3: the printed path exists"; else fail "AC3: no file at [$MAX]"; fi
-check "$(wc -l <"$MAX")" "18" "AC3: the file holds every match, not the four it printed"
+check "$(wc -l <"$MAX")" "$EXPECT_ALL" "AC3: the file holds every match, not the four it printed"
 
 # --------------------------------------------------------------------------------------------
 # AC4  every locator retrieves its line
@@ -247,7 +279,7 @@ if has jq; then
         fail "AC5: jq rejects [$OUT]"
     fi
     check "$(printf '%s' "$OUT" | jq -r '.bar_hermes_logs')" "1" "AC5: the object identifies itself"
-    check "$(printf '%s' "$OUT" | jq -r '.matches')" "16" "AC5: the JSON total is the text total"
+    check "$(printf '%s' "$OUT" | jq -r '.matches')" "$EXPECT_RECENT" "AC5: the JSON total is the text total"
     check "$(printf '%s' "$OUT" | jq -r '.shown')" "5" "AC5: 'shown' is the bounded digest size"
     check "$(printf '%s' "$OUT" | jq -r '.limit')" "5" "AC5: the object carries the limit it used"
     check "$(printf '%s' "$OUT" | jq -r '.unreadable')" "0" "AC5: nothing was unreadable"
@@ -256,7 +288,7 @@ if has jq; then
         "AC5: the first hit is the first digest line"
     check "$(printf '%s' "$OUT" | jq -r '.hits[0].exact')" "true" \
         "AC5: a stamp taken from the line is marked exact"
-    check "$(printf '%s' "$OUT" | jq -r '.sources | join(",")')" "logs,workers,cron,sessions,store" \
+    check "$(printf '%s' "$OUT" | jq -r '.sources | join(",")')" "$SOURCES_CSV" \
         "AC5: the sources are named in the corpus order"
     check "$(printf '%s' "$OUT" | jq -r '.roots | length')" "1" "AC5: the object names its corpus root"
     ## The helper resolves its own 'date -d "-1 day"' while it runs; comparing that against a
@@ -294,7 +326,7 @@ if has sqlite3; then
     check "$(count_of --root "$CORPUS" --source store --grep 'old store record')" "1" \
         "AC6: and its old record is there without one"
 fi
-check "$(count_of --root "$CORPUS" --grep needle --since "$(date -d '-2 hours' '+%Y-%m-%d %H:%M:%S')")" "16" \
+check "$(count_of --root "$CORPUS" --grep needle --since "$(date -d '-2 hours' '+%Y-%m-%d %H:%M:%S')")" "$EXPECT_RECENT" \
     "AC6: an absolute '--since' works like the duration"
 run --root "$CORPUS" --grep 'without a stamp' --limit 1
 contains "$OUT" "$NOW" "AC6: a record without a stamp inherits the stamp above it"
@@ -322,7 +354,7 @@ check "$(count_of --root "$CORPUS" --run legacy --grep needle)" "1" \
     "AC7: '--run' selects the cron output of one run"
 check "$(count_of --root "$CORPUS" --session sess-new --grep needle --source logs)" "6" \
     "AC7: '--session' filters the log lines by their text"
-check "$(count_of --root "$CORPUS" --session sess-old --grep needle)" "2" \
+check "$(count_of --root "$CORPUS" --session sess-old --grep needle)" "$(( 1 + (EXPECT_STORE > 0 ? 1 : 0) ))" \
     "AC7: another session selects only its own records"
 if has sqlite3; then
     check "$(count_of --root "$CORPUS" --session sess-new --source store --grep needle)" "2" \
@@ -422,12 +454,12 @@ check "$OUT2" "$EXPECT_ALL" "AC11: \$HERMES_HOME is the default root"
 # --------------------------------------------------------------------------------------------
 run --root "$CORPUS" --grep needle --limit 2
 check "$(digest_lines "$OUT")" "2" "AC12: '--limit 2' prints two match lines"
-contains "$OUT" "shown: 2 of 18 (limit 2 lines, 1200 chars)" "AC12: and states the truncation"
+contains "$OUT" "shown: 2 of $EXPECT_ALL (limit 2 lines, 1200 chars)" "AC12: and states the truncation"
 FIRST="$OUT"
 run --root "$CORPUS" --grep needle --limit 2
 check "$OUT" "$FIRST" "AC12: two identical queries print identical output"
 MAX="$(printf '%s\n' "$OUT" | sed -n 's/^max: \([^ ]*\).*/\1/p')"
-check "$(wc -l <"$MAX")" "18" "AC12: and reuse one retrieval file holding every match"
+check "$(wc -l <"$MAX")" "$EXPECT_ALL" "AC12: and reuse one retrieval file holding every match"
 
 # --------------------------------------------------------------------------------------------
 # AC13 the answer stays bounded
@@ -438,13 +470,14 @@ if (( $(bytes_of "$OUT") <= 2048 )); then
 else
     fail "AC13: a query matching every line answers in $(bytes_of "$OUT") B (budget 2048 B)"
 fi
-contains "$OUT" "matches: 21" "AC13: the count covers the corpus (20 non empty file lines, 3 store lines)"
+contains "$OUT" "matches: $EXPECT_DOT_ALL" \
+    "AC13: the count covers the corpus ($EXPECT_DOT_FILES non empty file lines, $EXPECT_DOT_STORE store lines)"
 run --root "$CORPUS" --grep '.' --limit 100
 contains "$OUT" "(limit 100 lines, 1200 chars)" \
     "AC13: the byte budget binds before the line limit"
-contains "$OUT" "matches: 21" "AC13: and the count stays exact"
-if (( $(digest_lines "$OUT") < 21 )); then
-    pass "AC13: the digest stops at $(digest_lines "$OUT") of the 21 records"
+contains "$OUT" "matches: $EXPECT_DOT_ALL" "AC13: and the count stays exact"
+if (( $(digest_lines "$OUT") < EXPECT_DOT_ALL )); then
+    pass "AC13: the digest stops at $(digest_lines "$OUT") of the $EXPECT_DOT_ALL records"
 else
     fail "AC13: the byte budget did not bound the digest"
 fi
