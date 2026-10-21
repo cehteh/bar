@@ -245,8 +245,9 @@
 ### '<to>' is the marker to set: one emoji of the store's allow list, checked before any call, so the
 ### '❤️' an emoji picker hands out (heart plus a variation selector) is refused here instead of by the
 ### store.  A target is '<issue-id>' (the issue itself), '<issue-id> <comment-id>',
-### '<patch-or-revision-id>' (a patch id is its root revision) or '<patch-or-revision-id>
-### <comment-id>'.
+### '<patch-or-revision-id>' (a patch id is its root revision) or '<patch-or-revision-id> <id>' -- the
+### second id being any reaction-able part of the patch: a comment of the revision, a review, or a
+### comment of a review.
 ###
 ### '<from>' is the one marker the caller expects to be live there: omitted is no expectation at all,
 ### the empty string is 'no live marker of mine', anything else must be live -- and an expectation which
@@ -2799,52 +2800,64 @@ function rad_reaction_accepts ## <char> - 0 when the store would accept it as a 
 
 function rad_metadata_reactions ## <storage> <ref> <kind> <target> <nid> - our live markers on one target
 {
-    ## The state of one target as *rad itself* reduces it, never as the op stream spells it: what the
-    ## caller compares is 'rad cob show --format json', so a marker its author took back in the same op
-    ## it set the next one in (one op, two actions) cannot be read as live, and a caller whose
-    ## expectation comes from the same source can always complete its transition.
+    ## Reads the live reaction markers of *our* identity on one target, as 'rad cob show --format json'
+    ## reduces them.
     ##
-    ## What is read on top of, measured on a live node with 'rad cob update' (playground repo,
-    ## 2026-10-16: every case written as an action file and read back with 'rad cob show'):
+    ## <kind> names the part of the document to look at: 'comment' is an issue's thread (its root
+    ## comment included), 'auto' every reaction-able part of a patch -- a revision, a comment of one, a
+    ## review, a comment of a review.  <target> may be short: the answer carries the full id.
     ##
-    ##   * the state is a *set*, never a stack: one entry per (location, emoji) carrying the identities
-    ##     that have it set, so the same marker cannot be live twice -- while two *different* markers of
-    ##     one identity can be, which is the shape the last paragraph below is about.
-    ##   * 'active' is a value, not a toggle: setting a marker that is already live is a no-op (rc 0,
-    ##     the state keeps it) and withdrawing one that is not live is silently ignored (rc 0, nothing
-    ##     changes).  The toggle is the typed CLI's convenience ('rad issue react'), never the store's,
-    ##     so a writer states 'active' and takes a marker back with an action of its own.
-    ##   * inside one op the actions apply in order and the last one wins: '[A active, A inactive]'
-    ##     ends with nothing live, '[A inactive, A active]' with it live -- which is what lets one op
-    ##     be a whole transition, the marker to set first and the one to take back after it.
-    ##
-    ## The read is the *current* state and nothing else: 'rad cob show' takes no '--from'/'--until',
-    ## and that is what a caller wants before it writes.  The state of a target at some point in time
-    ## is the history route instead ('rad cob log --from/--until', one JSON document per op); it costs
-    ## a walk of the whole chain and is deliberately not built here.
-    ##
-    ## The document differs per COB type -- an issue carries '.thread.comments[<id>].reactions' as
-    ## '<author> <emoji>' pairs, a patch nests '.revisions[<id>].reactions' and
-    ## '.revisions[<id>].discussion.comments[<id>].reactions' as '{location, emoji, authors}' objects
-    ## -- so the shapes are unified right here, once, and every caller sees one structure: the live
-    ## reactions of *our* identity on the target, one per line.  <kind> says which part of the
-    ## document the target is ('comment' an issue's comment or the issue itself, 'revision' a revision
-    ## of a patch, 'revision-comment' a comment of one) and <target> may be short: the document's keys
-    ## carry the full ids.
-    ##
-    ## The COB id and its type are read off the ref (bar asks for a ref, 'rad cob show' for an object)
-    ## and the RID off the storage directory, which is named after it -- the caller hands in neither.
-    ##
-    ## Two markers of ours alive on one target are reported as the *set* they are -- rad allows exactly
-    ## that ('✅' beside '❓', measured), while the same marker live twice it does not -- and the
-    ## reduction holds no order which would call one of them newer.  This reader answers the state, all
-    ## of it; what a caller asks of it is rad_reaction's business, and there '<from>' is one marker,
-    ## tested for *membership*: the step takes back what it expected and sets what it wants, leaving any
-    ## second marker alone, so a state of two is resolved one marker at a time.  A target the document does not carry is refused as well (3): an unread document and a
-    ## document without that target must not both answer 'no live marker of mine', because the caller's
-    ## CAS would then write over a state nobody looked at.
+    ## The answer's first line names the target, '|'-separated --
+    ## '<count>|<kind>|<id>|<review>|<revision>' -- and the lines after it are the live markers of
+    ## ours, one per line.  Returns 3 when the document does not carry the target.
+    #
+    # What is read is *rad's own reduction* of the COB, never the op stream: a marker its author took
+    # back in the same op it set the next one in (one op, two actions) cannot then be read as live, and
+    # a caller whose expectation comes from the same source can always complete its transition.
+    #
+    # What is read on top of, measured on a live node with 'rad cob update' (playground repo, 2026-10-16:
+    # every case written as an action file and read back with 'rad cob show'):
+    #
+    #   * the state is a *set*, never a stack: one entry per (location, emoji) carrying the identities
+    #     that have it set, so the same marker cannot be live twice -- while two *different* markers of
+    #     one identity can be, which is the shape the last paragraph below is about.
+    #   * 'active' is a value, not a toggle: setting a marker that is already live is a no-op (rc 0,
+    #     the state keeps it) and withdrawing one that is not live is silently ignored (rc 0, nothing
+    #     changes).  The toggle is the typed CLI's convenience ('rad issue react'), never the store's,
+    #     so a writer states 'active' and takes a marker back with an action of its own.
+    #   * inside one op the actions apply in order and the last one wins: '[A active, A inactive]'
+    #     ends with nothing live, '[A inactive, A active]' with it live -- which is what lets one op
+    #     be a whole transition, the marker to set first and the one to take back after it.
+    #
+    # The read is the *current* state and nothing else: 'rad cob show' takes no '--from'/'--until'.  The
+    # state of a target at some point in time is the history route ('rad cob log --from/--until', one
+    # JSON document per op); it costs a walk of the whole chain and is deliberately not built here.
+    #
+    # The document differs per COB type: an issue carries '.thread.comments[<id>].reactions' as
+    # '<author> <emoji>' pairs, a patch nests '{location, emoji, authors}' objects in four places --
+    # '.revisions[<id>].reactions', '.revisions[<id>].discussion.comments[<id>].reactions',
+    # '.revisions[<id>].reviews[<author>].reactions' and
+    # '.revisions[<id>].reviews[<author>].comments.comments[<id>].reactions'.  The shapes are unified
+    # here, once, so every caller sees one structure.
+    #
+    # The ids travel back with the state because the writer needs exactly them ('review.comment.react'
+    # names the review *and* the comment), and reading them off this one document is what keeps the
+    # write from opening the store a second time.
+    #
+    # The COB id and its type are read off the ref (bar asks for a ref, 'rad cob show' for an object)
+    # and the RID off the storage directory, which is named after it -- the caller hands in neither.
+    #
+    # Two markers of ours alive on one target are reported as the *set* they are -- rad allows exactly
+    # that ('✅' beside '❓', measured), while the same marker live twice it does not -- and the
+    # reduction holds no order which would call one of them newer.  This reader answers the state, all
+    # of it; what a caller asks of it is rad_reaction's business, and there '<from>' is one marker,
+    # tested for *membership*: the step takes back what it expected and sets what it wants, leaving any
+    # second marker alone, so a state of two is resolved one marker at a time.  A target the document
+    # does not carry is refused as well (3): an unread document and a document without that target must
+    # not both answer 'no live marker of mine', because the caller's CAS would then write over a state
+    # nobody looked at.
     local storage="$1" ref="$2" kind="$3" target="$4" nid="$5"
-    local typename="${ref%/*}" cob="${ref##*/}" rid="" document="" answer="" found=""
+    local typename="${ref%/*}" cob="${ref##*/}" rid="" document="" answer="" header="" found=""
     typename="${typename##*/}"
     rid="rad:${storage##*/}"
     document="$(rad_metadata_rad "$rid" cob show --type "$typename" --object "$cob" --format json)" ||
@@ -2854,23 +2867,48 @@ function rad_metadata_reactions ## <storage> <ref> <kind> <target> <nid> - our l
             map(if type == "array" then {emoji: .[1], authors: [.[0]]}
                 else {emoji: .emoji, authors: (.authors // [])} end)
             | map(select(.authors | index($nid)) | .emoji) | unique;
-        ( if $kind == "revision" then
-              [ (.revisions // {}) | to_entries[] | select(.key | startswith($target))
-                | .value.reactions // [] ]
-          elif $kind == "revision-comment" then
-              [ (.revisions // {}) | to_entries[] | (.value.discussion.comments // {}) | to_entries[]
-                | select(.key | startswith($target)) | .value.reactions // [] ]
+        ( if $kind == "comment" then
+              [ (.thread // {}) | (.comments // {}) | to_entries[]
+                | select((.key | startswith($target)))
+                | {kind: "comment", id: .key, review: "", revision: "",
+                   reactions: (.value.reactions // [])} ]
           else
-              [ (.thread // {}) | (.comments // {}) | to_entries[] | select(.key | startswith($target))
-                | .value.reactions // [] ]
-          end ) as $entry
-        | ($entry | length),
-          (if ($entry | length) == 1 then ($entry[0] | live_markers)[] else empty end)
+              # Every reaction-able part of a patch, in one walk: the revision itself, a comment of
+              # it, a review, and a comment of a review -- the review id a write has to name is the
+              # one this entry nests under, so it comes back with the match.
+              [ (.revisions // {}) | to_entries[]
+                | .key as $revision | .value as $rev
+                | ( ( select((($revision) | startswith($target)))
+                      | {kind: "revision", id: $revision, review: "", revision: $revision,
+                         reactions: ($rev.reactions // [])} ),
+                    ( ($rev.discussion.comments // {}) | to_entries[]
+                      | select((.key | startswith($target)))
+                      | {kind: "revision-comment", id: .key, review: "", revision: $revision,
+                         reactions: (.value.reactions // [])} ),
+                    ( ($rev.reviews // {}) | to_entries[] | .value as $review
+                      | ( ( select((($review.id // "") | startswith($target)))
+                            | {kind: "review", id: $review.id, review: $review.id,
+                               revision: $revision, reactions: ($review.reactions // [])} ),
+                          ( ($review.comments.comments // {}) | to_entries[]
+                            | select((.key | startswith($target)))
+                            | {kind: "review-comment", id: .key, review: $review.id,
+                               revision: $revision, reactions: (.value.reactions // [])} )
+                        )
+                    )
+                  )
+              ]
+          end ) as $hits
+        | if ($hits | length) == 0 then "0||||"
+          else ([($hits | length), $hits[0].kind, $hits[0].id, $hits[0].review, $hits[0].revision]
+                | map(tostring) | join("|")),
+               (if ($hits | length) == 1 then ($hits[0].reactions | live_markers)[] else empty end)
+          end
     ')" || {
         error "the state of $typename:$target is not readable: no answer came back"
         return 1
     }
-    found="${answer%%$'\n'*}"
+    header="${answer%%$'\n'*}"
+    found="${header%%|*}"
     case "$found" in
     '' | *[!0-9]*)
         error "the state of $typename:$target is not readable: 'rad cob show' answered no state"
@@ -2887,51 +2925,78 @@ function rad_metadata_reactions ## <storage> <ref> <kind> <target> <nid> - our l
         return 2
         ;;
     esac
-    if [[ "$answer" == *$'\n'* ]]; then
-        printf '%s\n' "${answer#*$'\n'}"
-    fi
+    # The target line first, then the markers: the caller needs both (the ids to write with, the state
+    # to compare), and they were read from the one document this function opened.
+    printf '%s\n' "$answer"
     return 0
 }
 
-## <storage> <id> - the COB a reaction target names, in 'RAD_METADATA_REF'/_TYPE/_ID
-function rad_reaction_ref
+function rad_reaction_ref ## <storage> <id> - the COB a reaction target names, in 'RAD_METADATA_REF'/_TYPE/_ID
 {
-    ## A patch or issue id names the COB itself and the reader's listing says which; a *revision* id
-    ## is an op inside a patch COB, and 'git for-each-ref --contains' finds the COB whose chain
-    ## carries it -- the same resolution 'rad patch react' makes when it is handed a revision.
-    ##
+    ## Resolves a patch, issue, revision, review or comment id to the COB which carries it.
     ## Returns 3 when nothing matches, 2 when the id matches more than one COB.
-    local storage="$1" id="$2" ref=""
-    local rc=0
-    rad_comment_metadata_ref "$storage" "$id"
-    rc=$?
-    if (( rc == 0 )); then
-        RAD_METADATA_REF="$RAD_COMMENT_METADATA_REF"
-        RAD_METADATA_TYPE="$RAD_COMMENT_METADATA_TYPE"
-        RAD_METADATA_ID="$RAD_COMMENT_METADATA_ID"
-        return 0
-    fi
-    if (( rc == 2 )); then
+    #
+    # A patch or issue id names the COB itself, and 'rad cob list' says which: one listing per type,
+    # matched as a prefix because that is how a caller may name it.  An id which names something
+    # *inside* a patch (a revision, a review, a comment of either) is found by reading the patch
+    # documents themselves, one 'rad cob show' per object; the first document which carries the id
+    # names the COB.  An object the node cannot show ('object ... was not found') is dropped rather
+    # than allowed to take the whole resolution down: one document nobody can react through is not an
+    # error of the id being looked for.
+    local storage="$1" id="$2" rid=""
+    local -a issues=() patches=()
+    local line="" document="" carries=""
+    rid="rad:${storage##*/}"
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        [[ -n "$line" ]] || continue
+        [[ "$line" == "$id"* ]] && issues+=( "$line" )
+    done < <(rad_metadata_rad "$rid" cob list --type xyz.radicle.issue)
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        [[ -n "$line" ]] || continue
+        [[ "$line" == "$id"* ]] && patches+=( "$line" )
+    done < <(rad_metadata_rad "$rid" cob list --type xyz.radicle.patch)
+    if (( ${#issues[@]} + ${#patches[@]} > 1 )); then
         error "'$id' matches more than one issue or patch, use more characters"
         return 2
     fi
-    ref="$(git --git-dir="$storage" for-each-ref --contains="$id" --format='%(refname)' \
-        'refs/namespaces/*/refs/cobs/xyz.radicle.patch/*' 2>/dev/null | LC_ALL=C sort | head -1)" || ref=""
-    if [[ -z "$ref" ]]; then
-        error "the node holds no issue, patch or revision '$id' in this repository"
-        return 3
+    if (( ${#issues[@]} == 1 )); then
+        RAD_METADATA_REF="refs/cobs/xyz.radicle.issue/${issues[0]}"
+        RAD_METADATA_TYPE="issue"
+        RAD_METADATA_ID="${issues[0]}"
+        return 0
     fi
-    RAD_METADATA_REF="$ref"
-    RAD_METADATA_TYPE="patch"
-    RAD_METADATA_ID="${ref##*/}"
-    return 0
+    if (( ${#patches[@]} == 1 )); then
+        RAD_METADATA_REF="refs/cobs/xyz.radicle.patch/${patches[0]}"
+        RAD_METADATA_TYPE="patch"
+        RAD_METADATA_ID="${patches[0]}"
+        return 0
+    fi
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        [[ -n "$line" ]] || continue
+        document="$(rad_metadata_rad "$rid" cob show --type xyz.radicle.patch \
+            --object "$line" --format json 2>/dev/null)" || continue
+        carries="$(printf '%s' "$document" | jq -r --arg id "$id" '
+            [ (.revisions // {} | keys[]),
+              (.revisions // {} | to_entries[] | .value | (.discussion.comments // {}) | keys[]),
+              (.revisions // {} | to_entries[] | .value | (.reviews // {}) | to_entries[] | .value.id),
+              (.revisions // {} | to_entries[] | .value | (.reviews // {}) | to_entries[] | .value
+               | (.comments.comments // {}) | keys[])
+            ] | map(select(. != null and startswith($id))) | length
+        ')" || continue
+        [[ "$carries" == 1 ]] || continue
+        RAD_METADATA_REF="refs/cobs/xyz.radicle.patch/$line"
+        RAD_METADATA_TYPE="patch"
+        RAD_METADATA_ID="$line"
+        return 0
+    done < <(rad_metadata_rad "$rid" cob list --type xyz.radicle.patch)
+    error "the node holds no issue, patch or revision '$id' in this repository"
+    return 3
 }
 
-## - the NID of the identity 'rad' uses here
-function rad_metadata_self
+function rad_metadata_self ## - the NID of the identity 'rad' uses here
 {
-    ## What is *ours*: the actor of an op travels in its author mail ('<alias>@<nid>'), and reactions
-    ## are private per identity, so our NID is what decides which markers this caller wrote.
+    # What is *ours*: the actor of an op travels in its author mail ('<alias>@<nid>'), and reactions
+    # are private per identity, so our NID is what decides which markers this caller wrote.
     local did=""
     did="$(rad_run self --did)" || return $?
     did="$(rad_metadata_nid "${did##*$'\n'}")"
@@ -2942,46 +3007,21 @@ function rad_metadata_self
     printf '%s' "$did"
 }
 
-function rad_reaction_full_id ## <storage> <id> - the full op id a reaction action has to name
+function rad_reaction_action ## <emoji> <active> <kind> <id> <review> <revision> - one 'cob update' action
 {
-    ## 'rad cob update' writes the ids into the action literally and the store validates them ('invalid
-    ## length (have 7, want 40)'), while a caller may name a comment or a revision in shorthand: the
-    ## shorthand is resolved against the storage the state was read from.  A word which resolves to
-    ## nothing and is not a full id is refused here, where the error can name it, instead of by rad.
-    local storage="$1" id="$2" full=""
-    full="$(git --git-dir="$storage" rev-parse --verify --quiet "${id}^{commit}" 2>/dev/null)" || full=""
-    [[ -n "$full" ]] || full="$id"
-    if (( ${#full} != 40 )); then
-        error "'$id' is no op id of this repository: a reaction action names a full 40 hex comment or revision"
-        return 1
-    fi
-    printf '%s' "$full"
-}
-
-function rad_reaction_comment_revision ## <storage> <comment> - the revision that comment belongs to
-{
-    ## A comment of a revision is reacted to against the revision it was written on, and the comment
-    ## op carries it: rad writes the 'revision' field into a 'revision.comment' payload itself, and
-    ## the action has to name the same one or the store refuses the pair.
-    local storage="$1" comment="$2" revision=""
-    revision="$(git --git-dir="$storage" show "$comment:0" 2>/dev/null | jq -r '.revision // ""')" || revision=""
-    if [[ -z "$revision" ]]; then
-        error "the comment '$comment' names no revision: a comment of a patch carries one"
-        return 1
-    fi
-    printf '%s' "$revision"
-}
-
-function rad_reaction_action ## <emoji> <active> <id> <revision> <comment> - one 'cob update' action
-{
-    ## The action is the payload rad's own commands write for a reaction, so the store reads our op
-    ## back exactly like one of its own: a comment id for the issue level, the revision for a
-    ## revision, and both for a comment of one.  Fields the target has no use for are left out.
-    local emoji="$1" active="$2" id="$3" revision="$4" comment="$5" payload=""
-    payload="$(jq -cn --arg reaction "$emoji" --argjson active "$active" --arg id "$id" \
-        --arg revision "$revision" --arg comment "$comment" \
-        'if $comment != "" then {type:"revision.comment.react", revision:$revision, comment:$comment}
-         elif $revision != "" then {type:"revision.react", revision:$revision}
+    ## The 'cob update' action for one marker on a target, as the payload rad's own commands write.
+    #
+    # The action names the level the reader found, never a guess from the target's shape: a comment id
+    # for the issue level, the revision for a revision, the review for a review, and the review beside
+    # the comment for a comment of one -- the last is the pair 'revision.comment.react' cannot express,
+    # which is why the store refuses a review comment written as one.
+    local emoji="$1" active="$2" kind="$3" id="$4" review="$5" revision="$6" payload=""
+    payload="$(jq -cn --arg reaction "$emoji" --argjson active "$active" --arg kind "$kind" \
+        --arg id "$id" --arg review "$review" --arg revision "$revision" \
+        'if $kind == "review-comment" then {type:"review.comment.react", review:$review, comment:$id}
+         elif $kind == "review" then {type:"review.react", review:$review}
+         elif $kind == "revision-comment" then {type:"revision.comment.react", revision:$revision, comment:$id}
+         elif $kind == "revision" then {type:"revision.react", revision:$revision}
          else {type:"comment.react", id:$id} end | .reaction = $reaction | .active = $active')" || {
         error 'could not build the reaction action'
         return 1
@@ -3003,27 +3043,29 @@ function rad_reaction_usage ## [reason] - usage on stderr
     printf '                <to> which is already live is a no-op\n' >&2
     printf '       <target> <issue-id> (the issue itself), <issue-id> <comment-id>,\n' >&2
     printf '                <patch-or-revision-id> (the patch is its root revision),\n' >&2
-    printf '                <patch-or-revision-id> <comment-id>\n' >&2
+    printf '                <patch-or-revision-id> <reaction-able-id> -- whatever an id inside the\n' >&2
+    printf '                patch names: a comment of the revision, a review, a comment of one\n' >&2
 }
 
 function rad_reaction ## see the module header
 {
     ## Compare and swap on the caller's *own* reaction state: one target, one marker, and the write
-    ## happens only when what the caller expects is what the store reduces.  rad has no action that
-    ## states a target's whole reaction state in one go -- a marker is set and taken back per emoji --
-    ## so a transition is the pair 'from -> to' written as one op.
-    ##
-    ## The write is one 'rad cob update' at every level: the action file carries the marker to set and
-    ## the one to withdraw, rad lands the pair as a single op, and the target ends with one live marker
-    ## of ours.  Both halves are needed and both are stated: 'active' is a value, not a toggle (re-
-    ## setting a marker takes nothing back), so a write which only set the new one would leave the old
-    ## one live beside it.  One op's actions apply in order, the last one winning, which is why the
-    ## marker to set goes first -- the semantics are measured, see rad_metadata_reactions.  The typed commands are not used -- 'rad issue react' can only add, and 'rad patch
-    ## react'/'rad patch comment --react' would be a second code path for the same effect.
+    ## happens only when what the caller expects is what the store reduces.
+    #
+    # rad has no action that states a target's whole reaction state in one go (a marker is set and
+    # taken back per emoji), so a transition is the pair 'from -> to' written as one op: the action file
+    # carries the marker to set and the one to withdraw, and rad lands the pair as a single op.  Both
+    # halves are needed and both are stated: 'active' is a value, not a toggle (re-setting a marker
+    # takes nothing back), so a write which only set the new one would leave the old one live beside it.
+    # One op's actions apply in order, the last one winning, which is why the marker to set goes first
+    # -- the semantics are measured, see rad_metadata_reactions.  The typed commands are not used --
+    # 'rad issue react' can only add, and 'rad patch react'/'rad patch comment --react' would be a
+    # second code path for the same effect.
     local -a args=() positional=() targets=() actions=()
     local raw value from="" to="" repo="" kind="" level="" storage="" ref="" rid="" nid="" type=""
-    local state="" live="" withdrawn="" target="" marker=""
-    local typename="" action_id="" action_revision="" action_comment="" action_file="" rc=0
+    local state="" live="" withdrawn="" target="" marker="" header=""
+    local react_kind="" react_id="" react_review="" react_revision="" _count=""
+    local typename="" action_file="" rc=0
     local from_given=""
     local -i i=0 count=0
 
@@ -3122,93 +3164,82 @@ function rad_reaction ## see the module header
     rid="$RAD_METADATA_RID"
     nid="$(rad_metadata_self)" || return $?
 
-    ## Which COB the target names, and which of its reactions: the issue itself (its root comment),
-    ## a comment of the issue, the patch (whose id is its root revision) or one revision of it, or a
-    ## comment of a revision.
+    # Which COB the target names: the issue itself (its root comment) or a comment of it; for a patch
+    # the first word is the patch (whose id is its root revision) or one revision of it, and the second
+    # word is *any* reaction-able part of it -- a comment of the revision, a review, a comment of a
+    # review.  Which one it is is not guessed here: the reader walks the document and says.
     rad_reaction_ref "$storage" "${targets[0]}" || return $?
     ref="$RAD_METADATA_REF"
     type="$RAD_METADATA_TYPE"
     if [[ "$type" == issue ]]; then
         kind="comment"
-        if (( ${#targets[@]} == 1 )); then
-            level="root"
-            target="$RAD_METADATA_ID"
-        else
-            level="comment"
-            target="${targets[1]}"
-        fi
+        target="${targets[1]:-$RAD_METADATA_ID}"
     else
-        if (( ${#targets[@]} == 1 )); then
-            kind="revision"
-            level="revision"
-            target="${targets[0]}"
-        else
-            kind="revision-comment"
-            level="comment"
-            target="${targets[1]}"
-        fi
+        kind="auto"
+        target="${targets[1]:-${targets[0]}}"
     fi
 
-    ## Our own state on that target, as the store reduces it: the live markers of ours, one per line.
-    ## The read is checked -- an unreadable document must never answer like an empty one, because the
-    ## CAS below would then write over a state nobody read.
+    # Our own state on that target, as the store reduces it: its first line names what the target is
+    # (the level, the full id, the review a review comment belongs to and the revision it was made on),
+    # and the lines after it are the live markers of ours, one per line.  The read is checked -- an
+    # unreadable document must never answer like an empty one, because the CAS below would then write
+    # over a state nobody read.
     state="$(rad_metadata_reactions "$storage" "$ref" "$kind" "$target" "$nid")" || return $?
+    header="${state%%$'\n'*}"
+    IFS='|' read -r _count react_kind react_id react_review react_revision <<<"$header"
     live=""
-    while IFS= read -r marker; do
-        [[ -n "$marker" ]] || continue
-        live+="${live:+ }$marker"
-    done <<<"$state"
-    ## What is compared is *membership*: is the one marker the caller read still live?  rad reports an
-    ## entry per emoji, and a second marker of ours beside it is a state this call has nothing to say
-    ## about -- the step takes back the marker named and sets '<to>', so such a state is resolved one
-    ## marker at a time instead of being refused ('--from "✅" 👀' beside a live '❓' is a transition).
+    if [[ "$state" == *$'\n'* ]]; then
+        while IFS= read -r marker; do
+            [[ -n "$marker" ]] || continue
+            live+="${live:+ }$marker"
+        done <<<"${state#*$'\n'}"
+    fi
+    # What is compared is *membership*: is the one marker the caller read still live?  rad reports an
+    # entry per emoji, and a second marker of ours beside it is a state this call has nothing to say
+    # about -- the step takes back the marker named and sets '<to>', so such a state is resolved one
+    # marker at a time instead of being refused ('--from "✅" 👀' beside a live '❓' is a transition).
     local found="no marker"
     [[ -n "$live" ]] && found="'$live'"
     if [[ -n "$from_given" ]]; then
         if [[ -z "$from" ]]; then
             if [[ -n "$live" ]]; then
-                error "the state of $type:${target} is $found where no marker was expected: nothing was written"
+                error "the state of $type:${react_id} is $found where no marker was expected: nothing was written"
                 return 1
             fi
         elif [[ " $live " != *" $from "* ]]; then
-            error "the state of $type:${target} is $found where '$from' was expected: nothing was written"
+            error "the state of $type:${react_id} is $found where '$from' was expected: nothing was written"
             return 1
         fi
     fi
 
-    ## Which COB type the action belongs to, and the ids it has to name in full: 'rad cob update'
-    ## stores what it is handed, so what the caller named in shorthand is resolved here (see
-    ## rad_reaction_full_id).  The object itself is the COB the state was read from -- the issue, or
-    ## the patch whose root revision is the id the caller used.
+    # The action belongs to the COB the state was read from (the issue, or the patch whatever part of
+    # it the caller named); the ids it names in full came back with that state, so nothing is resolved
+    # a second time.
     case "$type" in
     issue) typename=xyz.radicle.issue ;;
     patch) typename=xyz.radicle.patch ;;
     esac
-    case "$level:$type" in
-    root:issue | comment:issue)
-        action_id="$(rad_reaction_full_id "$storage" "$target")" || return $?
-        ;;
-    revision:patch)
-        action_revision="$(rad_reaction_full_id "$storage" "$target")" || return $?
-        ;;
-    comment:patch)
-        action_comment="$(rad_reaction_full_id "$storage" "$target")" || return $?
-        action_revision="$(rad_reaction_comment_revision "$storage" "$action_comment")" || return $?
-        ;;
+    case "$react_kind" in
+    revision) level="revision" ;;
+    review) level="review" ;;
+    *) level="comment" ;;
     esac
+    if [[ "$type" == issue && "$react_id" == "$RAD_METADATA_ID" ]]; then
+        level="root"
+    fi
 
-    ## Set first, take the old one back after: both actions ride the same op, the newer marker is the
-    ## one a reader resolves, and a transition therefore leaves one live marker of ours behind -- at
-    ## every level, which is what the typed commands cannot do for an issue.
+    # Set first, take the old one back after: both actions ride the same op, the newer marker is the
+    # one a reader resolves, and a transition therefore leaves one live marker of ours behind -- at
+    # every level, which is what the typed commands cannot do for an issue.
     if [[ -n "$to" ]]; then
-        actions+=( "$(rad_reaction_action "$to" true "$action_id" "$action_revision" "$action_comment")" ) ||
+        actions+=( "$(rad_reaction_action "$to" true "$react_kind" "$react_id" "$react_review" "$react_revision")" ) ||
             return $?
     fi
-    ## …and the marker the caller expected is taken back in the same op: one expectation, one
-    ## withdrawal, exactly one marker changed.  '<from>' equal to '<to>' is refused above, so the pair
-    ## is never the same emoji and the order of the two actions cannot decide the outcome.
+    # …and the marker the caller expected is taken back in the same op: one expectation, one withdrawal,
+    # exactly one marker changed.  '<from>' equal to '<to>' is refused above, so the pair is never the
+    # same emoji and the order of the two actions cannot decide the outcome.
     if [[ -n "$from" ]]; then
-        actions+=( "$(rad_reaction_action "$from" false "$action_id" "$action_revision" "$action_comment")" ) ||
+        actions+=( "$(rad_reaction_action "$from" false "$react_kind" "$react_id" "$react_review" "$react_revision")" ) ||
             return $?
         withdrawn=yes
     fi
@@ -3225,7 +3256,7 @@ function rad_reaction ## see the module header
     fi
 
     printf 'applied reaction item=%s:%s level=%s target=%s from=%s to=%s withdrawn=%s\n' \
-        "$type" "$RAD_METADATA_ID" "$level" "$target" "${from:--}" "${to:--}" "${withdrawn:-no}"
+        "$type" "$RAD_METADATA_ID" "$level" "$react_id" "${from:--}" "${to:--}" "${withdrawn:-no}"
 }
 
 function rad_topic_usage ## [reason] - usage on stderr

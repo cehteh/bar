@@ -742,6 +742,10 @@ MODULE API/RULES
     parameter syntax when the rule accepts parameters.
     
     Only variables, functions and rules that have doc comments are included in the output.
+    
+    Documentation says what a thing does and how to use it.  The reasoning behind it -- why it is
+    written that way, what was measured -- belongs in single '#' source comments, which are not
+    published.
 
     Rules:
 
@@ -1939,8 +1943,9 @@ MODULE API/RULES
     '<to>' is the marker to set: one emoji of the store's allow list, checked before any call, so the
     '❤️' an emoji picker hands out (heart plus a variation selector) is refused here instead of by the
     store.  A target is '<issue-id>' (the issue itself), '<issue-id> <comment-id>',
-    '<patch-or-revision-id>' (a patch id is its root revision) or '<patch-or-revision-id>
-    <comment-id>'.
+    '<patch-or-revision-id>' (a patch id is its root revision) or '<patch-or-revision-id> <id>' -- the
+    second id being any reaction-able part of the patch: a comment of the revision, a review, or a
+    comment of a review.
     
     '<from>' is the one marker the caller expects to be live there: omitted is no expectation at all,
     the empty string is 'no live marker of mine', anything else must be live -- and an expectation which
@@ -2419,85 +2424,32 @@ MODULE API/RULES
 
       rad_metadata_reactions <storage> <ref> <kind> <target> <nid>
         our live markers on one target
-        The state of one target as *rad itself* reduces it, never as the op stream spells it: what the
-        caller compares is 'rad cob show --format json', so a marker its author took back in the same op
-        it set the next one in (one op, two actions) cannot be read as live, and a caller whose
-        expectation comes from the same source can always complete its transition.
-        What is read on top of, measured on a live node with 'rad cob update' (playground repo,
-        2026-10-16: every case written as an action file and read back with 'rad cob show'):
-          * the state is a *set*, never a stack: one entry per (location, emoji) carrying the identities
-            that have it set, so the same marker cannot be live twice -- while two *different* markers of
-            one identity can be, which is the shape the last paragraph below is about.
-          * 'active' is a value, not a toggle: setting a marker that is already live is a no-op (rc 0,
-            the state keeps it) and withdrawing one that is not live is silently ignored (rc 0, nothing
-            changes).  The toggle is the typed CLI's convenience ('rad issue react'), never the store's,
-            so a writer states 'active' and takes a marker back with an action of its own.
-          * inside one op the actions apply in order and the last one wins: '[A active, A inactive]'
-            ends with nothing live, '[A inactive, A active]' with it live -- which is what lets one op
-            be a whole transition, the marker to set first and the one to take back after it.
-        The read is the *current* state and nothing else: 'rad cob show' takes no '--from'/'--until',
-        and that is what a caller wants before it writes.  The state of a target at some point in time
-        is the history route instead ('rad cob log --from/--until', one JSON document per op); it costs
-        a walk of the whole chain and is deliberately not built here.
-        The document differs per COB type -- an issue carries '.thread.comments[<id>].reactions' as
-        '<author> <emoji>' pairs, a patch nests '.revisions[<id>].reactions' and
-        '.revisions[<id>].discussion.comments[<id>].reactions' as '{location, emoji, authors}' objects
-        -- so the shapes are unified right here, once, and every caller sees one structure: the live
-        reactions of *our* identity on the target, one per line.  <kind> says which part of the
-        document the target is ('comment' an issue's comment or the issue itself, 'revision' a revision
-        of a patch, 'revision-comment' a comment of one) and <target> may be short: the document's keys
-        carry the full ids.
-        The COB id and its type are read off the ref (bar asks for a ref, 'rad cob show' for an object)
-        and the RID off the storage directory, which is named after it -- the caller hands in neither.
-        Two markers of ours alive on one target are reported as the *set* they are -- rad allows exactly
-        that ('✅' beside '❓', measured), while the same marker live twice it does not -- and the
-        reduction holds no order which would call one of them newer.  This reader answers the state, all
-        of it; what a caller asks of it is rad_reaction's business, and there '<from>' is one marker,
-        tested for *membership*: the step takes back what it expected and sets what it wants, leaving any
-        second marker alone, so a state of two is resolved one marker at a time.  A target the document does not carry is refused as well (3): an unread document and a
-        document without that target must not both answer 'no live marker of mine', because the caller's
-        CAS would then write over a state nobody looked at.
-        A patch or issue id names the COB itself and the reader's listing says which; a *revision* id
-        is an op inside a patch COB, and 'git for-each-ref --contains' finds the COB whose chain
-        carries it -- the same resolution 'rad patch react' makes when it is handed a revision.
+        Reads the live reaction markers of *our* identity on one target, as 'rad cob show --format json'
+        reduces them.
+        <kind> names the part of the document to look at: 'comment' is an issue's thread (its root
+        comment included), 'auto' every reaction-able part of a patch -- a revision, a comment of one, a
+        review, a comment of a review.  <target> may be short: the answer carries the full id.
+        The answer's first line names the target, '|'-separated --
+        '<count>|<kind>|<id>|<review>|<revision>' -- and the lines after it are the live markers of
+        ours, one per line.  Returns 3 when the document does not carry the target.
+
+      rad_reaction_ref <storage> <id>
+        the COB a reaction target names, in 'RAD_METADATA_REF'/_TYPE/_ID
+        Resolves a patch, issue, revision, review or comment id to the COB which carries it.
         Returns 3 when nothing matches, 2 when the id matches more than one COB.
-        What is *ours*: the actor of an op travels in its author mail ('<alias>@<nid>'), and reactions
-        are private per identity, so our NID is what decides which markers this caller wrote.
 
-      rad_reaction_full_id <storage> <id>
-        the full op id a reaction action has to name
-        'rad cob update' writes the ids into the action literally and the store validates them ('invalid
-        length (have 7, want 40)'), while a caller may name a comment or a revision in shorthand: the
-        shorthand is resolved against the storage the state was read from.  A word which resolves to
-        nothing and is not a full id is refused here, where the error can name it, instead of by rad.
+      rad_metadata_self - the NID of the identity 'rad' uses here
 
-      rad_reaction_comment_revision <storage> <comment>
-        the revision that comment belongs to
-        A comment of a revision is reacted to against the revision it was written on, and the comment
-        op carries it: rad writes the 'revision' field into a 'revision.comment' payload itself, and
-        the action has to name the same one or the store refuses the pair.
-
-      rad_reaction_action <emoji> <active> <id> <revision> <comment>
+      rad_reaction_action <emoji> <active> <kind> <id> <review> <revision>
         one 'cob update' action
-        The action is the payload rad's own commands write for a reaction, so the store reads our op
-        back exactly like one of its own: a comment id for the issue level, the revision for a
-        revision, and both for a comment of one.  Fields the target has no use for are left out.
+        The 'cob update' action for one marker on a target, as the payload rad's own commands write.
 
       rad_reaction_usage [reason]
         usage on stderr
 
       rad_reaction see the module header
         Compare and swap on the caller's *own* reaction state: one target, one marker, and the write
-        happens only when what the caller expects is what the store reduces.  rad has no action that
-        states a target's whole reaction state in one go -- a marker is set and taken back per emoji --
-        so a transition is the pair 'from -> to' written as one op.
-        The write is one 'rad cob update' at every level: the action file carries the marker to set and
-        the one to withdraw, rad lands the pair as a single op, and the target ends with one live marker
-        of ours.  Both halves are needed and both are stated: 'active' is a value, not a toggle (re-
-        setting a marker takes nothing back), so a write which only set the new one would leave the old
-        one live beside it.  One op's actions apply in order, the last one winning, which is why the
-        marker to set goes first -- the semantics are measured, see rad_metadata_reactions.  The typed commands are not used -- 'rad issue react' can only add, and 'rad patch
-        react'/'rad patch comment --react' would be a second code path for the same effect.
+        happens only when what the caller expects is what the store reduces.
         The '<from> <to>' form is the two leading positionals, the '<to> <target>' form starts with
         the reaction to set.  What tells them apart is what can be a reaction at all: a target is an
         id, never an emoji -- and an empty second word is only a '<to>' if that is what it can be,
@@ -2505,26 +2457,6 @@ MODULE API/RULES
         The step changes exactly one marker, so '<from>' names exactly one: a value carrying several
         ('--from "✅ ❓"') is refused here -- it is no state a single step could both expect and resolve
         -- and the one marker is checked against the same allow list as '<to>' before any call.
-        Which COB the target names, and which of its reactions: the issue itself (its root comment),
-        a comment of the issue, the patch (whose id is its root revision) or one revision of it, or a
-        comment of a revision.
-        Our own state on that target, as the store reduces it: the live markers of ours, one per line.
-        The read is checked -- an unreadable document must never answer like an empty one, because the
-        CAS below would then write over a state nobody read.
-        What is compared is *membership*: is the one marker the caller read still live?  rad reports an
-        entry per emoji, and a second marker of ours beside it is a state this call has nothing to say
-        about -- the step takes back the marker named and sets '<to>', so such a state is resolved one
-        marker at a time instead of being refused ('--from "✅" 👀' beside a live '❓' is a transition).
-        Which COB type the action belongs to, and the ids it has to name in full: 'rad cob update'
-        stores what it is handed, so what the caller named in shorthand is resolved here (see
-        rad_reaction_full_id).  The object itself is the COB the state was read from -- the issue, or
-        the patch whose root revision is the id the caller used.
-        Set first, take the old one back after: both actions ride the same op, the newer marker is the
-        one a reader resolves, and a transition therefore leaves one live marker of ours behind -- at
-        every level, which is what the typed commands cannot do for an issue.
-        …and the marker the caller expected is taken back in the same op: one expectation, one
-        withdrawal, exactly one marker changed.  '<from>' equal to '<to>' is refused above, so the pair
-        is never the same emoji and the order of the two actions cannot decide the outcome.
 
       rad_topic_usage [reason]
         usage on stderr

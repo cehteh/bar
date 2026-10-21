@@ -19,6 +19,10 @@
 ### parameter syntax when the rule accepts parameters.
 ###
 ### Only variables, functions and rules that have doc comments are included in the output.
+###
+### Documentation says what a thing does and how to use it.  The reasoning behind it -- why it is
+### written that way, what was measured -- belongs in single '#' source comments, which are not
+### published.
 
 # prototype: "topic" = "help"
 # prototype: "rule" = "help"

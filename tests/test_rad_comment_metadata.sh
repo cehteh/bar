@@ -74,6 +74,9 @@
 #        so a step beside a second marker of ours is a normal transition (the second is left alone, and
 #        a '<to>' which is already live is a no-op add), while a value naming several markers is a
 #        usage error -- the document AC35 works from is the one a live node answered for that state
+#   AC36 a review, and a comment of one, are reaction-able targets: the document says which level an id
+#        inside a patch names, the review id a 'review.comment.react' needs comes back with the state,
+#        and an object the node lists but cannot show is dropped by the resolution, never fatal
 
 set -euo pipefail
 
@@ -177,6 +180,20 @@ cob)
         done
         printf 'cob update --type %s --object %s --message %s%s\n' "\$t" "\$o" "\$m" "\${r:+ -r \$r}" >>"$WORK/rad.calls"
         cat "\$f" >>"$WORK/rad.actions" 2>/dev/null
+    elif [ "\$2" = list ]; then
+        shift 2
+        t=""
+        while [ \$# -gt 0 ]; do
+            case "\$1" in
+            --type|-t) t="\$2"; shift 2 ;;
+            *) shift ;;
+            esac
+        done
+        printf 'cob list --type %s\n' "\$t" >>"$WORK/rad.reads"
+        for f in "$WORK"/cob.show."\$t".*; do
+            [ -e "\$f" ] || continue
+            printf '%s\\n' "\${f##*/cob.show.\$t.}"
+        done
     elif [ "\$2" = show ]; then
         shift 2
         t=""; o=""
@@ -189,6 +206,10 @@ cob)
             esac
         done
         printf 'cob show --type %s --object %s\n' "\$t" "\$o" >>"$WORK/rad.reads"
+        if [ -f "$WORK/refuse.cob" ] && grep -qxF "\$o" "$WORK/refuse.cob"; then
+            printf 'store: object %s was not found\\n' "\$o" >&2
+            exit 1
+        fi
         if [ -f "$WORK/cob.show.\$t.\$o" ]; then
             cat "$WORK/cob.show.\$t.\$o"
         else
@@ -457,6 +478,14 @@ RATCH_TIP="$(op "$DELEGATE_NID" patch "$RATCH" "React" \
     "{\"active\":true,\"revision\":\"$RATCH_ROOT\",\"reaction\":\"✅\",\"type\":\"revision.react\"}" \
     "$RATCH_REVISION" "self" "$SELF_NID" "2026-10-11T10:50:00+02:00")"
 
+# -- the review a delegate wrote on that patch, and a comment of that review --------------------------
+# The two reaction-able places the document nests that the reader never looked at (bar issue 9c38b63):
+# 'reviews[<author>].reactions' and 'reviews[<author>].comments.comments[<id>].reactions'.  The review is
+# keyed by its author and carries its own id, which is what a write has to name -- and what a reader
+# that only walked the revision never learned.
+REVIEW="aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111"
+REVIEW_COMMENT="bbbb2222bbbb2222bbbb2222bbbb2222bbbb2222"
+
 # -- a fourth patch: the state rad reports, against the expectation a caller carries -----------------
 # The incident this pins (bar issue 9a815de): a caller derived its expectation from the COB and was
 # refused for ever, because the state it was compared against was an older marker than the newest live
@@ -500,10 +529,17 @@ cob_document xyz.radicle.issue "$REACT" \
     "{\"thread\":{\"comments\":{\"$REACT\":{\"reactions\":[[\"$DELEGATE_NID\",\"✅\"],[\"$SELF_NID\",\"➖\"]]},\"$REACT_COMMENT\":{\"reactions\":[]}}}}"
 # A patch: two revisions, a ✅ of ours on the root one, and a comment of it nobody of ours reacted to.
 cob_document xyz.radicle.patch "$RATCH" \
-    "{\"revisions\":{\"$RATCH_ROOT\":{\"reactions\":[{\"location\":null,\"emoji\":\"✅\",\"authors\":[\"$SELF_NID\"]}],\"discussion\":{\"comments\":{\"$RATCH_COMMENT\":{\"reactions\":[]}}}},\"$RATCH_REVISION\":{\"reactions\":[],\"discussion\":{\"comments\":{}}}}}"
+    "{\"revisions\":{\"$RATCH_ROOT\":{\"reactions\":[{\"location\":null,\"emoji\":\"✅\",\"authors\":[\"$SELF_NID\"]}],\"discussion\":{\"comments\":{\"$RATCH_COMMENT\":{\"reactions\":[]}}}},\"$RATCH_REVISION\":{\"reactions\":[],\"discussion\":{\"comments\":{}},\"reviews\":{\"$DELEGATE_NID\":{\"id\":\"$REVIEW\",\"reactions\":[{\"location\":null,\"emoji\":\"➖\",\"authors\":[\"$SELF_NID\"]}],\"comments\":{\"comments\":{\"$REVIEW_COMMENT\":{\"reactions\":[{\"location\":null,\"emoji\":\"✅\",\"authors\":[\"$DELEGATE_NID\"]}]}}}}}}}}"
 # The CAS patch: nothing of ours live on the first comment, a 💤 on the second.
 cob_document xyz.radicle.patch "$CAS" \
     "{\"revisions\":{\"$CAS_ROOT\":{\"reactions\":[],\"discussion\":{\"comments\":{\"$CAS_COMMENT\":{\"reactions\":[]},\"$CAS_MOVED\":{\"reactions\":[{\"location\":null,\"emoji\":\"💤\",\"authors\":[\"$SELF_NID\"]}]}}}}}}"
+# …and a patch the node *lists* but cannot show: 'rad cob list' names it, 'rad cob show' answers
+# 'object ... was not found'.  The playground carries exactly that shape (02e1abf..., bar issue
+# 9c38b63), and a resolution which walked the documents must drop it instead of falling down on it --
+# its id sorts first, so every scan meets it before the patch being looked for.
+GONE="0000dead0000dead0000dead0000dead0000dead"
+cob_document xyz.radicle.patch "$GONE" '{"revisions":{}}'
+printf '%s\n' "$GONE" >"$WORK/refuse.cob"
 
 # -- a seventh issue: its newest label block is an outsider's, which only a trust spec hands over ---
 OWN="dddddddddddddddddddddddddddddddddddddddd"
@@ -1205,7 +1241,7 @@ echo "AC34 the state is the one 'rad' reports: the stale expectation is refused,
 : >"$WORK/rad.reads"
 run "$PROJECT" rad_reaction "" ❓ "$CAS_ID" "$CAS_COMMENT"
 check "$RC" 0 "'no live marker of mine' holds on a comment rad reports nothing of ours for"
-check "$(cat "$WORK/rad.reads")" "cob show --type xyz.radicle.patch --object $CAS" \
+check "$(grep '^cob show' "$WORK/rad.reads")" "cob show --type xyz.radicle.patch --object $CAS" \
     "…and the state is read from 'rad cob show', never from the op chain"
 check "$(tail -1 "$WORK/rad.actions")" \
     "{\"type\":\"revision.comment.react\",\"revision\":\"$CAS_ROOT\",\"comment\":\"$CAS_COMMENT\",\"reaction\":\"❓\",\"active\":true}" \
@@ -1284,6 +1320,56 @@ check "$(lines_of "$(cat "$WORK/rad.actions")")" 1 "…in one action"
 check "$(sed -n 1p "$WORK/rad.actions")" \
     "{\"type\":\"revision.react\",\"revision\":\"$CAS_ROOT\",\"reaction\":\"❓\",\"active\":false}" \
     "…the marker named, never the other one"
+echo
+
+echo "AC36 a review, and a comment of one, are reaction-able targets"
+# The bug this pins (9c38b63): the document carries reactions in *four* places and the reader walked
+# two of them, so a review comment came back as rc 3 -- the same answer an id nobody holds gets, and
+# with it no way to tell the two apart.  The level is now what the document says, and the review id a
+# 'review.comment.react' has to name comes back with the state instead of being looked up again.
+: >"$WORK/rad.calls"
+: >"$WORK/rad.actions"
+run "$PROJECT" rad_reaction "" 🎯 "$RATCH_ID" "$REVIEW_COMMENT"
+check "$RC" 0 "a review comment is a target, not an id nobody holds"
+check "$(cat "$WORK/rad.calls")" "cob update --type xyz.radicle.patch --object $RATCH --message React" \
+    "the write is one 'cob update' on the patch COB"
+check "$(cat "$WORK/rad.actions")" \
+    "{\"type\":\"review.comment.react\",\"review\":\"$REVIEW\",\"comment\":\"$REVIEW_COMMENT\",\"reaction\":\"🎯\",\"active\":true}" \
+    "named against the review it belongs to -- the pair 'revision.comment.react' cannot express"
+contains "$OUT" "level=comment" "reported as a comment"
+contains "$OUT" "target=$REVIEW_COMMENT" "…of the review comment, in its full id"
+: >"$WORK/rad.calls"
+: >"$WORK/rad.actions"
+run "$PROJECT" rad_reaction ➖ 🎯 "$RATCH_ID" "$REVIEW"
+check "$RC" 0 "a review itself is a target, and our own marker on it is the state"
+check "$(sed -n 1p "$WORK/rad.actions")" \
+    "{\"type\":\"review.react\",\"review\":\"$REVIEW\",\"reaction\":\"🎯\",\"active\":true}" \
+    "the marker to set goes first"
+check "$(sed -n 2p "$WORK/rad.actions")" \
+    "{\"type\":\"review.react\",\"review\":\"$REVIEW\",\"reaction\":\"➖\",\"active\":false}" \
+    "…and the one it replaces is taken back in the same op"
+contains "$OUT" "level=review" "reported as a review"
+: >"$WORK/rad.calls"
+run "$PROJECT" rad_reaction "" 🎯 "$RATCH_ID" "$REVIEW"
+check "$RC" 1 "the review's own marker is not the one expected, so it refuses"
+check "$(lines_of "$(cat "$WORK/rad.calls")")" 0 "…and writes nothing"
+# the id alone: the patch COB is found by reading the documents, and the one the node cannot show ('GONE'
+# above, listed but 'object ... was not found') is dropped instead of being allowed to stop the walk
+: >"$WORK/rad.calls"
+: >"$WORK/rad.actions"
+run "$PROJECT" rad_reaction "" 👀 "$REVIEW_COMMENT"
+check "$RC" 0 "a review comment id alone names the patch COB that carries it"
+check "$(cat "$WORK/rad.calls")" "cob update --type xyz.radicle.patch --object $RATCH --message React" \
+    "…which is the object it is written against"
+check "$(cat "$WORK/rad.actions")" \
+    "{\"type\":\"review.comment.react\",\"review\":\"$REVIEW\",\"comment\":\"$REVIEW_COMMENT\",\"reaction\":\"👀\",\"active\":true}" \
+    "with the review id read off the document"
+: >"$WORK/rad.calls"
+err "$PROJECT" rad_reaction "" 👀 "$REVIEW"
+check "$RC" 1 "a review id alone resolves the same way, and its state is what refuses"
+contains "$OUT" "is '➖' where no marker was expected" "…the marker the document reports"
+run "$PROJECT" rad_reaction "" 👀 "$RATCH_ID" "$REVIEW_COMMENT"
+check "$RC" 0 "another identity's marker on a review comment is not our state"
 
 if (( failures )); then
     echo "=== $failures check(s) failed ==="
