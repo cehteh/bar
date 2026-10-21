@@ -81,12 +81,8 @@ function called_as ## [pattern..] - Checks whenever bar is called as a symlink m
     return 1
 }
 
-# The reporting helpers below are called as plain statements from rule_eval()/bar_main() which run
-# under 'set -euo pipefail'. Their verbosity guards are written as '(( ... )) && { ... }', and when
-# the guard suppresses the output that list evaluates to the status 1 -- under 'set -e' the caller
-# then aborts, i.e. a *successful* rule exits 1 as soon as BAR_VERBOSITY_LEVEL <= 1 (or '--quiet').
-# The guards must therefore never leak a non-zero status: every path ends in 'return 0'.
-# Regression test: tests/test_verbosity.sh
+# Called as plain statements under 'set -euo pipefail': a verbosity guard that suppresses its
+# message must still return 0, or a successful rule exits 1 (tests/test_verbosity.sh).
 
 function progress # [message..] - elusive progress notice, will be overwritten by the next output.
 {
