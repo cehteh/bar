@@ -13,6 +13,8 @@
 ###   rad_path               where the node keeps its storage ('rad path')
 ###   rad_cobs_time          when and how the last event of a patch or issue happened, read from
 ###                          'refs/namespaces/*/refs/cobs/xyz.radicle.<type>' below that storage
+###   rad_cob_copies         every namespace copy of one COB, newest first ('<date> <tip> <nid>')
+###   rad_cob_newest         the newest of those, and 'rad_cob_nids' the namespaces carrying a tip
 ###   rad_age                an epoch as a short age ('6m', '2h', '3d', '1y')
 ###   rad_line/rad_columns/rad_table
 ###                          cut the padded, boxed tables 'rad' prints by the names of their
@@ -105,6 +107,48 @@ function rad_cobs_time ## <type> <rid> <array> - when and how the last event of 
                 for (id in newest)
                     print id "\t" newest[id] "\t" kind[id]
             }')
+}
+
+# --- the copies of a COB ------------------------------------------------------------------------
+
+function rad_cob_copies ## <storage> <type> <id> - every namespace copy of one COB, newest first
+{
+    ## Every namespace of the node storage keeps its own copy of a COB, and a peer's copy can be
+    ## ahead of ours.  One '<date> <tip> <nid>' line per copy, in one stable order -- the commit
+    ## date (unix) descending, the namespace ascending to break a tie -- so 'the newest' is a
+    ## decision a caller reads off the first line and never a wildcard match.  A storage which
+    ## cannot be read, or which carries no copy, answers nothing and succeeds.
+    local storage="$1" typename="$2" id="$3"
+    local date tip ref nid
+    [[ -n "$storage" && -d "$storage" ]] || return 0
+    while IFS="$RAD_RS" read -r date tip ref; do
+        [[ -n "$ref" ]] || continue
+        nid="${ref#refs/namespaces/}"
+        nid="${nid%%/*}"
+        printf '%s %s %s\n' "$date" "$tip" "$nid"
+    done < <(git --git-dir="$storage" for-each-ref \
+        --format="%(committerdate:unix)${RAD_RS}%(objectname)${RAD_RS}%(refname)" \
+        "refs/namespaces/*/refs/cobs/$typename/$id" 2>/dev/null) |
+        LC_ALL=C sort -k1,1nr -k3,3
+}
+
+function rad_cob_newest ## <storage> <type> <id> - the newest copy of one COB, '<date> <tip> <nid>'
+{
+    ## The one line 'rad_cob_copies' put first, and nothing when there is no copy.  Read into an
+    ## array rather than piped through 'head': a consumer of a pipe that closes early fails under
+    ## 'pipefail' in the caller, and this answer is not worth such a surprise.
+    local -a copies=()
+    mapfile -t copies < <(rad_cob_copies "$1" "$2" "$3")
+    printf '%s' "${copies[0]:-}"
+}
+
+function rad_cob_nids ## <storage> <type> <id> <tip> - the namespaces whose copy carries <tip>
+{
+    ## Which copy an op chain came from: the op's id *is* the commit the namespace ref points at,
+    ## so the namespaces sharing that tip are the copies a read of it could have landed on.  One
+    ## nid per word, with a trailing space; empty when no copy carries that tip.
+    rad_cob_copies "$1" "$2" "$3" |
+        LC_ALL=C awk -v tip="$4" '$2 == tip { printf "%s ", $3 }'
 }
 
 # --- times ---------------------------------------------------------------------------------------

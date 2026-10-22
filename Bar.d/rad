@@ -22,6 +22,9 @@
 ###                                                          '*unassign:' proposals of one item
 ###   bar rad_topic <class> "<description>"                  open the topic tree of an item
 ###   bar rad_reaction [--from <emoji>] <to> <target>..      set/transition/withdraw our own marker
+###   bar rad_cob <list|ops|document> ..                    what the COB store holds, one chain,
+###                                                          one document -- one interface for a
+###                                                          consumer that must not know the layout
 ###   bar rad_rm_label <item> <glob>..                       remove the stored labels a glob matches
 ###   bar rad_import                                         import this repository into radicle
 ###   bar rad_merge_accepted_prs [--dry-run] [--no-fetch] [--max <n>]
@@ -368,6 +371,23 @@ rule rad_topic: -
 ## 2 could not answer (usage, a reaction the store would not accept, a missing target),
 ## 3 the node holds no such repository, item or revision.
 rule rad_reaction: -
+
+# helper: rad_cob | the COB store as one interface: which COBs a repository carries, one COB's op chain, and the document the store reduces it to, with the failure cases a consumer has to tell apart | rad_cob list [--repo <rid,path>] [--type <issue,patch,id>].. [--json] or rad_cob ops --repo <rid,path> --type <type> --object <cob> [--from <op>] [--until <op>] [--json] or rad_cob document --repo <rid,path> --type <type> --object <cob> [--bodies] [--json] | one JSON object per line on stdout: '{"kind","cob","copy"}' per COB, one store op per line oldest first, or the document ('{"kind","cob","copy","timeline","comments"}' for an issue, the same plus 'revisions' with their 'reviews' and 'comments' for a patch); a failure is '{"error","kind","cob","detail"}'
+## One verb per question, and one shape per verb: 'list' is what the store carries, 'ops' is the
+## store's own op objects ('rad cob log --format json', verbatim, oldest first), 'document' is the
+## reduction normalized -- one kind of comment object, ISO dates in the reader's local offset,
+## 'redacted' instead of a missing body, reactions as '{"emoji","authors"}'.  '--bodies' adds the
+## comment texts.
+##
+## No consumer derives a namespace ref: a COB sits in every namespace that replicated it, so 'list'
+## names the copy whose tip is the newest ('copy'), 'document' names the one the read landed on, and
+## a read whose tip is not the newest is named as behind on stderr -- never passed as complete.
+##
+## Exit 0 answered, 1 the store refused (its own first line is 'detail', unchanged), 2 usage, 3 no
+## such repository, type or object, 4 the store lists the object and nothing materialises, 5 the
+## store or the node cannot be read.  Each failure is one JSON line on stdout, so a consumer which
+## reads the exit code and stdout alone tells them apart.
+rule rad_cob: -
 
 # helper: rad_merge_accepted_prs | merge the patches a delegate accepted and which merge cleanly into their target branch | rad_merge_accepted_prs [--dry-run] [--no-fetch] [--max <n>] [--json] | one '<verdict> patch=<id> target=<branch> head=<sha> revision=<sha> upstream=<sha> reason=<why>' line per open patch, <verdict> one of merged, mergeable, blocked, conflict; '--json' the same as one object
 ## The acceptance is read off the patch's own chain -- a delegate's 'review' with 'verdict: accept'
@@ -1922,7 +1942,7 @@ function rad_metadata_store
     ## only for its diagnostics -- 'not a repository here' and 'the node holds no storage' are not
     ## the same answer for the operator, and neither is a usage error.
     local name="$1" repo="$2"
-    local toplevel="" rid="" radpath="" storage=""
+    local toplevel="" rid="" radpath="" storage="" self=""
     if [[ -n "$repo" && "$repo" != rad:* ]]; then
         if ! toplevel="$(cd "$repo" 2>/dev/null && git rev-parse --show-toplevel 2>/dev/null)"; then
             error "not a git repository: '$repo' is neither a RID nor a checkout"
@@ -3850,4 +3870,665 @@ function rad_merge_accepted_prs ## see the module header
         return 1
     fi
     return 0
+}
+
+# --- rad_cob: the COB store, one interface for a consumer -----------------------------------------
+#
+# Every consumer of the store -- the reaction loop, the dashboard, the reader behind
+# 'rad_comment_metadata' -- derives its state from the same three questions: which COBs does this
+# repository carry, what is one COB's op chain, and what does the store reduce a COB to.  It
+# answered them through two independent readers with two shapes, one of them a hand-rolled walk of
+# the namespace refs; this is the one interface.  'rad' reads the store -- it owns the layout and
+# the choice of copy -- bar reads 'rad', and the consumer reads one shape per question.
+#
+#   list       every COB the store holds, per type, with the copy a read lands on
+#   ops        one COB's op chain, oldest first, the objects 'rad cob log' prints and nothing else
+#   document   one COB reduced: an issue's thread, a patch's revisions and their reviews
+#
+# NOTHING HERE DERIVES A NAMESPACE REF.  A COB sits in every namespace that replicated it, so a
+# read has to choose one; 'list' names the namespace whose tip is the newest ('copy'), 'document'
+# names the one the read landed on, and a read whose tip is not the newest is named as behind
+# instead of passing as complete.
+#
+# 'ops' is the store's own JSON, verbatim: an op is what 'rad cob log --format json' makes of it
+# ('id', 'author' as the NID, 'timestamp' as epoch milliseconds, 'actions', 'manifest', 'parents',
+# 'related', 'identity') and this helper adds nothing to it -- a consumer which reads the chain
+# today reads the same objects tomorrow.  'document' is the normalized shape, because 'cob show'
+# speaks two dialects (an issue keeps its timeline under 'thread', an author is a bare NID in a
+# comment and an object at the root, dates are milliseconds): one kind of comment object, ISO dates
+# in the reader's local offset, a 'redacted' flag instead of a missing body, reactions as
+# '{"emoji", "authors"}' whatever the store's two encodings are.  '--bodies' adds the comment
+# texts (an empty body and 'redacted: true' for a redacted one); without it the document carries
+# the structure and no text.
+#
+# FAILURE IS PART OF THE INTERFACE.  A consumer that reads only the exit code and stdout tells the
+# four apart, because each answer is one JSON line with an 'error' field:
+#
+#   0  answered
+#   1  refused        the store refused; 'detail' is its own first line, unchanged
+#   2  usage          (nothing on stdout)
+#   3  notfound       no such repository, type or object
+#   4  absent         the store lists the object, and nothing materialises (measured on
+#                     'example_project2' patch 02e1abf: 'cob list' names it, 'cob show' says it was
+#                     not found, and 'rad patch list --all' does not carry it)
+#   5  unreadable     the store or the node cannot be read at all -- the difference between 'this
+#                     item is gone' and 'nothing can be read right now'
+#
+# 'refused' is what is left when an object the store lists fails to reduce for any reason other
+# than 'not found': a store error, an unsupported manifest, an identity it cannot resolve.
+
+function rad_cob_usage ## [reason] - usage on stderr
+{
+    [[ -n "${1:-}" ]] && printf 'rad_cob: %s\n' "$1" >&2
+    printf 'usage: %s rad_cob list [--repo <rid|path>] [--type <type>[,<type>]..] [--json]\n' "${BAR_CALLED_AS:-bar}" >&2
+    printf '       %s rad_cob ops --repo <rid|path> --type <type> --object <cob> [--from <op>] [--until <op>] [--json]\n' "${BAR_CALLED_AS:-bar}" >&2
+    printf '       %s rad_cob document --repo <rid|path> --type <type> --object <cob> [--bodies] [--json]\n' "${BAR_CALLED_AS:-bar}" >&2
+    printf '       <type> one of issue, patch, id (or the store name xyz.radicle.<type>)\n' >&2
+    printf '       The answer is one JSON object per line on stdout: that is what a consumer reads, and\n' >&2
+    printf '       --json (or --format json) states it as the rest of the family spells it.\n' >&2
+    printf '       Exit 0 answered, 1 the store refused (its own first line is the detail), 2 usage,\n' >&2
+    printf '       3 no such repository, type or object, 4 the store lists the object and nothing\n' >&2
+    printf '       materialises, 5 the store or the node cannot be read.\n' >&2
+}
+
+function rad_cob_call ## <args>.. - one 'rad' invocation, its answer (both streams) and its status
+{
+    ## Like 'rad_run', except that the answer is *returned* and nothing is reported: a store failure
+    ## is itself an answer here -- the four failure cases are told apart by it, and the store's own
+    ## first line is what 'refused' and 'absent' publish.  'rad' writes its error to stdout, so
+    ## folding the streams in loses nothing.
+    LC_ALL=C "$RAD_BIN" "$@" 2>&1
+}
+
+function rad_cob_first_line ## <text> - the first line of <text>
+{
+    local line
+    while IFS= read -r line; do
+        printf '%s' "$line"
+        return 0
+    done <<<"$1"
+}
+
+function rad_cob_fail ## <case> <type> <cob> <detail> - the answer of a failure and its exit code
+{
+    ## One JSON line on stdout, so the four cases are told apart by what a consumer already reads.
+    ## 'detail' is the store's own first line where there is one: a paraphrase would hide the
+    ## sentence the operator has to search for.
+    local case_name="$1" typename="${2:-}" cob="${3:-}" detail="${4:-}"
+    jq -cn --arg error "$case_name" --arg kind "${typename#xyz.radicle.}" --arg cob "$cob" \
+        --arg detail "$detail" \
+        '{error: $error,
+          kind: (if $kind == "" then null else $kind end),
+          cob: (if $cob == "" then null else $cob end),
+          detail: $detail}'
+    case "$case_name" in
+    notfound) return 3 ;;
+    absent) return 4 ;;
+    unreadable) return 5 ;;
+    *) return 1 ;;
+    esac
+}
+
+function rad_cob_typename ## <type> - the store's type name, 1 when it is not one of the three
+{
+    case "$1" in
+    issue | patch | id) printf 'xyz.radicle.%s' "$1" ;;
+    xyz.radicle.issue | xyz.radicle.patch | xyz.radicle.id) printf '%s' "$1" ;;
+    *) return 1 ;;
+    esac
+}
+
+function rad_cob_repo ## <verb> <repo> - the repository a read is about, in RAD_COB_*
+{
+    ## A RID is answered by the node alone ('rad' then needs no checkout); a path -- or nothing,
+    ## which is the checkout the command runs in -- is named by 'rad inspect --rid'.  A RID the node
+    ## holds no storage for is 'notfound' (the repository is not here), while a node which cannot
+    ## even say where its storage is has nothing to read at all ('unreadable').
+    local name="$1" repo="$2"
+    local toplevel="" rid="" radpath="" storage=""
+    if [[ -n "$repo" && "$repo" != rad:* ]]; then
+        toplevel="$(cd "$repo" 2>/dev/null && git rev-parse --show-toplevel 2>/dev/null)" || toplevel=""
+        if [[ -z "$toplevel" ]]; then
+            error "'$repo' is neither a RID nor a checkout"
+            rad_cob_fail notfound "" "" "'$repo' is neither a RID nor a checkout"
+            return 3
+        fi
+    elif [[ -z "$repo" ]]; then
+        toplevel="$(git rev-parse --show-toplevel 2>/dev/null)" || toplevel=""
+        if [[ -z "$toplevel" ]]; then
+            error "'rad_cob $name' reads the checkout it runs in, and this is none; '--repo' names one"
+            rad_cob_fail notfound "" "" "not a checkout, and no --repo names the repository"
+            return 3
+        fi
+    fi
+    if [[ -n "$toplevel" ]]; then
+        if ! rid="$(cd "$toplevel" && rad_run inspect --rid)"; then
+            rad_cob_fail notfound "" "" "no radicle repository at '$toplevel'"
+            return 3
+        fi
+        rid="${rid##*$'\n'}"
+    else
+        rid="$repo"
+    fi
+    radpath="$(rad_path)" || radpath=""
+    if [[ -z "$radpath" ]]; then
+        rad_cob_fail unreadable "" "" "'$RAD_BIN path' names no storage"
+        return 5
+    fi
+    storage="$radpath/storage/${rid#rad:}"
+    if [[ ! -d "$storage" ]]; then
+        ## No storage for that RID is 'not found' only when the node itself answers: a profile
+        ## which is not there, or a node which cannot be reached, has nothing to read at all, and a
+        ## consumer must not read that as 'the repository is gone'.
+        if ! self="$(rad_cob_call self)"; then
+            rad_cob_fail unreadable "" "" "'$RAD_BIN' cannot answer: $(rad_cob_first_line "$self")"
+            return 5
+        fi
+        rad_cob_fail notfound "" "" "the node holds no storage for '$rid'"
+        return 3
+    fi
+    RAD_COB_RID="$rid"
+    RAD_COB_STORAGE="$storage"
+    return 0
+}
+
+function rad_cob_ids ## <rid> <typename> - the ids the store holds of one type, one per line
+{
+    local rid="$1" typename="$2" out=""
+    if ! out="$(rad_cob_call cob list -r "$rid" -t "$typename")"; then
+        return 1
+    fi
+    printf '%s\n' "$out" | LC_ALL=C grep -E '^[0-9a-f]{40}$' || true
+}
+
+function rad_cob_tip ## <ops-json> - the id of the newest op rad printed, empty when there is none
+{
+    local line
+    while IFS= read -r line; do
+        [[ "$line" == \{* ]] || continue
+        printf '%s' "$line" | jq -r '.id // empty' 2>/dev/null
+        return 0
+    done <<<"$1"
+}
+
+function rad_cob_copy_note ## <storage> <type> <id> <op_id> - name the copy a read landed on
+{
+    ## Sets 'RAD_COB_COPY' to the namespace a read landed on, and says it on stderr -- always, not
+    ## at some verbosity: it is the answer to 'which copy is this', and a consumer that derives a
+    ## verdict from a chain behind the newest copy has to be able to see that.  The op's id is the
+    ## commit a namespace ref points at, so the tip names its copies; when the newest copy is a
+    ## different tip the answer is behind it, and that is a loud line, not a note.
+    local storage="$1" typename="$2" id="$3" op_id="$4"
+    local nids="" newest="" newest_tip="" newest_nid="" label="${typename#xyz.radicle.}"
+    RAD_COB_COPY=""
+    [[ -n "$op_id" ]] || return 0
+    nids="$(rad_cob_nids "$storage" "$typename" "$id" "$op_id")"
+    nids="${nids% }"
+    newest="$(rad_cob_newest "$storage" "$typename" "$id")"
+    if [[ -n "$newest" ]]; then
+        newest_tip="${newest#* }"
+        newest_tip="${newest_tip%% *}"
+        newest_nid="${newest##* }"
+    fi
+    RAD_COB_COPY="${nids%% *}"
+    [[ -n "$RAD_COB_COPY" ]] || RAD_COB_COPY="$newest_nid"
+    if [[ -z "$newest" ]]; then
+        printf 'rad_cob: copy %s:%s: the storage names no copy, read tip %s\n' "$label" "$id" "$op_id" >&2
+        return 0
+    fi
+    if [[ "$newest_tip" != "$op_id" ]]; then
+        printf 'rad_cob: copy %s:%s: read tip %s, but the newest copy is %s at %s -- the answer is behind\n' \
+            "$label" "$id" "$op_id" "$newest_nid" "$newest_tip" >&2
+        return 0
+    fi
+    printf 'rad_cob: copy %s:%s: read from %s at %s\n' "$label" "$id" "${nids// /,}" "$op_id" >&2
+}
+
+function rad_cob_list ## see the module header
+{
+    local -a args=() types=() rows=() missed=() parts=()
+    local arg value repo="" type="" typename="" out="" id="" newest="" copy=""
+    local -i i=0 count=0 listed=0
+
+    for arg in "$@"; do
+        if [[ "$arg" == --*=* ]]; then
+            args+=("${arg%%=*}" "${arg#*=}")
+        else
+            args+=("$arg")
+        fi
+    done
+    count=${#args[@]}
+    while (( i < count )); do
+        arg="${args[i]}"
+        i=$(( i + 1 ))
+        case "$arg" in
+        -h | --help)
+            rad_cob_usage 2>&1
+            return 0
+            ;;
+        --json) : ;;
+        --format)
+            if (( i >= count )) || [[ -z "${args[i]}" ]]; then
+                rad_cob_usage "'--format' needs a value"
+                return 2
+            fi
+            value="${args[i]}"
+            i=$(( i + 1 ))
+            if [[ "$value" != json ]]; then
+                rad_cob_usage "'--format $value' is not an answer this helper prints (json only)"
+                return 2
+            fi
+            ;;
+        --repo | --type)
+            if (( i >= count )) || [[ -z "${args[i]}" ]]; then
+                rad_cob_usage "'$arg' needs a non-empty value"
+                return 2
+            fi
+            value="${args[i]}"
+            i=$(( i + 1 ))
+            case "$arg" in
+            --repo) repo="$value" ;;
+            --type)
+                IFS=',' read -r -a parts <<<"$value"
+                for type in ${parts[@]+"${parts[@]}"}; do
+                    if [[ -n "$type" ]]; then
+                        types+=("$type")
+                    fi
+                done
+                ;;
+            esac
+            ;;
+        -*)
+            rad_cob_usage "unknown argument '$arg'"
+            return 2
+            ;;
+        *)
+            rad_cob_usage "unexpected argument '$arg'"
+            return 2
+            ;;
+        esac
+    done
+    (( ${#types[@]} )) || types=(issue patch id)
+    for type in "${types[@]}"; do
+        if ! rad_cob_typename "$type" >/dev/null; then
+            rad_cob_usage "'$type' is not a COB type this store carries (issue, patch, id)"
+            return 2
+        fi
+    done
+
+    rad_cob_repo list "$repo" || return $?
+    for type in "${types[@]}"; do
+        typename="$(rad_cob_typename "$type")"
+        if ! out="$(rad_cob_ids "$RAD_COB_RID" "$typename")"; then
+            missed+=("${typename#xyz.radicle.}")
+            continue
+        fi
+        listed=$(( listed + 1 ))
+        while IFS= read -r id; do
+            [[ -n "$id" ]] || continue
+            newest="$(rad_cob_newest "$RAD_COB_STORAGE" "$typename" "$id")"
+            copy=""
+            if [[ -n "$newest" ]]; then
+                copy="${newest##* }"
+            fi
+            rows+=("$(printf '%s%s%s%s%s' "${typename#xyz.radicle.}" "$RAD_US" "$id" "$RAD_US" "$copy")")
+        done <<<"$out"
+    done
+    if (( listed == 0 )); then
+        error "the store answered no type of '$RAD_COB_RID': ${missed[*]}"
+        rad_cob_fail unreadable "" "" "the store cannot be read: 'rad cob list' failed for ${missed[*]}"
+        return 5
+    fi
+    for type in ${missed[@]+"${missed[@]}"}; do
+        error "the store did not answer for '$type': the answer carries the other types only"
+    done
+    (( ${#rows[@]} )) || return 0
+    printf '%s\n' "${rows[@]}" | jq -Rc 'split("\u001f")
+        | {kind: .[0], cob: .[1], copy: (if (.[2] // "") == "" then null else .[2] end)}'
+    return 0
+}
+
+function rad_cob_ops ## see the module header
+{
+    local -a args=() call=()
+    local arg value repo="" type="" object="" from="" until="" typename="" out="" detail="" known=""
+    local -i i=0 count=0 match=0
+
+    for arg in "$@"; do
+        if [[ "$arg" == --*=* ]]; then
+            args+=("${arg%%=*}" "${arg#*=}")
+        else
+            args+=("$arg")
+        fi
+    done
+    count=${#args[@]}
+    while (( i < count )); do
+        arg="${args[i]}"
+        i=$(( i + 1 ))
+        case "$arg" in
+        -h | --help)
+            rad_cob_usage 2>&1
+            return 0
+            ;;
+        --json) : ;;
+        --format)
+            if (( i >= count )) || [[ -z "${args[i]}" ]]; then
+                rad_cob_usage "'--format' needs a value"
+                return 2
+            fi
+            value="${args[i]}"
+            i=$(( i + 1 ))
+            if [[ "$value" != json ]]; then
+                rad_cob_usage "'--format $value' is not an answer this helper prints (json only)"
+                return 2
+            fi
+            ;;
+        --repo | --type | --object | --from | --until)
+            if (( i >= count )) || [[ -z "${args[i]}" ]]; then
+                rad_cob_usage "'$arg' needs a non-empty value"
+                return 2
+            fi
+            value="${args[i]}"
+            i=$(( i + 1 ))
+            case "$arg" in
+            --repo) repo="$value" ;;
+            --type) type="$value" ;;
+            --object) object="$value" ;;
+            --from) from="$value" ;;
+            --until) until="$value" ;;
+            esac
+            ;;
+        -*)
+            rad_cob_usage "unknown argument '$arg'"
+            return 2
+            ;;
+        *)
+            rad_cob_usage "unexpected argument '$arg'"
+            return 2
+            ;;
+        esac
+    done
+    if [[ -z "$type" || -z "$object" ]]; then
+        rad_cob_usage "'ops' needs --type and --object"
+        return 2
+    fi
+    typename="$(rad_cob_typename "$type")" || {
+        rad_cob_usage "'$type' is not a COB type this store carries (issue, patch, id)"
+        return 2
+    }
+
+    rad_cob_repo ops "$repo" || return $?
+    ## The store's own listing decides 'not found' from 'absent': an id it lists whose chain does
+    ## not materialise is absent, an id it does not list does not exist.  Without the listing the
+    ## two are the same message, and a consumer would act on 'gone' for both.
+    if ! known="$(rad_cob_ids "$RAD_COB_RID" "$typename")"; then
+        error "the store did not answer for '$typename'"
+        rad_cob_fail unreadable "$typename" "$object" "the store cannot be read: 'rad cob list' failed"
+        return 5
+    fi
+    while IFS= read -r value; do
+        if [[ -n "$value" && "$value" == "$object"* ]]; then
+            match=$(( match + 1 ))
+        fi
+    done <<<"$known"
+
+    call=(cob log -r "$RAD_COB_RID" -t "$typename" -o "$object" --format json)
+    if [[ -n "$from" ]]; then
+        call+=(--from "$from")
+    fi
+    if [[ -n "$until" ]]; then
+        call+=(--until "$until")
+    fi
+    if ! out="$(rad_cob_call "${call[@]}")"; then
+        detail="$(rad_cob_first_line "$out")"
+        if [[ "$detail" == *"not found"* ]]; then
+            if (( match )); then
+                rad_cob_fail absent "$typename" "$object" "$detail"
+                return 4
+            fi
+            rad_cob_fail notfound "$typename" "$object" "$detail"
+            return 3
+        fi
+        rad_cob_fail refused "$typename" "$object" "$detail"
+        return 1
+    fi
+    rad_cob_copy_note "$RAD_COB_STORAGE" "$typename" "$object" "$(rad_cob_tip "$out")"
+    ## 'rad cob log' prints newest first; a chain is read oldest first.  '--from' and '--until'
+    ## narrow the same chain and both bounds are inclusive (measured on rad 1.10.3), so the window
+    ## is reversed rather than re-derived.
+    printf '%s\n' "$out" | LC_ALL=C awk '/^\{/ { line[++n] = $0 } END { for (i = n; i > 0; i--) print line[i] }'
+    return 0
+}
+
+## The document's shape, one jq program: 'cob show' speaks two dialects -- an issue keeps its
+## timeline under 'thread', a patch keeps revisions with their discussions and reviews -- and this
+## maps either onto one kind of comment, ISO dates in the reader's local offset ('$off' seconds and
+## '$zone' as '+hh:mm'), 'redacted' instead of a missing body, and reactions as objects.
+declare -gr RAD_COB_DOCUMENT_JQ='
+def nid: (if type == "object" then (.id // "") else (. // "") end) | sub("^did:key:"; "");
+def iso:
+  if type == "number" then (((. / 1000 | floor) + $off) | gmtime | strftime("%Y-%m-%dT%H:%M:%S")) + $zone
+  else null end;
+def markers:
+  (if type == "array" then . else [] end)
+  | map(if type == "array" then {emoji: .[1], authors: [.[0]]}
+        else {emoji: .emoji, authors: (.authors // [])} end)
+  | map(select(.emoji != null));
+def edits_of:
+  (if type == "array" then . else [] end)
+  | map({author: ((.author // "") | sub("^did:key:"; "")),
+         date: ((.timestamp // null) | iso),
+         body: (.body // "")});
+def comment($tl):
+  .key as $id
+  | {id: $id,
+     author: ((.value.author // "") | sub("^did:key:"; "")),
+     date: ((.value.edits // []) | if length > 0 then .[0].timestamp | iso else null end),
+     redacted: ((.value.body // null) == null),
+     replyTo: (.value.replyTo // null),
+     resolved: (.value.resolved // false),
+     root: ($id == ($tl[0] // "")),
+     reactions: (.value.reactions | markers)}
+  + (if $bodies == "yes"
+     then {body: (.value.body // ""), edits: (.value.edits | edits_of)}
+     else {} end)
+  + {order: (($tl | index($id)) // 999999)};
+def comments($tl):
+  (if type == "object" then to_entries else [] end)
+  | map(comment($tl))
+  | sort_by(.order)
+  | map(del(.order));
+def review($tl):
+  {id: (.id // null),
+   author: (.author | nid),
+   verdict: (.verdict // "comment"),
+   date: ((.summary // []) | if length > 0 then .[0].timestamp | iso else (.timestamp | iso) end),
+   labels: (.labels // []),
+   reactions: (.reactions | markers),
+   comments: ((.comments.comments // {}) | comments($tl))}
+  + (if $bodies == "yes" then {summary: ((((.summary // []) | last) // {}).body // "")} else {} end);
+
+. as $d
+| ($d.timeline // $d.thread.timeline // []) as $tl
+| (($tl[0]) // "") as $root
+| if ($d.revisions // null) != null then
+    {kind: "patch",
+     cob: $cob,
+     copy: (if $copy == "" then null else $copy end),
+     author: ($d.author | nid),
+     title: ($d.title // ""),
+     state: ($d.state // null),
+     target: ($d.target // null),
+     labels: ($d.labels // []),
+     assignees: ($d.assignees // []),
+     merges: ($d.merges // {}),
+     timeline: $tl,
+     revisions: [ ($d.revisions // {}) | to_entries[]
+                  | .key as $rev | .value as $r
+                  | {id: ($r.id // $rev),
+                     author: ($r.author | nid),
+                     date: ($r.timestamp | iso),
+                     base: ($r.base // null),
+                     oid: ($r.oid // null),
+                     resolves: ($r.resolves // null),
+                     reactions: ($r.reactions | markers),
+                     comments: (($r.discussion.comments // {}) | comments($tl)),
+                     reviews: [ (($r.reviews // {}) | to_entries[] | .value | review($tl)) ]}
+                    + (if $bodies == "yes"
+                       then {description: (((($r.description // []) | last) // {}).body // ""),
+                             description_edits: ($r.description | edits_of)}
+                       else {} end) ]}
+  else
+    {kind: "issue",
+     cob: $cob,
+     copy: (if $copy == "" then null else $copy end),
+     author: (((($d.thread.comments // {})[$root] // {}).author // "") | sub("^did:key:"; "")),
+     title: ($d.title // ""),
+     state: ($d.state // null),
+     labels: ($d.labels // []),
+     assignees: ($d.assignees // []),
+     timeline: $tl,
+     comments: (($d.thread.comments // {}) | comments($tl))}
+  end
+'
+
+function rad_cob_document ## see the module header
+{
+    local -a args=() call=() parts=()
+    local arg value repo="" type="" object="" bodies="no" typename="" out="" detail="" known="" op_id=""
+    local zone="" off=0
+    local -i i=0 count=0 match=0
+
+    for arg in "$@"; do
+        if [[ "$arg" == --*=* ]]; then
+            args+=("${arg%%=*}" "${arg#*=}")
+        else
+            args+=("$arg")
+        fi
+    done
+    count=${#args[@]}
+    while (( i < count )); do
+        arg="${args[i]}"
+        i=$(( i + 1 ))
+        case "$arg" in
+        -h | --help)
+            rad_cob_usage 2>&1
+            return 0
+            ;;
+        --json) : ;;
+        --bodies) bodies="yes" ;;
+        --format)
+            if (( i >= count )) || [[ -z "${args[i]}" ]]; then
+                rad_cob_usage "'--format' needs a value"
+                return 2
+            fi
+            value="${args[i]}"
+            i=$(( i + 1 ))
+            if [[ "$value" != json ]]; then
+                rad_cob_usage "'--format $value' is not an answer this helper prints (json only)"
+                return 2
+            fi
+            ;;
+        --repo | --type | --object)
+            if (( i >= count )) || [[ -z "${args[i]}" ]]; then
+                rad_cob_usage "'$arg' needs a non-empty value"
+                return 2
+            fi
+            value="${args[i]}"
+            i=$(( i + 1 ))
+            case "$arg" in
+            --repo) repo="$value" ;;
+            --type) type="$value" ;;
+            --object) object="$value" ;;
+            esac
+            ;;
+        -*)
+            rad_cob_usage "unknown argument '$arg'"
+            return 2
+            ;;
+        *)
+            rad_cob_usage "unexpected argument '$arg'"
+            return 2
+            ;;
+        esac
+    done
+    if [[ -z "$type" || -z "$object" ]]; then
+        rad_cob_usage "'document' needs --type and --object"
+        return 2
+    fi
+    typename="$(rad_cob_typename "$type")" || {
+        rad_cob_usage "'$type' is not a COB type this store carries (issue, patch, id)"
+        return 2
+    }
+    rad_cob_repo document "$repo" || return $?
+    if ! known="$(rad_cob_ids "$RAD_COB_RID" "$typename")"; then
+        error "the store did not answer for '$typename'"
+        rad_cob_fail unreadable "$typename" "$object" "the store cannot be read: 'rad cob list' failed"
+        return 5
+    fi
+    while IFS= read -r value; do
+        if [[ -n "$value" && "$value" == "$object"* ]]; then
+            match=$(( match + 1 ))
+        fi
+    done <<<"$known"
+
+    call=(cob show -r "$RAD_COB_RID" -t "$typename" -o "$object" --format json)
+    if ! out="$(rad_cob_call "${call[@]}")"; then
+        detail="$(rad_cob_first_line "$out")"
+        if [[ "$detail" == *"not found"* ]]; then
+            if (( match )); then
+                rad_cob_fail absent "$typename" "$object" "$detail"
+                return 4
+            fi
+            rad_cob_fail notfound "$typename" "$object" "$detail"
+            return 3
+        fi
+        rad_cob_fail refused "$typename" "$object" "$detail"
+        return 1
+    fi
+    op_id="$(printf '%s' "$out" | jq -r '((.timeline // .thread.timeline // []) | last) // empty' 2>/dev/null)" || op_id=""
+    rad_cob_copy_note "$RAD_COB_STORAGE" "$typename" "$object" "$op_id"
+
+    ## One offset for the whole document, taken once: the store's timestamps carry no zone, and one
+    ## call per timestamp would cost a process each.  '$zone' is what 'date +%z' prints, so a date
+    ## here reads like 'date --iso-8601=seconds' renders it.
+    zone="$(date +%z)"
+    IFS=':' read -r -a parts <<<"${zone:0:3}:${zone:3:2}"
+    off=$(( 10#${parts[0]:1} * 3600 + 10#${parts[1]} * 60 ))
+    if [[ "${zone:0:1}" == '-' ]]; then
+        off=$(( -off ))
+    fi
+    zone="${zone:0:3}:${zone:3:2}"
+
+    printf '%s' "$out" | jq -c --arg cob "$object" --arg copy "${RAD_COB_COPY:-}" --arg bodies "$bodies" \
+        --argjson off "$off" --arg zone "$zone" "$RAD_COB_DOCUMENT_JQ"
+    return 0
+}
+
+function rad_cob ## see the module header
+{
+    local -a args=( ${RULE_ARGS[@]+"${RULE_ARGS[@]}"} )
+    local verb="${args[0]:-}"
+    case "$verb" in
+    -h | --help)
+        rad_cob_usage 2>&1
+        return 0
+        ;;
+    list | ops | document) ;;
+    "")
+        rad_cob_usage "a verb is required: list, ops or document"
+        return 2
+        ;;
+    *)
+        rad_cob_usage "unknown verb '$verb'"
+        return 2
+        ;;
+    esac
+    ## Every verb's answer is a JSON object -- including the one that names a failure -- so jq is a
+    ## dependency of the family, checked once, before a verb spends a call on the store.
+    if ! command -v jq >/dev/null 2>&1; then
+        printf 'rad_cob: jq is required to read the store\n' >&2
+        return 1
+    fi
+    rad_cob_"$verb" "${args[@]:1}"
 }

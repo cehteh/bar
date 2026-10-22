@@ -1720,6 +1720,9 @@ MODULE API/RULES
                                                              '*unassign:' proposals of one item
       bar rad_topic <class> "<description>"                  open the topic tree of an item
       bar rad_reaction [--from <emoji>] <to> <target>..      set/transition/withdraw our own marker
+      bar rad_cob <list|ops|document> ..                    what the COB store holds, one chain,
+                                                             one document -- one interface for a
+                                                             consumer that must not know the layout
       bar rad_rm_label <item> <glob>..                       remove the stored labels a glob matches
       bar rad_import                                         import this repository into radicle
       bar rad_merge_accepted_prs [--dry-run] [--no-fetch] [--max <n>]
@@ -2543,6 +2546,71 @@ MODULE API/RULES
         Whether it merges at all is read in both modes -- that is the answer a dry run owes,
         and it writes nothing to find out.
 
+      rad_cob_usage [reason]
+        usage on stderr
+
+      rad_cob_call <args>..
+        one 'rad' invocation, its answer (both streams) and its status
+        Like 'rad_run', except that the answer is *returned* and nothing is reported: a store failure
+        is itself an answer here -- the four failure cases are told apart by it, and the store's own
+        first line is what 'refused' and 'absent' publish.  'rad' writes its error to stdout, so
+        folding the streams in loses nothing.
+
+      rad_cob_first_line <text>
+        the first line of <text>
+
+      rad_cob_fail <case> <type> <cob> <detail>
+        the answer of a failure and its exit code
+        One JSON line on stdout, so the four cases are told apart by what a consumer already reads.
+        'detail' is the store's own first line where there is one: a paraphrase would hide the
+        sentence the operator has to search for.
+
+      rad_cob_typename <type>
+        the store's type name, 1 when it is not one of the three
+
+      rad_cob_repo <verb> <repo>
+        the repository a read is about, in RAD_COB_*
+        A RID is answered by the node alone ('rad' then needs no checkout); a path -- or nothing,
+        which is the checkout the command runs in -- is named by 'rad inspect --rid'.  A RID the node
+        holds no storage for is 'notfound' (the repository is not here), while a node which cannot
+        even say where its storage is has nothing to read at all ('unreadable').
+        No storage for that RID is 'not found' only when the node itself answers: a profile
+        which is not there, or a node which cannot be reached, has nothing to read at all, and a
+        consumer must not read that as 'the repository is gone'.
+
+      rad_cob_ids <rid> <typename>
+        the ids the store holds of one type, one per line
+
+      rad_cob_tip <ops-json>
+        the id of the newest op rad printed, empty when there is none
+
+      rad_cob_copy_note <storage> <type> <id> <op_id>
+        name the copy a read landed on
+        Sets 'RAD_COB_COPY' to the namespace a read landed on, and says it on stderr -- always, not
+        at some verbosity: it is the answer to 'which copy is this', and a consumer that derives a
+        verdict from a chain behind the newest copy has to be able to see that.  The op's id is the
+        commit a namespace ref points at, so the tip names its copies; when the newest copy is a
+        different tip the answer is behind it, and that is a loud line, not a note.
+
+      rad_cob_list see the module header
+
+      rad_cob_ops see the module header
+        The store's own listing decides 'not found' from 'absent': an id it lists whose chain does
+        not materialise is absent, an id it does not list does not exist.  Without the listing the
+        two are the same message, and a consumer would act on 'gone' for both.
+        'rad cob log' prints newest first; a chain is read oldest first.  '--from' and '--until'
+        narrow the same chain and both bounds are inclusive (measured on rad 1.10.3), so the window
+        is reversed rather than re-derived.
+
+      rad_cob_document see the module header
+        One offset for the whole document, taken once: the store's timestamps carry no zone, and one
+        call per timestamp would cost a process each.  '$zone' is what 'date +%z' prints, so a date
+        here reads like 'date --iso-8601=seconds' renders it.
+
+      rad_cob see the module header
+        Every verb's answer is a JSON object -- including the one that names a failure -- so jq is a
+        dependency of the family, checked once, before a verb spends a call on the store.
+
     Rules:
 
       rad_import
@@ -2585,6 +2653,12 @@ MODULE API/RULES
         Exit 0 applied, 1 the expected marker is not what the store reduces (nothing was written),
         2 could not answer (usage, a reaction the store would not accept, a missing target),
         3 the node holds no such repository, item or revision.
+
+      rad_cob
+        Exit 0 answered, 1 the store refused (its own first line is 'detail', unchanged), 2 usage, 3 no
+        such repository, type or object, 4 the store lists the object and nothing materialises, 5 the
+        store or the node cannot be read.  Each failure is one JSON line on stdout, so a consumer which
+        reads the exit code and stdout alone tells them apart.
 
       rad_merge_accepted_prs
         The acceptance is read off the patch's own chain -- a delegate's 'review' with 'verdict: accept'
@@ -2665,6 +2739,8 @@ MODULE API/RULES
       rad_path               where the node keeps its storage ('rad path')
       rad_cobs_time          when and how the last event of a patch or issue happened, read from
                              'refs/namespaces/*/refs/cobs/xyz.radicle.<type>' below that storage
+      rad_cob_copies         every namespace copy of one COB, newest first ('<date> <tip> <nid>')
+      rad_cob_newest         the newest of those, and 'rad_cob_nids' the namespaces carrying a tip
       rad_age                an epoch as a short age ('6m', '2h', '3d', '1y')
       rad_line/rad_columns/rad_table
                              cut the padded, boxed tables 'rad' prints by the names of their
@@ -2721,6 +2797,26 @@ MODULE API/RULES
         of the node storage keeps a copy of a COB, so the newest commit over all of them is the
         last event and its subject names its kind ('Comment', 'Merge revision', ...).  A storage
         which is not there is not an error, the times stay empty then.
+
+      rad_cob_copies <storage> <type> <id>
+        every namespace copy of one COB, newest first
+        Every namespace of the node storage keeps its own copy of a COB, and a peer's copy can be
+        ahead of ours.  One '<date> <tip> <nid>' line per copy, in one stable order -- the commit
+        date (unix) descending, the namespace ascending to break a tie -- so 'the newest' is a
+        decision a caller reads off the first line and never a wildcard match.  A storage which
+        cannot be read, or which carries no copy, answers nothing and succeeds.
+
+      rad_cob_newest <storage> <type> <id>
+        the newest copy of one COB, '<date> <tip> <nid>'
+        The one line 'rad_cob_copies' put first, and nothing when there is no copy.  Read into an
+        array rather than piped through 'head': a consumer of a pipe that closes early fails under
+        'pipefail' in the caller, and this answer is not worth such a surprise.
+
+      rad_cob_nids <storage> <type> <id> <tip>
+        the namespaces whose copy carries <tip>
+        Which copy an op chain came from: the op's id *is* the commit the namespace ref points at,
+        so the namespaces sharing that tip are the copies a read of it could have landed on.  One
+        nid per word, with a trailing space; empty when no copy carries that tip.
 
       rad_age <now> <epoch>
         a short age ('6m', '2h', '3d', '1y'), '-' when there is no epoch
