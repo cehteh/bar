@@ -29,6 +29,9 @@
 ###   bar rad_import                                         import this repository into radicle
 ###   bar rad_merge_accepted_prs [--dry-run] [--no-fetch] [--max <n>]
 ###                                                          merge the patches a delegate accepted
+###   bar rad_rebase_ask [--after <patch>] [--branch <branch>] [--onto <sha>] [--dry-run]
+###                                                          ask the pending patches of a branch to
+###                                                          re-cut themselves after a merge landed
 ###
 ### Every helper answers '-h' or '--help' with its usage on stdout and exit 0.
 ###
@@ -396,6 +399,22 @@ rule rad_cob: -
 ## under any other identity refuses before it writes.  '--dry-run' answers what is ready and writes
 ## nothing.  Exit 0 answered, 1 refused or could not answer, 2 usage, 3 no data.
 rule rad_merge_accepted_prs: -
+
+# helper: rad_rebase_ask | ask the pending patches of a branch to re-cut themselves after a merge landed | rad_rebase_ask [--after <patch>] [--branch <branch>] [--onto <sha>] [--dry-run] [--no-fetch] [--json] | one '<verdict> patch=<id> target=<branch> head=<sha> reason=<why>' line per open patch, <verdict> one of asked, current, skipped, failed; '--json' the same as one object
+## A *sender*, nothing more: it merges nothing, re-cuts nothing and opens no worktree.  It posts one
+## comment -- the sole line '*trigger:rebase' -- on every pending patch of ours whose branch has just
+## moved, so the re-cut materializes in that patch's own round (its own claim, worktree, session and
+## gate).  '--after <patch>' is the merge path: the patch has to read 'Status merged' and the commit
+## it was merged as has to be in the branch now, else nothing is asked and the exit code says so --
+## a failed or unreadable merge is never followed by a sweep.  The branch is the merged patch's
+## 'Target' (rad resolves the upstream, else the repository's default branch, whatever it is named);
+## '--branch' names one outright when there is no merge to point at, and '--onto' overrides the
+## branch tip the members are measured against.  A patch is skipped when its 'Target' is another
+## branch, when it is another author's (a revision only goes into the author's own namespace), when
+## its head already contains the tip, and when a live '*trigger:rebase' already stands -- a consumed
+## one is redacted in the chain and does not count.  Exit 0 nothing failed, 1 a refusal or a failed
+## write, 2 usage, 3 no data.
+rule rad_rebase_ask: -
 # helper: rad_rm_label | remove every stored label of an item which matches one of the globs, in one write | rad_rm_label <item> <glob>.. [--repo <rid,path>] | one 'removed label item=<issue,patch>:<id> delete=<label>..' line, or 'no label item=…' when no stored label matches
 ## The removal half of the write layer's label effect: the labels the item carries are read fresh
 ## ('rad <type> list', the mutation target, never remembered) and every one matching a glob goes out
@@ -4531,4 +4550,272 @@ function rad_cob ## see the module header
         return 1
     fi
     rad_cob_"$verb" "${args[@]:1}"
+}
+
+# --- asking the siblings to re-cut: rad_rebase_ask ----------------------------------------------
+
+function rad_rebase_ask_usage ## [reason] - usage on stderr
+{
+    if [[ -n "${1:-}" ]]; then
+        printf 'rad_rebase_ask: %s\n' "$1" >&2
+    fi
+    printf 'usage: rad_rebase_ask [--after <patch>] [--branch <branch>] [--onto <sha>] [--dry-run] [--no-fetch] [--json]\n' >&2
+}
+
+function rad_rebase_show_field ## <show> <field> - one header value of 'rad patch show'
+{
+    ## '<show>' is the whole output.  The header line reads '│ <Field>   <value>' and the value is
+    ## padded to the box, so it is cut exactly like a table row: the field name is the cell 'rad_line'
+    ## drops, and what is left is the value.  Never parsed from the document -- a patch's own
+    ## revision payload carries no branch, and the COB's 'target' field is 'delegates' (the *review*
+    ## target, who is asked to review), not the branch.  'rad patch list' has no such column either.
+    local show="$1" field="$2" line=""
+    while IFS= read -r line; do
+        [[ "$line" == *"│ $field "* ]] || continue
+        rad_line "$line"
+        return 0
+    done <<<"$show"
+    return 1
+}
+
+function rad_rebase_live_comment ## <storage> <ref> - the newest comment of the chain, and its body
+{
+    ## Sets 'RAD_REBASE_COMMENT' (the op id) and 'RAD_REBASE_BODY'.  Empty when the chain has no
+    ## comment at all.
+    ##
+    ## Redaction-aware, and it has to be: a COB chain is append-only, so a directive the loop has
+    ## already consumed is still in the history -- its deletion is a 'Redact comment' op naming it --
+    ## and a read that trusted the text would call a spent '*trigger:rebase' live and never ask that
+    ## patch again.  Walked newest first, so a redaction is always read before the comment it removes.
+    local storage="$1" ref="$2" op subject payload id
+    local -A redacted=()
+    RAD_REBASE_COMMENT="" RAD_REBASE_BODY=""
+    while IFS="$RAD_US" read -r op subject; do
+        [[ -n "$op" ]] || continue
+        case "$subject" in
+        'Redact comment')
+            payload="$(git --git-dir="$storage" cat-file -p "${op}^{tree}:0" 2>/dev/null)" || payload=""
+            id="$(printf '%s' "$payload" | jq -r '.comment // empty' 2>/dev/null)"
+            [[ -n "$id" ]] && redacted["$id"]=1
+            ;;
+        Comment)
+            [[ -n "$RAD_REBASE_COMMENT" ]] && continue
+            [[ -n "${redacted[$op]:-}" ]] && continue
+            payload="$(git --git-dir="$storage" cat-file -p "${op}^{tree}:0" 2>/dev/null)" || payload=""
+            RAD_REBASE_COMMENT="$op"
+            RAD_REBASE_BODY="$(printf '%s' "$payload" | jq -r '.body // empty' 2>/dev/null)"
+            ;;
+        esac
+    done < <(git --git-dir="$storage" log --first-parent --format="%H${RAD_US}%s" "$ref" 2>/dev/null)
+    return 0
+}
+
+function rad_rebase_ask ## see the module header
+{
+    local -a args=( ${RULE_ARGS[@]+"${RULE_ARGS[@]}"} )
+    local -a rows=() ids=() heads=()
+    local raw value after="" branch="" onto="" dry="" json="" nofetch=""
+    local directive='*trigger:rebase'
+    local -i i=0 n=0 failed=0 asked_count=0
+    local toplevel="" rid="" radpath="" storage="" branch_tip="" table="" listing="" show=""
+    local id="" member_head="" target="" author="" status="" landed="" ref=""
+    local verdict="" reason=""
+
+    while (( i < ${#args[@]} )); do
+        raw="${args[i]}"
+        case "$raw" in
+        -h | --help)
+            rad_rebase_ask_usage 2>&1
+            return 0
+            ;;
+        --dry-run) dry=1 ;;
+        --json) json=1 ;;
+        --no-fetch) nofetch=1 ;;
+        --after | --branch | --onto)
+            i=$(( i + 1 ))
+            value="${args[i]:-}"
+            if [[ -z "$value" ]]; then
+                rad_rebase_ask_usage "'$raw' needs a value"
+                return 2
+            fi
+            case "$raw" in
+            --after) after="$value" ;;
+            --branch) branch="$value" ;;
+            --onto) onto="$value" ;;
+            esac
+            ;;
+        --after=*) after="${raw#--after=}" ;;
+        --branch=*) branch="${raw#--branch=}" ;;
+        --onto=*) onto="${raw#--onto=}" ;;
+        *)
+            rad_rebase_ask_usage "unknown argument '$raw'"
+            return 2
+            ;;
+        esac
+        i=$(( i + 1 ))
+    done
+    [[ -n "${BAR_AGENT_JSON:-}" ]] && json=1
+
+    is_command_installed "$RAD_BIN" || {
+        error "'$RAD_BIN' is not installed"
+        return 1
+    }
+    if ! toplevel="$(git rev-parse --show-toplevel 2>/dev/null)"; then
+        error "not a git repository: 'rad_rebase_ask' reads the patches of the checkout it runs in"
+        return 3
+    fi
+
+    rid="$(cd "$toplevel" && rad_run inspect --rid)" || return $?
+    rid="${rid##*$'\n'}"
+    radpath="$(rad_path)" || radpath=""
+    storage="$radpath/storage/${rid#rad:}"
+    if [[ -z "$radpath" || ! -d "$storage" ]]; then
+        error "the node holds no storage for '$rid': '${RAD_BIN} path' says '${radpath:--}'"
+        return 3
+    fi
+
+    if [[ -z "$nofetch" ]] && git -C "$toplevel" remote | grep -qx rad; then
+        git -C "$toplevel" fetch --quiet rad 2>/dev/null ||
+            warn "'git fetch rad' failed, the branch tips are read as they are"
+    fi
+
+    ## The branch: what the merge landed on, never a guess.  '--after' asks the merged patch itself
+    ## (rad resolves its upstream, else the repository's default branch), '--branch' names it
+    ## outright, and with neither it is the default branch the node's storage points at -- a
+    ## delegate may make any branch the default, so the name decides nothing and is not inspected.
+    if [[ -n "$after" ]]; then
+        show="$(cd "$toplevel" && rad_run patch show "$after")" || return 1
+        status="$(rad_rebase_show_field "$show" Status)" || status=""
+        if [[ "$status" != merged ]]; then
+            error "patch '$after' is '${status:-unreadable}', not merged: the sweep is the answer to a merge that landed, so nothing was asked"
+            return 1
+        fi
+        target="$(rad_rebase_show_field "$show" Target)" || target=""
+        landed="$(rad_rebase_show_field "$show" Head)" || landed=""
+        if [[ -n "$branch" && -n "$target" && "$branch" != "$target" ]]; then
+            warn "'--branch $branch' is not the branch '$after' landed on ('$target'): the merged patch decides"
+        fi
+        [[ -n "$target" ]] && branch="$target"
+    fi
+    if [[ -z "$branch" ]]; then
+        branch="$(git --git-dir="$storage" symbolic-ref --short HEAD 2>/dev/null)" || branch=""
+        if [[ -z "$branch" ]]; then
+            rad_rebase_ask_usage "no branch to sweep: '--after' or '--branch' is required and the storage has no default branch"
+            return 2
+        fi
+    fi
+    branch="${branch#refs/heads/}"
+
+    if [[ -n "$onto" ]]; then
+        branch_tip="$onto"
+    elif ! branch_tip="$(rad_merge_upstream "$toplevel" "$branch")"; then
+        error "the canonical branch '$branch' is not in this checkout: 'refs/remotes/rad/$branch' and 'refs/heads/$branch' are both missing"
+        return 3
+    fi
+    ## A merge that did not land is not a merge.  The patch has to read 'merged' (above) *and* the
+    ## commit it was merged as has to be in the branch now: a push that failed, a merge into another
+    ## branch, or a landing that invented its own base is not something the siblings are asked about.
+    if [[ -n "$after" && -n "$landed" ]] &&
+        ! git -C "$toplevel" merge-base --is-ancestor "$landed" "$branch_tip" 2>/dev/null; then
+        error "the merge of '$after' ($landed) is not in '$branch' ($branch_tip): nothing was asked"
+        return 1
+    fi
+
+    table="$(cd "$toplevel" && rad_run patch list --open)" || return $?
+    listing="$(rad_state_table_checked 'patch list --open' "$table" ID Head)" || return 1
+    while IFS="$RAD_US" read -r id member_head; do
+        [[ -n "$id" ]] || continue
+        ids+=("$id")
+        heads+=("$member_head")
+    done <<<"$listing"
+
+    for (( n = 0; n < ${#ids[@]}; n++ )); do
+        id="${ids[n]}"
+        member_head="${heads[n]}"
+        verdict="" reason=""
+        ## The patch that just landed is no member: it is closed by the merge, and were it still
+        ## open its own head is the thing that landed -- asking it to re-cut would move what the
+        ## branch now holds.  Compared as a prefix, because the two sides are read from different
+        ## places: the listing prints seven hex, '--after' is the full id the caller was handed.
+        [[ -n "$after" && ( "$after" == "$id"* || "$id" == "$after"* ) ]] && continue
+        if ! show="$(cd "$toplevel" && rad_run patch show "$id")"; then
+            rows+=("skipped${RAD_US}${id}${RAD_US}-${RAD_US}-${RAD_US}unreadable")
+            continue
+        fi
+        target="$(rad_rebase_show_field "$show" Target)" || target=""
+        author="$(rad_rebase_show_field "$show" Author)" || author=""
+        ## The write needs the full 40-hex id: 'rad patch list' prints seven and 'rad patch
+        ## comment' resolves only the whole object id, so a directive posted under the listing's id
+        ## is refused for every member -- measured after one landing, 30 refusals and not one
+        ## directive.  The header carries it, so it costs no extra call.
+        full="$(rad_rebase_show_field "$show" Patch)" || full=""
+        if [[ "$target" != "$branch" ]]; then
+            verdict="skipped"
+            reason="other-branch:${target:--}"
+        elif [[ "$author" != *" (you)" ]]; then
+            ## Another author's patch is not ours to publish: a revision only ever goes into the
+            ## namespace of its own author, so a directive there could not be worked.
+            verdict="skipped"
+            reason="not-ours:${author%% *}"
+        elif git -C "$toplevel" merge-base --is-ancestor "$branch_tip" "$member_head" 2>/dev/null; then
+            verdict="current"
+            reason="already-at-the-branch_tip"
+        else
+            ref="$(rad_merge_ref "$storage" "$id")" || ref=""
+            RAD_REBASE_COMMENT="" RAD_REBASE_BODY=""
+            if [[ -n "$ref" ]]; then
+                rad_rebase_live_comment "$storage" "$ref"
+            fi
+            if [[ "$RAD_REBASE_BODY" == "$directive" ]]; then
+                ## A directive already standing is never sent twice: the sole line is always the
+                ## same text, so a second one is a duplicate op, and the loop answers it as such.
+                verdict="skipped"
+                reason="already-asked:${RAD_REBASE_COMMENT:0:7}"
+            elif [[ -n "$dry" ]]; then
+                verdict="asked"
+                reason="dry-run"
+            elif [[ ! "$full" =~ ^[0-9a-f]{40}$ ]]; then
+                ## The one thing that may not be guessed at: a write under a short id is refused,
+                ## and the refusal reads like a repository refusing us rather than a wrong id form.
+                verdict="failed"
+                reason="no-full-id"
+                failed=$(( failed + 1 ))
+            elif rad_metadata_rad "$rid" patch comment "$full" -m "$directive" >/dev/null 2>&1; then
+                verdict="asked"
+                reason="directive-posted"
+                asked_count=$(( asked_count + 1 ))
+            else
+                verdict="failed"
+                reason="write-refused"
+                failed=$(( failed + 1 ))
+            fi
+        fi
+        rows+=("${verdict}${RAD_US}${id}${RAD_US}${target:--}${RAD_US}${member_head:--}${RAD_US}${reason}")
+    done
+
+    if [[ -n "$json" ]]; then
+        if (( ${#rows[@]} == 0 )); then
+            jq -cn --arg repo "$rid" --arg branch "$branch" --arg branch_tip "$branch_tip" \
+                '{bar_rad: 1, repo: $repo, action: "rebase_ask", branch: $branch, branch_tip: $branch_tip, patches: []}'
+        else
+            printf '%s\n' "${rows[@]}" | jq -Rn --arg repo "$rid" --arg branch "$branch" --arg branch_tip "$branch_tip" '
+                [inputs | select(length > 0) | split("\u001f")
+                 | {verdict: .[0], patch: .[1], target: .[2], head: .[3], reason: .[4]}]
+                | {bar_rad: 1, repo: $repo, action: "rebase_ask", branch: $branch, branch_tip: $branch_tip,
+                   patches: .}'
+        fi
+    elif (( ${#rows[@]} == 0 )); then
+        note "no open patch in $rid"
+    else
+        printf '%s\n' "${rows[@]}" |
+            while IFS="$RAD_US" read -r verdict id target member_head reason; do
+                printf '%s patch=%s target=%s head=%s reason=%s\n' \
+                    "$verdict" "$id" "$target" "$member_head" "$reason"
+            done
+    fi
+
+    if (( failed )); then
+        return 1
+    fi
+    return 0
 }

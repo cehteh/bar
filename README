@@ -1727,6 +1727,9 @@ MODULE API/RULES
       bar rad_import                                         import this repository into radicle
       bar rad_merge_accepted_prs [--dry-run] [--no-fetch] [--max <n>]
                                                              merge the patches a delegate accepted
+      bar rad_rebase_ask [--after <patch>] [--branch <branch>] [--onto <sha>] [--dry-run]
+                                                             ask the pending patches of a branch to
+                                                             re-cut themselves after a merge landed
     
     Every helper answers '-h' or '--help' with its usage on stdout and exit 0.
     
@@ -2611,6 +2614,49 @@ MODULE API/RULES
         Every verb's answer is a JSON object -- including the one that names a failure -- so jq is a
         dependency of the family, checked once, before a verb spends a call on the store.
 
+      rad_rebase_ask_usage [reason]
+        usage on stderr
+
+      rad_rebase_show_field <show> <field>
+        one header value of 'rad patch show'
+        '<show>' is the whole output.  The header line reads '│ <Field>   <value>' and the value is
+        padded to the box, so it is cut exactly like a table row: the field name is the cell 'rad_line'
+        drops, and what is left is the value.  Never parsed from the document -- a patch's own
+        revision payload carries no branch, and the COB's 'target' field is 'delegates' (the *review*
+        target, who is asked to review), not the branch.  'rad patch list' has no such column either.
+
+      rad_rebase_live_comment <storage> <ref>
+        the newest comment of the chain, and its body
+        Sets 'RAD_REBASE_COMMENT' (the op id) and 'RAD_REBASE_BODY'.  Empty when the chain has no
+        comment at all.
+        Redaction-aware, and it has to be: a COB chain is append-only, so a directive the loop has
+        already consumed is still in the history -- its deletion is a 'Redact comment' op naming it --
+        and a read that trusted the text would call a spent '*trigger:rebase' live and never ask that
+        patch again.  Walked newest first, so a redaction is always read before the comment it removes.
+
+      rad_rebase_ask see the module header
+        The branch: what the merge landed on, never a guess.  '--after' asks the merged patch itself
+        (rad resolves its upstream, else the repository's default branch), '--branch' names it
+        outright, and with neither it is the default branch the node's storage points at -- a
+        delegate may make any branch the default, so the name decides nothing and is not inspected.
+        A merge that did not land is not a merge.  The patch has to read 'merged' (above) *and* the
+        commit it was merged as has to be in the branch now: a push that failed, a merge into another
+        branch, or a landing that invented its own base is not something the siblings are asked about.
+        The patch that just landed is no member: it is closed by the merge, and were it still
+        open its own head is the thing that landed -- asking it to re-cut would move what the
+        branch now holds.  Compared as a prefix, because the two sides are read from different
+        places: the listing prints seven hex, '--after' is the full id the caller was handed.
+        The write needs the full 40-hex id: 'rad patch list' prints seven and 'rad patch
+        comment' resolves only the whole object id, so a directive posted under the listing's id
+        is refused for every member -- measured after one landing, 30 refusals and not one
+        directive.  The header carries it, so it costs no extra call.
+        Another author's patch is not ours to publish: a revision only ever goes into the
+        namespace of its own author, so a directive there could not be worked.
+        A directive already standing is never sent twice: the sole line is always the
+        same text, so a second one is a duplicate op, and the loop answers it as such.
+        The one thing that may not be guessed at: a write under a short id is refused,
+        and the refusal reads like a repository refusing us rather than a wrong id form.
+
     Rules:
 
       rad_import
@@ -2666,6 +2712,21 @@ MODULE API/RULES
         and the merge is a push into the canonical branch, which only a delegate may make: an invocation
         under any other identity refuses before it writes.  '--dry-run' answers what is ready and writes
         nothing.  Exit 0 answered, 1 refused or could not answer, 2 usage, 3 no data.
+
+      rad_rebase_ask
+        A *sender*, nothing more: it merges nothing, re-cuts nothing and opens no worktree.  It posts one
+        comment -- the sole line '*trigger:rebase' -- on every pending patch of ours whose branch has just
+        moved, so the re-cut materializes in that patch's own round (its own claim, worktree, session and
+        gate).  '--after <patch>' is the merge path: the patch has to read 'Status merged' and the commit
+        it was merged as has to be in the branch now, else nothing is asked and the exit code says so --
+        a failed or unreadable merge is never followed by a sweep.  The branch is the merged patch's
+        'Target' (rad resolves the upstream, else the repository's default branch, whatever it is named);
+        '--branch' names one outright when there is no merge to point at, and '--onto' overrides the
+        branch tip the members are measured against.  A patch is skipped when its 'Target' is another
+        branch, when it is another author's (a revision only goes into the author's own namespace), when
+        its head already contains the tip, and when a live '*trigger:rebase' already stands -- a consumed
+        one is redacted in the chain and does not count.  Exit 0 nothing failed, 1 a refusal or a failed
+        write, 2 usage, 3 no data.
 
       rad_rm_label
         The removal half of the write layer's label effect: the labels the item carries are read fresh
