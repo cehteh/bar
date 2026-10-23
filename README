@@ -1720,6 +1720,10 @@ MODULE API/RULES
                                                              '*unassign:' proposals of one item
       bar rad_topic <class> "<description>"                  open the topic tree of an item
       bar rad_reaction [--from <emoji>] <to> <target>..      set/transition/withdraw our own marker
+      bar rad_identity --repo <rid> [--did <who>] [--commit <sha>]
+                                                             the delegated identities, the git
+                                                             authors each one uses, and a commit
+                                                             tied to one
       bar rad_cob <list|ops|document> ..                    what the COB store holds, one chain,
                                                              one document -- one interface for a
                                                              consumer that must not know the layout
@@ -1997,6 +2001,10 @@ MODULE API/RULES
     '<clone>/.worktrees/', kept out of 'git status' by a line in '.git/info/exclude' (never by the
     tracked '.gitignore'), and 'git worktree add' does not touch the trunk's HEAD.
     
+    'rad_identity' answers what no string comparison can: the identities this repository delegates
+    to, the git authors each one uses, and whether a commit can be tied to one of them -- a name
+    which merely looks like a delegate answers 'verified=no' with the reason.
+    
     'rad_import' is the way in, not a question: on the toplevel of a git repository which is not on
     radicle yet it runs 'rad init' (public, signing set up) and pushes every branch to the new
     remote.  Once a 'rad' remote exists it does nothing but say so.
@@ -2153,6 +2161,36 @@ MODULE API/RULES
         -- a caller which asks about them without an item has nothing to decide either.
         The verdict: the first ground which holds **in the order the caller listed them**, so a caller
         lists its grounds in the order it wants them reported.
+
+      rad_identity_usage [reason]
+        usage on stderr
+        Everything below is read from the node's own copy: the identity document, the ops and the
+        namespaces all live in the storage, so this resolves which repository and nothing else.
+        A RID names the repository, so the checkout is wherever this runs: it is only ever read
+        for the author line of a commit the store does not hold, and that line proves nothing.
+        The document is an op whose payload blob is the revision: 'delegates' and 'threshold' are read
+        from the blob, the op and the COB from the store.  The canonical 'refs/rad/id' is the accepted
+        revision; a copy which carries the identity only under its namespaces answers from there.
+        An op is authored '<alias> <alias>@<nid>' and signed with that identity's key -- the author
+        line is the only place a repository records which git authors an identity uses, so the map is
+        built from ops and from nothing else 'git log' would report about a branch.  The identity COB
+        is read first, so 'the op the alias was read from' is the document itself whenever the identity
+        authored one of its revisions.
+        The shape, never the reachability: a patch COB is chained onto the commits the patch was cut
+        from, so 'some COB ref reaches this commit' is true of a branch commit as well and would
+        report an ordinary commit as an op -- and an op signed by the identity which wrote it.
+        An alias is not unique: it is the display name two identities may both use, so the matches are
+        counted and an ambiguous one is refused rather than resolved by the hash order of the map.
+        Two ways a commit is tied to an identity, and a name is neither of them: it is an op the store
+        accepted ('identity' -- 'rad' verified the payload signature against the author's key), or it
+        is published in that identity's namespace ('namespace' -- the node takes a ref there only from
+        the identity that owns it).  A canonical branch authenticates nothing: it is written by the
+        repository's delegates on behalf of the repository, so a commit which only a canonical ref
+        reaches answers 'no' with that reason.
+        Not in the store: the author line comes from the caller's own checkout, for the reason --
+        and it stays an unauthenticated name, which is what the answer says.
+
+      rad_identity see the module header
 
       rad_metadata_nid <did-or-nid>
         the bare NID of an identity
@@ -2672,6 +2710,19 @@ MODULE API/RULES
 
       rad_trust
         The trust verdict of the triage policy; exit 0 trusted, 1 untrusted, 2 could not answer.
+
+      rad_identity
+        The authenticated map of this repository.  The identities are the delegates of the accepted
+        identity document; an alias and its git authors come from the ops the store carries, which are
+        authored '<alias> <alias>@<nid>' and signed with that identity's key -- and every answer names the
+        op it was read from ('identity_cob', 'alias_source').  '--did' resolves one identity, a DID, a NID
+        or an alias; without it every delegate is answered.  '--commit <sha>' is the other direction:
+        'verified' when the commit is an op the store accepted ('how=identity') or is published in that
+        identity's namespace ('how=namespace', a ref the node takes only from the identity which owns it).
+        A commit whose author line merely looks like a delegate answers 'verified=no' with the reason --
+        the forgery this is for -- and authorship stays apart from delegation: an op of an identity this
+        repository does not delegate to is verified and answers 'delegate=no'.  Exit 0 tied to an
+        identity, 1 not verified, 2 usage, 3 no such repository, identity document or identity.
 
       rad_comment_metadata
         Who is trusted is read when the question is asked, from the repository (its delegates), from the

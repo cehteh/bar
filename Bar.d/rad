@@ -22,6 +22,10 @@
 ###                                                          '*unassign:' proposals of one item
 ###   bar rad_topic <class> "<description>"                  open the topic tree of an item
 ###   bar rad_reaction [--from <emoji>] <to> <target>..      set/transition/withdraw our own marker
+###   bar rad_identity --repo <rid> [--did <who>] [--commit <sha>]
+###                                                          the delegated identities, the git
+###                                                          authors each one uses, and a commit
+###                                                          tied to one
 ###   bar rad_cob <list|ops|document> ..                    what the COB store holds, one chain,
 ###                                                          one document -- one interface for a
 ###                                                          consumer that must not know the layout
@@ -299,6 +303,10 @@
 ### '<clone>/.worktrees/', kept out of 'git status' by a line in '.git/info/exclude' (never by the
 ### tracked '.gitignore'), and 'git worktree add' does not touch the trunk's HEAD.
 ###
+### 'rad_identity' answers what no string comparison can: the identities this repository delegates
+### to, the git authors each one uses, and whether a commit can be tied to one of them -- a name
+### which merely looks like a delegate answers 'verified=no' with the reason.
+###
 ### 'rad_import' is the way in, not a question: on the toplevel of a git repository which is not on
 ### radicle yet it runs 'rad init' (public, signing set up) and pushes every branch to the new
 ### remote.  Once a 'rad' remote exists it does nothing but say so.
@@ -341,6 +349,20 @@ rule rad_patches: -
 # helper: rad_trust | whether the author of an incoming Radicle issue or patch counts as a trusted source, and which grounds of trust it has: a delegate, the identity which established the repository, the opener or an assignee of the item, and the commits the identity authored as itself; '--second-party' asks instead whether the actor is somebody other than the item's opener | rad_trust --repo <rid-or-path> --author <did-or-nid-or-alias> [--issue <id>] [--patch <id>] [--grounds <ground,..>] [--threshold <n-or-n%>] [--dump] [--json] [--second-party] | one '<verdict> author=… delegate=… authored=… threshold=… ground=… reason=… repo=…' line, <verdict> one of trusted, untrusted, unknown and <ground> one of delegate, owner, opened, assigned, contributed; '--json' the same facts as one object plus 'grounds'; '--dump' every ground and no verdict at all (implies '--json'); '--second-party' the dump plus 'second_party', the actor against the item's opener
 ## The trust verdict of the triage policy; exit 0 trusted, 1 untrusted, 2 could not answer.
 rule rad_trust: -
+
+# helper: rad_identity | the identities this repository delegates to, the git authors each one uses, and whether a commit can be tied to one of them | rad_identity --repo <rid,path> [--did <did,nid,alias>] [--commit <sha>] [--json] | one 'identity nid=… did=… alias=… delegate=<yes,no> threshold=<n> identity_cob=<op> alias_source=<op> authors=<mail>..' line per identity, or one 'commit nid=… verified=<yes,no> how=<identity,namespace,none> identity_cob=<op> cob=<cob> author=<mail> reason=<why>' line; '--json' the same as one object per line
+## The authenticated map of this repository.  The identities are the delegates of the accepted
+## identity document; an alias and its git authors come from the ops the store carries, which are
+## authored '<alias> <alias>@<nid>' and signed with that identity's key -- and every answer names the
+## op it was read from ('identity_cob', 'alias_source').  '--did' resolves one identity, a DID, a NID
+## or an alias; without it every delegate is answered.  '--commit <sha>' is the other direction:
+## 'verified' when the commit is an op the store accepted ('how=identity') or is published in that
+## identity's namespace ('how=namespace', a ref the node takes only from the identity which owns it).
+## A commit whose author line merely looks like a delegate answers 'verified=no' with the reason --
+## the forgery this is for -- and authorship stays apart from delegation: an op of an identity this
+## repository does not delegate to is verified and answers 'delegate=no'.  Exit 0 tied to an
+## identity, 1 not verified, 2 usage, 3 no such repository, identity document or identity.
+rule rad_identity: -
 
 # helper: rad_comment_metadata | the structured metadata the comments of one item carry at their start ('*label:', '*rmlabel:', '*assign:', '*unassign:'), authenticated against trust | rad_comment_metadata <item> --query <label,rmlabel,assign,unassign> [--repo <rid,path>] [--trust <spec>].. [--last] [--json] | one '<query> item=<issue,patch>:<id> author=<alias> did=<did> trust=<delegate,named,assignee,contributor(<n>)> date=<iso> value=<value>' line per trusted entry, oldest first; '--json' the same as one object, plus the item's assignees
 ## The trusted '*label:'/'*rmlabel:'/'*assign:'/'*unassign:' proposals of an item's comments; exit 0 answered,
@@ -1550,6 +1572,438 @@ function rad_trust ## see the module header
         return 0
     fi
     return 1
+}
+
+# --- rad_identity: the identity <-> git-author map, and a verified answer for a commit ----------
+
+function rad_identity_usage ## [reason] - usage on stderr
+{
+    [[ -n "${1:-}" ]] && printf 'rad_identity: %s\n' "$1" >&2
+    printf 'usage: rad_identity --repo <rid|path> [--did <did|nid|alias>] [--commit <sha>] [--json]\n' >&2
+    printf '       --did <did|nid|alias>  one identity; without it every delegate of the repository\n' >&2
+    printf '       --commit <sha>         whether that commit can be tied to an identity\n' >&2
+    printf '       --json                 one JSON object per line, and nothing else on stdout\n' >&2
+}
+
+## <repo> - the repository and the node storage which holds it, in RAD_IDENTITY_RID, _STORAGE and
+## _TOPLEVEL (the checkout, empty when the caller is not in one)
+function rad_identity_store
+{
+    ## Everything below is read from the node's own copy: the identity document, the ops and the
+    ## namespaces all live in the storage, so this resolves which repository and nothing else.
+    local repo="$1" toplevel=""
+    rad_metadata_store rad_identity "$repo" || return $?
+    RAD_IDENTITY_RID="$RAD_METADATA_RID"
+    RAD_IDENTITY_STORAGE="$RAD_METADATA_STORAGE"
+    if [[ -n "$repo" && "$repo" != rad:* ]]; then
+        toplevel="$(cd "$repo" 2>/dev/null && git rev-parse --show-toplevel 2>/dev/null)" || toplevel=""
+    else
+        ## A RID names the repository, so the checkout is wherever this runs: it is only ever read
+        ## for the author line of a commit the store does not hold, and that line proves nothing.
+        toplevel="$(git rev-parse --show-toplevel 2>/dev/null)" || toplevel=""
+    fi
+    RAD_IDENTITY_TOPLEVEL="$toplevel"
+    return 0
+}
+
+## <storage> - the accepted identity document: RAD_IDENTITY_OP (its revision op), _OBJECT (the COB it
+## belongs to), _DELEGATES (one DID per line) and _DOC_THRESHOLD; 1 when the store carries none
+function rad_identity_doc
+{
+    ## The document is an op whose payload blob is the revision: 'delegates' and 'threshold' are read
+    ## from the blob, the op and the COB from the store.  The canonical 'refs/rad/id' is the accepted
+    ## revision; a copy which carries the identity only under its namespaces answers from there.
+    local storage="$1" op="" payload="" blob="" doc="" sha="" ref=""
+    RAD_IDENTITY_OP=""
+    RAD_IDENTITY_OBJECT=""
+    RAD_IDENTITY_DELEGATES=""
+    RAD_IDENTITY_DOC_THRESHOLD=""
+    op="$(git --git-dir="$storage" rev-parse --verify --quiet 'refs/rad/id^{commit}' 2>/dev/null)" || op=""
+    if [[ -z "$op" ]]; then
+        op="$(git --git-dir="$storage" for-each-ref --count=1 --format='%(objectname)' \
+            'refs/namespaces/*/refs/rad/id' 2>/dev/null)" || op=""
+    fi
+    [[ -n "$op" ]] || return 1
+    payload="$(git --git-dir="$storage" cat-file -p "$op:0" 2>/dev/null)" || return 1
+    blob="$(printf '%s' "$payload" | jq -r '.blob // empty' 2>/dev/null)" || blob=""
+    [[ -n "$blob" ]] || return 1
+    doc="$(git --git-dir="$storage" cat-file -p "$blob" 2>/dev/null)" || return 1
+    RAD_IDENTITY_DELEGATES="$(printf '%s' "$doc" | jq -r '.delegates[]?' 2>/dev/null)" ||
+        RAD_IDENTITY_DELEGATES=""
+    RAD_IDENTITY_DOC_THRESHOLD="$(printf '%s' "$doc" | jq -r '.threshold // empty' 2>/dev/null)" ||
+        RAD_IDENTITY_DOC_THRESHOLD=""
+    [[ -n "$RAD_IDENTITY_DELEGATES" ]] || return 1
+    while read -r sha ref; do
+        [[ "$sha" == "$op" ]] || continue
+        RAD_IDENTITY_OBJECT="${ref##*/}"
+        break
+    done < <(git --git-dir="$storage" for-each-ref --format='%(objectname) %(refname)' \
+        'refs/namespaces/*/refs/cobs/xyz.radicle.id/**' 2>/dev/null)
+    RAD_IDENTITY_OP="$op"
+    return 0
+}
+
+## <storage> <glob> - one pass of the author map over the ops of the refs matching <glob>; an
+## identity an earlier pass answered is never overwritten, so the identity COB wins over a comment
+function rad_identity_authors_pass
+{
+    local storage="$1" glob="$2" sha="" mail="" name="" nid="" ref=""
+    local -a refs=()
+    while IFS= read -r ref; do
+        refs+=("$ref")
+    done < <(git --git-dir="$storage" for-each-ref --format='%(refname)' "$glob" 2>/dev/null)
+    if (( "${#refs[@]}" == 0 )); then
+        return 0
+    fi
+    while IFS=$'\t' read -r sha mail name; do
+        [[ "$mail" == *@z6M* ]] || continue
+        nid="${mail##*@}"
+        RAD_IDENTITY_MAIL["$mail"]="${name:-${mail%%@*}}"
+        if [[ -z "${RAD_IDENTITY_SOURCE[$nid]:-}" ]]; then
+            RAD_IDENTITY_SOURCE["$nid"]="$sha"
+            RAD_IDENTITY_SOURCE_MAIL["$nid"]="$mail"
+        fi
+    done < <(git --git-dir="$storage" log --format='%H%x09%ae%x09%an' "${refs[@]}" 2>/dev/null)
+    return 0
+}
+
+## <storage> - the author lines of every op the store carries: RAD_IDENTITY_MAIL (mail -> name),
+## _SOURCE (nid -> the op its alias was read from) and _SOURCE_MAIL (nid -> its mail)
+function rad_identity_authors
+{
+    ## An op is authored '<alias> <alias>@<nid>' and signed with that identity's key -- the author
+    ## line is the only place a repository records which git authors an identity uses, so the map is
+    ## built from ops and from nothing else 'git log' would report about a branch.  The identity COB
+    ## is read first, so 'the op the alias was read from' is the document itself whenever the identity
+    ## authored one of its revisions.
+    local storage="$1"
+    declare -gA RAD_IDENTITY_MAIL=()
+    declare -gA RAD_IDENTITY_SOURCE=()
+    declare -gA RAD_IDENTITY_SOURCE_MAIL=()
+    rad_identity_authors_pass "$storage" 'refs/namespaces/*/refs/cobs/xyz.radicle.id/**'
+    rad_identity_authors_pass "$storage" 'refs/namespaces/*/refs/cobs/**'
+    return 0
+}
+
+## <storage> <sha> - 0 when that commit is a radicle op: its tree carries the manifest which names
+## the COB type, which no branch commit of a checkout does
+function rad_identity_is_op
+{
+    ## The shape, never the reachability: a patch COB is chained onto the commits the patch was cut
+    ## from, so 'some COB ref reaches this commit' is true of a branch commit as well and would
+    ## report an ordinary commit as an op -- and an op signed by the identity which wrote it.
+    local manifest=""
+    manifest="$(git --git-dir="$1" cat-file -p "$2:manifest" 2>/dev/null)" || return 1
+    [[ "$manifest" == *typeName* && "$manifest" == *xyz.radicle.* ]]
+}
+
+## <value> - the bare NID of a DID, a NID or an alias; 1 when nothing in this repository names it,
+## 2 when an alias does and more than one identity answers to it
+function rad_identity_nid
+{
+    local value="$1" mail="" nid=""
+    local -a matches=()
+    case "$value" in
+    did:key:*)
+        printf '%s' "${value#did:key:}"
+        return 0
+        ;;
+    esac
+    if [[ "$value" == z6M* ]]; then
+        printf '%s' "$value"
+        return 0
+    fi
+    ## An alias is not unique: it is the display name two identities may both use, so the matches are
+    ## counted and an ambiguous one is refused rather than resolved by the hash order of the map.
+    while IFS= read -r mail; do
+        [[ "$mail" == "$value@"* ]] || continue
+        nid="${mail##*@}"
+        case " ${matches[*]-} " in
+        *" $nid "*) continue ;;
+        esac
+        matches+=("$nid")
+    done < <(printf '%s\n' ${RAD_IDENTITY_MAIL[@]+"${!RAD_IDENTITY_MAIL[@]}"} | LC_ALL=C sort)
+    if (( "${#matches[@]}" == 0 )); then
+        return 1
+    fi
+    if (( "${#matches[@]}" > 1 )); then
+        return 2
+    fi
+    printf '%s' "${matches[0]}"
+}
+
+## <nid> - one identity, in RAD_IDENTITY_ALIAS, _ALIAS_SOURCE, _DELEGATE, _THRESHOLD and
+## _GIT_AUTHORS ('<mail>\t<name>' per line, the author lines the store carries for it)
+function rad_identity_facts
+{
+    local nid="$1" mail="" did=""
+    RAD_IDENTITY_ALIAS=""
+    RAD_IDENTITY_ALIAS_SOURCE=""
+    RAD_IDENTITY_DELEGATE="no"
+    RAD_IDENTITY_THRESHOLD=""
+    RAD_IDENTITY_GIT_AUTHORS=""
+    mail="${RAD_IDENTITY_SOURCE_MAIL[$nid]:-}"
+    if [[ -n "$mail" ]]; then
+        RAD_IDENTITY_ALIAS="${mail%%@*}"
+        RAD_IDENTITY_ALIAS_SOURCE="${RAD_IDENTITY_SOURCE[$nid]}"
+        RAD_IDENTITY_GIT_AUTHORS="$(for mail in "${!RAD_IDENTITY_MAIL[@]}"; do
+            [[ "$mail" == *"@$nid" ]] || continue
+            printf '%s\t%s\n' "$mail" "${RAD_IDENTITY_MAIL[$mail]}"
+        done | LC_ALL=C sort)"
+    fi
+    while IFS= read -r did; do
+        [[ -n "$did" ]] || continue
+        [[ "${did#did:key:}" == "$nid" ]] || continue
+        RAD_IDENTITY_DELEGATE="yes"
+        RAD_IDENTITY_THRESHOLD="$RAD_IDENTITY_DOC_THRESHOLD"
+    done <<<"$RAD_IDENTITY_DELEGATES"
+    return 0
+}
+
+## <nid> - one identity as one 'identity …' line
+function rad_identity_text
+{
+    local nid="$1" mail="" name="" authors="" separator=""
+    while IFS=$'\t' read -r mail name; do
+        [[ -n "$mail" ]] || continue
+        authors+="${separator}${mail}"
+        separator=","
+    done <<<"$RAD_IDENTITY_GIT_AUTHORS"
+    printf 'identity nid=%s did=did:key:%s alias=%s delegate=%s threshold=%s identity_cob=%s alias_source=%s authors=%s\n' \
+        "$nid" "$nid" "${RAD_IDENTITY_ALIAS:--}" "$RAD_IDENTITY_DELEGATE" \
+        "${RAD_IDENTITY_THRESHOLD:--}" "$RAD_IDENTITY_OP" "${RAD_IDENTITY_ALIAS_SOURCE:--}" \
+        "${authors:--}"
+}
+
+## <nid> - one identity as one JSON object
+function rad_identity_json_identity
+{
+    local nid="$1" mail="" name="" authors="" alias="null" alias_source="null" object="null"
+    local -a entries=()
+    while IFS=$'\t' read -r mail name; do
+        [[ -n "$mail" ]] || continue
+        entries+=("{\"name\":$(json_string "$name"),\"email\":$(json_string "$mail")}")
+    done <<<"$RAD_IDENTITY_GIT_AUTHORS"
+    authors="$(json_array ${entries[@]+"${entries[@]}"})"
+    [[ -n "$RAD_IDENTITY_ALIAS" ]] && alias="$(json_string "$RAD_IDENTITY_ALIAS")"
+    [[ -n "$RAD_IDENTITY_ALIAS_SOURCE" ]] && alias_source="$(json_string "$RAD_IDENTITY_ALIAS_SOURCE")"
+    [[ -n "$RAD_IDENTITY_OBJECT" ]] && object="$(json_string "$RAD_IDENTITY_OBJECT")"
+    printf '{"nid":%s,"did":%s,"alias":%s,"alias_source":%s,"identity_cob":%s,"identity_object":%s,"git_authors":%s,"delegate":%s,"threshold":%s}\n' \
+        "$(json_string "$nid")" "$(json_string "did:key:$nid")" "$alias" "$alias_source" \
+        "$(json_string "$RAD_IDENTITY_OP")" "$object" "$authors" \
+        "$(json_bool "$RAD_IDENTITY_DELEGATE")" "$(json_number "$RAD_IDENTITY_THRESHOLD")"
+}
+
+## - the commit answer as one JSON object, from RAD_IDENTITY_VERIFIED, _HOW, _NID, _COB, _AUTHOR_*,
+## _REASON (the identity document is the same op the identity answers name)
+function rad_identity_json_commit
+{
+    local nid="null" how="null" cob="null" reason="null" author="null"
+    [[ -n "$RAD_IDENTITY_NID" ]] && nid="$(json_string "$RAD_IDENTITY_NID")"
+    [[ -n "$RAD_IDENTITY_HOW" ]] && how="$(json_string "$RAD_IDENTITY_HOW")"
+    [[ -n "$RAD_IDENTITY_COB" ]] && cob="$(json_string "$RAD_IDENTITY_COB")"
+    [[ -n "$RAD_IDENTITY_REASON" ]] && reason="$(json_string "$RAD_IDENTITY_REASON")"
+    if [[ -n "$RAD_IDENTITY_AUTHOR_MAIL" || -n "$RAD_IDENTITY_AUTHOR_NAME" ]]; then
+        author="{\"name\":$(json_string "$RAD_IDENTITY_AUTHOR_NAME"),\"email\":$(json_string "$RAD_IDENTITY_AUTHOR_MAIL")}"
+    fi
+    printf '{"nid":%s,"verified":%s,"how":%s,"identity_cob":%s,"cob":%s,"author":%s,"reason":%s}\n' \
+        "$nid" "$(json_bool "$RAD_IDENTITY_VERIFIED")" "$how" "$(json_string "$RAD_IDENTITY_OP")" \
+        "$cob" "$author" "$reason"
+}
+
+## <storage> <sha> - whether that commit can be tied to an identity, in RAD_IDENTITY_VERIFIED
+## ('yes'/'no'), _HOW ('identity', 'namespace' or empty), _NID, _COB, _AUTHOR_NAME/_AUTHOR_MAIL and
+## _REASON; 0 verified, 1 not verified
+function rad_identity_commit
+{
+    ## Two ways a commit is tied to an identity, and a name is neither of them: it is an op the store
+    ## accepted ('identity' -- 'rad' verified the payload signature against the author's key), or it
+    ## is published in that identity's namespace ('namespace' -- the node takes a ref there only from
+    ## the identity that owns it).  A canonical branch authenticates nothing: it is written by the
+    ## repository's delegates on behalf of the repository, so a commit which only a canonical ref
+    ## reaches answers 'no' with that reason.
+    local storage="$1" want="$2" sha="" ref="" ns="" mail="" name="" op_nid="" namespace_nid="" reason=""
+    local in_store=""
+    local -a refs=()
+    RAD_IDENTITY_VERIFIED="no"
+    RAD_IDENTITY_HOW=""
+    RAD_IDENTITY_NID=""
+    RAD_IDENTITY_COB=""
+    RAD_IDENTITY_AUTHOR_MAIL=""
+    RAD_IDENTITY_AUTHOR_NAME=""
+    RAD_IDENTITY_REASON=""
+    sha="$(git --git-dir="$storage" rev-parse --verify --quiet "$want^{commit}" 2>/dev/null)" || sha=""
+    if [[ -n "$sha" ]]; then
+        in_store=1
+        IFS=$'\t' read -r mail name < <(git --git-dir="$storage" log -1 --format='%ae%x09%an' \
+            "$sha" 2>/dev/null) || true
+        while IFS= read -r ref; do
+            refs+=("$ref")
+        done < <(git --git-dir="$storage" for-each-ref --contains "$sha" --format='%(refname)' \
+            2>/dev/null)
+    elif [[ -n "${RAD_IDENTITY_TOPLEVEL:-}" ]]; then
+        ## Not in the store: the author line comes from the caller's own checkout, for the reason --
+        ## and it stays an unauthenticated name, which is what the answer says.
+        sha="$(git -C "$RAD_IDENTITY_TOPLEVEL" rev-parse --verify --quiet "$want^{commit}" 2>/dev/null)" ||
+            sha=""
+        if [[ -n "$sha" ]]; then
+            IFS=$'\t' read -r mail name < <(git -C "$RAD_IDENTITY_TOPLEVEL" log -1 \
+                --format='%ae%x09%an' "$sha" 2>/dev/null) || true
+        fi
+    fi
+    RAD_IDENTITY_AUTHOR_MAIL="$mail"
+    RAD_IDENTITY_AUTHOR_NAME="$name"
+    if [[ "$mail" == *@z6M* ]]; then
+        op_nid="${mail##*@}"
+    fi
+    for ref in ${refs[@]+"${refs[@]}"}; do
+        case "$ref" in
+        refs/namespaces/*/refs/cobs/*)
+            [[ -n "$op_nid" ]] || continue
+            rad_identity_is_op "$storage" "$sha" || continue
+            RAD_IDENTITY_HOW="identity"
+            RAD_IDENTITY_NID="$op_nid"
+            RAD_IDENTITY_COB="${ref##*/}"
+            break
+            ;;
+        esac
+    done
+    if [[ -z "$RAD_IDENTITY_HOW" ]]; then
+        for ref in ${refs[@]+"${refs[@]}"}; do
+            case "$ref" in
+            refs/namespaces/*/refs/rad/*) continue ;;
+            refs/namespaces/*/refs/*)
+                ns="${ref#refs/namespaces/}"
+                ns="${ns%%/*}"
+                [[ "$ns" == z6M* ]] || continue
+                namespace_nid="$ns"
+                break
+                ;;
+            esac
+        done
+        if [[ -n "$namespace_nid" ]]; then
+            RAD_IDENTITY_HOW="namespace"
+            RAD_IDENTITY_NID="$namespace_nid"
+        fi
+    fi
+    if [[ -n "$RAD_IDENTITY_HOW" ]]; then
+        RAD_IDENTITY_VERIFIED="yes"
+        return 0
+    fi
+    if [[ -z "$in_store" ]]; then
+        if [[ -n "$mail" ]]; then
+            reason="the author line names $name <$mail>, but the commit is neither stored nor published: a name is not an authentication"
+        else
+            reason="the commit is not in the node's store and not readable in this checkout"
+        fi
+    elif (( "${#refs[@]}" == 0 )); then
+        reason="the commit is in the node's store, but no ref reaches it"
+    else
+        reason="no identity's namespace reaches the commit (a canonical branch is the repository's, not an identity's)"
+    fi
+    RAD_IDENTITY_REASON="$reason"
+    return 1
+}
+
+function rad_identity ## see the module header
+{
+    local -a args=()
+    local raw="" arg="" value="" json="" repo="" did="" commit="" nid="" line=""
+    local -i count=0 i=0 rc=0
+    local -a wanted=()
+    declare -gA RAD_IDENTITY_MAIL=()
+    declare -gA RAD_IDENTITY_SOURCE=()
+    declare -gA RAD_IDENTITY_SOURCE_MAIL=()
+
+    for raw in "$@"; do
+        args+=("$raw")
+    done
+    count=${#args[@]}
+    while (( i < count )); do
+        arg="${args[i]}"
+        i=$(( i + 1 ))
+        case "$arg" in
+        -h | --help)
+            rad_identity_usage 2>&1
+            return 0
+            ;;
+        --json) json=1 ;;
+        --repo | --did | --commit)
+            if (( i >= count )) || [[ -z "${args[i]}" ]]; then
+                rad_identity_usage "'$arg' needs a non-empty value"
+                return 2
+            fi
+            value="${args[i]}"
+            i=$(( i + 1 ))
+            case "$arg" in
+            --repo) repo="$value" ;;
+            --did) did="$value" ;;
+            --commit) commit="$value" ;;
+            esac
+            ;;
+        --) break ;;
+        -*) rad_identity_usage "unknown option '$arg'"; return 2 ;;
+        *) rad_identity_usage "unexpected argument '$arg'"; return 2 ;;
+        esac
+    done
+    if [[ -n "$did" && -n "$commit" ]]; then
+        rad_identity_usage "'--did' and '--commit' ask different questions"
+        return 2
+    fi
+    rad_identity_store "$repo" || return $?
+    if ! rad_identity_doc "$RAD_IDENTITY_STORAGE"; then
+        error "the node holds no identity document for '$RAD_IDENTITY_RID'"
+        return 3
+    fi
+    if [[ -n "$commit" ]]; then
+        rad_identity_commit "$RAD_IDENTITY_STORAGE" "$commit" || rc=1
+        if [[ -n "$json" ]]; then
+            rad_identity_json_commit
+        else
+            printf 'commit nid=%s verified=%s how=%s identity_cob=%s cob=%s author=%s reason=%s\n' \
+                "${RAD_IDENTITY_NID:--}" "$RAD_IDENTITY_VERIFIED" "${RAD_IDENTITY_HOW:--}" \
+                "$RAD_IDENTITY_OP" "${RAD_IDENTITY_COB:--}" "${RAD_IDENTITY_AUTHOR_MAIL:--}" \
+                "${RAD_IDENTITY_REASON:--}"
+        fi
+        return $rc
+    fi
+    rad_identity_authors "$RAD_IDENTITY_STORAGE"
+    if [[ -n "$did" ]]; then
+        rc=0
+        nid="$(rad_identity_nid "$did")" || rc=$?
+        if (( rc == 2 )); then
+            error "'$did' is the alias of more than one identity of '$RAD_IDENTITY_RID'; name it by DID or NID"
+            return 2
+        fi
+        if (( rc != 0 )); then
+            error "'$did' names no identity of '$RAD_IDENTITY_RID'"
+            return 3
+        fi
+        rad_identity_facts "$nid"
+        if [[ "$RAD_IDENTITY_DELEGATE" == no && -z "$RAD_IDENTITY_ALIAS" ]]; then
+            error "'$did' names no identity of '$RAD_IDENTITY_RID'"
+            return 3
+        fi
+        wanted=("$nid")
+    else
+        while IFS= read -r line; do
+            [[ -n "$line" ]] || continue
+            wanted+=("${line#did:key:}")
+        done <<<"$RAD_IDENTITY_DELEGATES"
+        if (( "${#wanted[@]}" == 0 )); then
+            error "'$RAD_IDENTITY_RID' delegates to nobody"
+            return 3
+        fi
+    fi
+    for nid in "${wanted[@]}"; do
+        rad_identity_facts "$nid"
+        if [[ -n "$json" ]]; then
+            rad_identity_json_identity "$nid"
+        else
+            rad_identity_text "$nid"
+        fi
+    done
+    return 0
 }
 
 # --- rad_comment_metadata: the metadata a comment carries --------------------------------------

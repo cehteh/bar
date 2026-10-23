@@ -65,7 +65,7 @@ rule tests: test_prototype_parsing
 rule tests: test_prototype_scoping
 rule tests: test_public_mode
 rule tests: test_rad_cob
-rule tests: test_rad_comment_metadata
+rule tests: test_rad_comment_metadata test_rad_identity
 rule tests: test_rad_flow
 rule tests: test_rad_merge_accepted_prs
 rule tests: test_rad_state
@@ -98,6 +98,7 @@ rule test_prototype_scoping: -- tests/test_prototype_scoping.sh
 rule test_public_mode: -- tests/test_public_mode.sh
 rule test_rad_cob: -- tests/test_rad_cob.sh
 rule test_rad_comment_metadata: -- tests/test_rad_comment_metadata.sh
+rule test_rad_identity: -- tests/test_rad_identity.sh
 rule test_rad_flow: -- tests/test_rad_flow.sh
 rule test_rad_merge_accepted_prs: -- tests/test_rad_merge_accepted_prs.sh
 rule test_rad_state: -- tests/test_rad_state.sh
