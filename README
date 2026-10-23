@@ -1724,9 +1724,9 @@ MODULE API/RULES
                                                              the delegated identities, the git
                                                              authors each one uses, and a commit
                                                              tied to one
-      bar rad_cob <list|ops|document> ..                    what the COB store holds, one chain,
-                                                             one document -- one interface for a
-                                                             consumer that must not know the layout
+      bar rad_cob <list|ops|document|state> ..              the COB store: what it holds, one chain,
+                                                             one document, and the state of every
+                                                             chain
       bar rad_rm_label <item> <glob>..                       remove the stored labels a glob matches
       bar rad_import                                         import this repository into radicle
       bar rad_merge_accepted_prs [--dry-run] [--no-fetch] [--max <n>]
@@ -2647,6 +2647,24 @@ MODULE API/RULES
         One offset for the whole document, taken once: the store's timestamps carry no zone, and one
         call per timestamp would cost a process each.  '$zone' is what 'date +%z' prints, so a date
         here reads like 'date --iso-8601=seconds' renders it.
+
+      rad_cob_state_tips <storage> <typename>..
+        '<type>\t<id>\t<tip>\t<copy>' per COB
+        One listing for every type asked for; the copy named is the one whose tip is newest.
+
+      rad_cob_state_ops <storage> <tip>..
+        one JSON object per op, with what its tree holds
+        One JSON object per op of every chain, in one 'git log', each with its diff against its first
+        parent.
+
+      rad_cob_state see the module header
+        The verb: parse, name the repository, take the copies, read the chains, reduce.
+        '--type' is a set: each value may name several types, and 'all' names both kinds a reading
+        of state is made of.  'id' is refused: an identity COB has no markers, comments or revisions.
+        '--since <cob>:<op>' skips a COB whose head is still <op>; both sides are prefixes.
+        An empty repository is an answer: nothing moved, nothing to report.
+        An empty answer is no line at all, never a blank one: a consumer reads zero records as
+        "nothing moved".
 
       rad_cob see the module header
         Every verb's answer is a JSON object -- including the one that names a failure -- so jq is a
