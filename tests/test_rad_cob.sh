@@ -21,6 +21,11 @@
 #   AC7  the four failure cases are told apart by the exit code and the JSON line on stdout
 #   AC8  the copy a read landed on is named, and a read behind the newest copy says so
 #   AC9  the helper is registered ('bar helpers --check', and the index names it with its usage)
+#   AC10 'document --type id' answers the repository document at the head revision -- 'kind' is
+#        'id', the payload's fields and the delegates/threshold are there, and the patch shape is
+#        not (the id COB keeps revisions in the store too; reading the shape tells the two apart)
+#   AC11 every line 'document' and 'list' put on stdout is JSON, with bar's own warning path
+#        exercised (no Bar.d above the working directory)
 #
 # usage: tests/test_rad_cob.sh
 
@@ -79,6 +84,8 @@ git --git-dir="$STORAGE" update-ref "refs/namespaces/$NID_A/refs/cobs/xyz.radicl
 git --git-dir="$STORAGE" update-ref "refs/namespaces/$NID_B/refs/cobs/xyz.radicle.issue/$ISSUE_BEHIND" "$NEWEST_OP"
 # PATCH_OK: one copy only
 git --git-dir="$STORAGE" update-ref "refs/namespaces/$NID_A/refs/cobs/xyz.radicle.patch/$PATCH_OK" "$NEW_OP"
+# ID_COB: the identity COB has its own copy, so a read of it is named like any other
+git --git-dir="$STORAGE" update-ref "refs/namespaces/$NID_A/refs/cobs/xyz.radicle.id/$ID_COB" "$NEW_OP"
 
 # --- the fixture 'rad' -------------------------------------------------------------------------
 cat >"$FIXTURES/bin/rad" <<'FAKE'
@@ -203,6 +210,24 @@ cat >"$FIXTURES/show.xyz.radicle.patch.$PATCH_OK" <<JSON
            "edits":[{"author":"$NID_B","timestamp":1790000260000,"body":"a review comment","embeds":[]}]}},
          "timeline":["$NEW_OP"]}}}}},
  "timeline":["$PATCH_OK","$OLD_OP","$MID_OP","$NEW_OP"]}
+JSON
+
+# an identity document: the store keeps it as two revisions, each with its own 'doc' -- only the
+# head one is the repository as it stands, so the two disagree about everything a reader asks for.
+cat >"$FIXTURES/show.xyz.radicle.id.$ID_COB" <<JSON
+{"current":"$NEW_OP","root":"$OLD_OP",
+ "revisions":{
+   "$OLD_OP":{"id":"$OLD_OP","blob":"b44df542b8577fbc5adbbc3d39752bb6b887bbc4","title":"Initial revision",
+     "state":"accepted","description":"","author":{"id":"did:key:$NID_A"},
+     "doc":{"payload":{"xyz.radicle.project":{"defaultBranch":"main","description":"the root description","name":"example_project"}},
+            "delegates":["did:key:$NID_A"],"threshold":1},
+     "timestamp":1790000100000,"parent":null,"children":["$NEW_OP"]},
+   "$NEW_OP":{"id":"$NEW_OP","blob":"0a7db9ee81d2042e5896bb8b7885aa94b29e69c5","title":"add a delegate",
+     "state":"accepted","description":"","author":{"id":"did:key:$NID_B"},
+     "doc":{"payload":{"xyz.radicle.project":{"defaultBranch":"trunk","description":"Playground for the agent reaction-loop","name":"example_project"}},
+            "delegates":["did:key:$NID_A","did:key:$NID_B"],"threshold":2},
+     "timestamp":1790000200000,"parent":"$OLD_OP","children":[]}},
+ "timeline":["$OLD_OP","$NEW_OP"]}
 JSON
 
 # PATCH_ABSENT: listed, and its document does not materialise.  PATCH_REFUSED: the store refuses.
@@ -383,6 +408,62 @@ OUT="$("$BAR" helpers 2>&1)" || true
 contains "$OUT" "rad_cob" "the index names rad_cob"
 contains "$OUT" "the COB store as one interface" "with its declaration's description"
 contains "$OUT" "rad_cob document --repo <rid,path>" "and its usage"
+echo
+
+echo "AC10 'document --type id' answers the repository document, not a patch"
+: >"$CALLS"
+run document --repo "$RID" --type id --object "$ID_COB"
+check "$RC" 0 "'document' answers for an identity COB"
+IDOC="$OUT"
+check "$(printf '%s' "$IDOC" | jq -r .kind)" "id" "kind=id (the store's revisions do not make it a patch)"
+check "$(printf '%s' "$IDOC" | jq -r .cob)" "$ID_COB" "it names the COB it answered for"
+check "$(printf '%s' "$IDOC" | jq -r .copy)" "$NID_A" "and the copy it read"
+check "$(printf '%s' "$IDOC" | jq -r .current)" "$NEW_OP" "the head revision is named"
+check "$(printf '%s' "$IDOC" | jq -r .name)" "example_project" "the payload's name is there"
+check "$(printf '%s' "$IDOC" | jq -r .description)" "Playground for the agent reaction-loop" "its description"
+check "$(printf '%s' "$IDOC" | jq -r .defaultBranch)" "trunk" \
+    "the default branch is the head revision's ('main' is the root's, which is stale)"
+check "$(printf '%s' "$IDOC" | jq -c .delegates)" '["did:key:'"$NID_A"'","did:key:'"$NID_B"'"]' \
+    "the delegates are the head's, did:key kept"
+check "$(printf '%s' "$IDOC" | jq -r .threshold)" 2 "and its threshold"
+check "$(printf '%s' "$IDOC" | jq -r 'has("revisions")')" "false" "no revisions: an id COB is not a patch"
+check "$(printf '%s' "$IDOC" | jq -r 'has("timeline")')" "false" "and no timeline either"
+contains "$(cat "$CALLS")" "cob show -r $RID -t xyz.radicle.id -o $ID_COB --format json" \
+    "the store is asked for the identity document"
+echo
+
+echo "AC11 stdout is JSON only, with bar's warning path exercised"
+# bar warns when there is no Bar.d above the working directory and falls back to the installation;
+# that warning, and the copy a read landed on, are diagnostics: they belong on stderr.
+PREFIX="$WORKDIR/prefix"
+mkdir -p "$PREFIX/bin" "$PREFIX/share/bar" "$WORKDIR/plain"
+ln -s "$BAR" "$PREFIX/bin/bar"
+ln -s "$REPO_ROOT/Bar.d" "$PREFIX/share/bar/Bar.d"
+json_only() { # <text> - every non-empty line parses on its own
+    local line
+    while IFS= read -r line; do
+        [[ -z "$line" ]] && continue
+        printf '%s' "$line" | jq -e . >/dev/null 2>&1 || return 1
+    done <<<"$1"
+}
+plain_run() { # <args..> - 'bar' as installed, from a directory that has no Bar.d above it
+    RC=0
+    OUT="$(cd "$WORKDIR/plain" && PATH="$PREFIX/bin:$PATH" RAD_BIN="$FIXTURES/bin/rad" RADHOME="$RADHOME" \
+        FIXTURES="$FIXTURES" CALLS="$CALLS" RIDFIX="$RID" bar rad_cob "$@" 2>"$WORKDIR/err")" || RC=$?
+    ERR="$(cat "$WORKDIR/err")"
+}
+plain_run document --repo "$RID" --type id --object "$ID_COB"
+check "$RC" 0 "the installed path answers"
+contains "$ERR" "No Bar.d directory found" "bar's warning path was exercised"
+contains "$ERR" "read from $NID_A at $NEW_OP" "the copy line is a diagnostic too"
+check "$(printf '%s' "$OUT" | jq -r .kind)" "id" "and the answer is still the document"
+if json_only "$OUT"; then pass "every line of 'document' on stdout is JSON"; else fail "stdout carries a line that is not JSON"; fi
+plain_run document --repo "$RID" --type issue --object "$ISSUE_NEW"
+if json_only "$OUT"; then pass "the issue document is JSON only too"; else fail "the issue document carries a non-JSON line"; fi
+plain_run document --repo "$RID" --type patch --object "$PATCH_OK"
+if json_only "$OUT"; then pass "so is the patch document"; else fail "the patch document carries a non-JSON line"; fi
+plain_run list --repo "$RID"
+if json_only "$OUT"; then pass "and so is every line 'list' prints"; else fail "'list' carries a non-JSON line"; fi
 echo
 
 if (( failures )); then

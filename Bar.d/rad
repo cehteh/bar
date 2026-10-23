@@ -397,7 +397,7 @@ rule rad_topic: -
 ## 3 the node holds no such repository, item or revision.
 rule rad_reaction: -
 
-# helper: rad_cob | the COB store as one interface: which COBs a repository carries, one COB's op chain, and the document the store reduces it to, with the failure cases a consumer has to tell apart | rad_cob list [--repo <rid,path>] [--type <issue,patch,id>].. [--json] or rad_cob ops --repo <rid,path> --type <type> --object <cob> [--from <op>] [--until <op>] [--json] or rad_cob document --repo <rid,path> --type <type> --object <cob> [--bodies] [--json] | one JSON object per line on stdout: '{"kind","cob","copy"}' per COB, one store op per line oldest first, or the document ('{"kind","cob","copy","timeline","comments"}' for an issue, the same plus 'revisions' with their 'reviews' and 'comments' for a patch); a failure is '{"error","kind","cob","detail"}'
+# helper: rad_cob | the COB store as one interface: which COBs a repository carries, one COB's op chain, and the document the store reduces it to, with the failure cases a consumer has to tell apart | rad_cob list [--repo <rid,path>] [--type <issue,patch,id>].. [--json] or rad_cob ops --repo <rid,path> --type <type> --object <cob> [--from <op>] [--until <op>] [--json] or rad_cob document --repo <rid,path> --type <type> --object <cob> [--bodies] [--json] | one JSON object per line on stdout: '{"kind","cob","copy"}' per COB, one store op per line oldest first, or the document ('{"kind","cob","copy","timeline","comments"}' for an issue, the same plus 'revisions' with their 'reviews' and 'comments' for a patch, and '{"kind","cob","copy","current","name","description","defaultBranch","delegates","threshold"}' for an identity COB); a failure is '{"error","kind","cob","detail"}'
 ## One verb per question, and one shape per verb: 'list' is what the store carries, 'ops' is the
 ## store's own op objects ('rad cob log --format json', verbatim, oldest first), 'document' is the
 ## reduction normalized -- one kind of comment object, ISO dates in the reader's local offset,
@@ -4356,7 +4356,8 @@ function rad_merge_accepted_prs ## see the module header
 #
 #   list       every COB the store holds, per type, with the copy a read lands on
 #   ops        one COB's op chain, oldest first, the objects 'rad cob log' prints and nothing else
-#   document   one COB reduced: an issue's thread, a patch's revisions and their reviews
+#   document   one COB reduced: an issue's thread, a patch's revisions and their reviews, and an
+#              identity COB's repository document (payload, delegates, threshold at the head)
 #
 # NOTHING HERE DERIVES A NAMESPACE REF.  A COB sits in every namespace that replicated it, so a
 # read has to choose one; 'list' names the namespace whose tip is the newest ('copy'), 'document'
@@ -4370,9 +4371,12 @@ function rad_merge_accepted_prs ## see the module header
 # speaks two dialects (an issue keeps its timeline under 'thread', an author is a bare NID in a
 # comment and an object at the root, dates are milliseconds): one kind of comment object, ISO dates
 # in the reader's local offset, a 'redacted' flag instead of a missing body, reactions as
-# '{"emoji", "authors"}' whatever the store's two encodings are.  '--bodies' adds the comment
-# texts (an empty body and 'redacted: true' for a redacted one); without it the document carries
-# the structure and no text.
+# '{"emoji", "authors"}' whatever the store's two encodings are.  An identity COB is answered by
+# the type it was asked as, never by the shape it has: the store keeps its revisions too, so a shape
+# test renders it as a patch with an empty target and a fabricated revision -- the consumer asking
+# "is this host a delegate, which branch is default" would read that and never learn its question
+# was not understood.  '--bodies' adds the comment texts (an empty body and 'redacted: true' for a
+# redacted one); without it the document carries the structure and no text.
 #
 # FAILURE IS PART OF THE INTERFACE.  A consumer that reads only the exit code and stdout tells the
 # four apart, because each answer is one JSON line with an 'error' field:
@@ -4777,6 +4781,11 @@ function rad_cob_ops ## see the module header
 ## timeline under 'thread', a patch keeps revisions with their discussions and reviews -- and this
 ## maps either onto one kind of comment, ISO dates in the reader's local offset ('$off' seconds and
 ## '$zone' as '+hh:mm'), 'redacted' instead of a missing body, and reactions as objects.
+##
+## An identity COB is told apart by the type asked for, never by the shape: it keeps 'revisions' in
+## the store just like a patch does, and a shape test is what rendered it as one.  Its document is
+## the repository at the head revision -- the root revision carries an older payload, delegates and
+## threshold -- with those revisions and the timeline left out.
 declare -gr RAD_COB_DOCUMENT_JQ='
 def nid: (if type == "object" then (.id // "") else (. // "") end) | sub("^did:key:"; "");
 def iso:
@@ -4821,10 +4830,31 @@ def review($tl):
    comments: ((.comments.comments // {}) | comments($tl))}
   + (if $bodies == "yes" then {summary: ((((.summary // []) | last) // {}).body // "")} else {} end);
 
+## The repository an identity COB names, as the head revision has it: the op the store calls the
+## current one is the head, and a COB which names none falls back to the root -- the first revision,
+## and the best answer there is.  Nothing is fabricated: a field the payload does not carry is an
+## empty string, and the delegates are handed on as the store spells them, did:key included.
+def iddocument:
+  . as $d
+  | (($d.current // $d.root) // "") as $cur
+  | (((($d.revisions // {})[$cur] // {}).doc) // {}) as $doc
+  | ((($doc.payload // {})["xyz.radicle.project"]) // {}) as $project
+  | {kind: "id",
+     cob: $cob,
+     copy: (if $copy == "" then null else $copy end),
+     current: (if $cur == "" then null else $cur end),
+     name: ($project.name // ""),
+     description: ($project.description // ""),
+     defaultBranch: ($project.defaultBranch // ""),
+     delegates: ($doc.delegates // []),
+     threshold: ($doc.threshold // null)};
+
 . as $d
 | ($d.timeline // $d.thread.timeline // []) as $tl
 | (($tl[0]) // "") as $root
-| if ($d.revisions // null) != null then
+| if $type == "xyz.radicle.id" then
+    iddocument
+  elif ($d.revisions // null) != null then
     {kind: "patch",
      cob: $cob,
      copy: (if $copy == "" then null else $copy end),
@@ -4974,6 +5004,7 @@ function rad_cob_document ## see the module header
     zone="${zone:0:3}:${zone:3:2}"
 
     printf '%s' "$out" | jq -c --arg cob "$object" --arg copy "${RAD_COB_COPY:-}" --arg bodies "$bodies" \
+        --arg type "$typename" \
         --argjson off "$off" --arg zone "$zone" "$RAD_COB_DOCUMENT_JQ"
     return 0
 }
