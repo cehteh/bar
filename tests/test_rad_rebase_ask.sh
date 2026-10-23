@@ -155,7 +155,23 @@ self) printf 'Alias        ct_vibes\nDID          did:key:%s\n' "$FAKE_OURS" ;;
 'inspect --rid') printf '%s\n' "$FAKE_RID" ;;
 'patch list --open') cat "$FAKE_TABLE" ;;
 'patch show '*) cat "$FAKE_SHOW_DIR/${3:0:7}" ;;
-'patch comment '*) printf '%s\n' "${3}" >>"$FAKE_WRITES"; printf '%s\n' "${5}" >>"$FAKE_BODIES" ;;
+*patch\ comment*-r*)
+    ## 'rad patch comment' takes no '-r/--repo' (nor does 'rad issue comment'): the real binary
+    ## answers 'unexpected argument' and exits 2.  A fake which tolerated it hid a sender whose
+    ## every directive was refused -- a merge landed and asked nobody.
+    printf "error: unexpected argument '-r' found\n" >&2
+    exit 2
+    ;;
+'patch comment '*)
+    if [[ "${PWD:-}" != "$FAKE_PROJ" ]]; then
+        ## What the real binary needs: the write has to run in the checkout, since that is how 'rad'
+        ## resolves the repository ('patch comment' has no repo selector of its own).
+        printf 'the write ran outside the checkout: %s\n' "${PWD:-}" >&2
+        exit 2
+    fi
+    printf '%s\n' "${3}" >>"$FAKE_WRITES"
+    printf '%s\n' "${5}" >>"$FAKE_BODIES"
+    ;;
 *)
     printf 'unexpected: %s\n' "$*" >&2
     exit 1
@@ -175,6 +191,7 @@ done
 printf 'rule MAIN: -- true\n' >"$NOPROJ/Barf"
 
 PROJ="$WORK/project"
+export FAKE_PROJ="$PROJ"
 mkproject "$PROJ"
 printf 'base\n' >"$PROJ/f"
 git -C "$PROJ" add f

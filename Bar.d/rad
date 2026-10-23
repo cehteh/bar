@@ -5202,6 +5202,10 @@ function rad_rebase_ask ## see the module header
         ## comment' resolves only the whole object id, so a directive posted under the listing's id
         ## is refused for every member -- measured after one landing, 30 refusals and not one
         ## directive.  The header carries it, so it costs no extra call.
+        # 'rad patch comment' also takes no repo selector (it answers "unexpected argument '-r'
+        # found", exit 2), so the write runs in the checkout, which is how 'rad' resolves the
+        # repository there.  Measured on bar 782e7b2: its merge asked nobody, every directive
+        # 'write-refused'.  An implementation note, not help text -- it stays out of the README.
         full="$(rad_rebase_show_field "$show" Patch)" || full=""
         if [[ "$target" != "$branch" ]]; then
             verdict="skipped"
@@ -5234,7 +5238,8 @@ function rad_rebase_ask ## see the module header
                 verdict="failed"
                 reason="no-full-id"
                 failed=$(( failed + 1 ))
-            elif rad_metadata_rad "$rid" patch comment "$full" -m "$directive" >/dev/null 2>&1; then
+            elif ( cd "$toplevel" 2>/dev/null &&
+                    rad_metadata_rad "" patch comment "$full" -m "$directive" >/dev/null 2>&1 ); then
                 verdict="asked"
                 reason="directive-posted"
                 asked_count=$(( asked_count + 1 ))
