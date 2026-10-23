@@ -36,6 +36,9 @@ is read on every turn. Architecture, examples and the full command reference are
 - Parameter grammar: `<param>` required, `[param]` optional, `..` repetition, `a|b` alternatives,
   everything else literal. A prototype binds a completer; the description follows ` - ` on the same
   `##` line, never inside the prototype slot.
+- User documentation is terse: a summary line saying what the rule or function does, its arguments in
+  the grammar above rather than in prose, one short sentence per mode. Assume the reader knows the
+  mechanics bar wraps — no detail explanations, no justifications, no implementation rationale.
 - Read `Bar.d/help` (or the generated `README`) before writing a rule.
 
 ## Rules and modules
