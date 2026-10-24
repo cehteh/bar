@@ -39,7 +39,8 @@
 ###                                                          ask the pending patches of a branch to
 ###                                                          re-cut themselves after a merge landed
 ###
-### Every helper answers '-h' or '--help' with its usage on stdout and exit 0.
+### Every helper answers '-h' or '--help' with the builtin help of its rule on stdout and exit 0
+### ('bar usage <name>'), and a refused argument with what was wrong on stderr and exit 2.
 ###
 ### 'rad_state' answers the questions an agent asks before it touches a radicle repository: which
 ### repository is this (RID, name, path), which identity does 'rad' use here, how the patches stand
@@ -339,7 +340,7 @@
 
 # helper-module: rad
 
-require radicle_lib json_lib
+require radicle_lib json_lib help
 
 # helper: rad_import | import a git repository into radicle: 'rad init' and push every branch to the new remote | rad_import | nothing; a notice when the repository is already on radicle
 ## Imports the repository at the toplevel.  Not a question but the way in: it changes the repository
@@ -997,16 +998,7 @@ function rad_state_json
     printf '}\n'
 }
 
-## - the usage of both rules, on stderr
-function rad_state_usage
-{
-    printf 'usage: %s rad_state [--json] [--max <n>]\n' "${BAR_CALLED_AS:-bar}" >&2
-    printf '       %s rad_patches [--json] [--max <n>] [--state <open|draft|merged|archived|all>] [--author <ours|other|all>]\n' \
-        "${BAR_CALLED_AS:-bar}" >&2
-}
-
-## [--json] [--max <n>] - the whole state, see the module header
-function rad_state
+function rad_state ## [--json] [--max <n>] - the radicle state of this checkout in one invocation
 {
     local json="" max="$RAD_STATE_MAX" arg="" i=0
     local -a args=( ${RULE_ARGS[@]+"${RULE_ARGS[@]}"} )
@@ -1015,9 +1007,7 @@ function rad_state
         arg="${args[i]}"
         case "$arg" in
         -h | --help)
-            ## 'rad_state_usage' reports to stderr for a usage error; as the answer to '--help' the
-            ## same text is the output, so its stream is folded over.
-            rad_state_usage 2>&1
+            help_usage rad_state
             return 0
             ;;
         --json)
@@ -1028,14 +1018,14 @@ function rad_state
             max="${args[i]:-}"
             ;;
         *)
-            rad_state_usage
+            help_usage_error rad_state
             return 2
             ;;
         esac
         i=$(( i + 1 ))
     done
     [[ "$max" =~ ^[0-9]+$ ]] || {
-        rad_state_usage
+        help_usage_error rad_state
         return 2
     }
     [[ -n "${BAR_AGENT_JSON:-}" ]] && json=1
@@ -1054,8 +1044,7 @@ function rad_state
     fi
 }
 
-## [--json] [--max <n>] [--state <s>] [--author <a>] - the patches, see the module header
-function rad_patches
+function rad_patches ## [--json] [--max <n>] [--state <open|draft|merged|archived|all>] [--author <ours|other|all>] - the patches of this checkout, by state and by author
 {
     local json="" max="$RAD_STATE_MAX" select_state="all" select_author="all" arg="" i=0
     local -a args=( ${RULE_ARGS[@]+"${RULE_ARGS[@]}"} )
@@ -1064,7 +1053,7 @@ function rad_patches
         arg="${args[i]}"
         case "$arg" in
         -h | --help)
-            rad_state_usage 2>&1
+            help_usage rad_patches
             return 0
             ;;
         --json)
@@ -1079,7 +1068,7 @@ function rad_patches
             esac
             ;;
         *)
-            rad_state_usage
+            help_usage_error rad_patches
             return 2
             ;;
         esac
@@ -1088,19 +1077,19 @@ function rad_patches
     case "$select_state" in
     all | open | draft | merged | archived) ;;
     *)
-        rad_state_usage
+        help_usage_error rad_patches
         return 2
         ;;
     esac
     case "$select_author" in
     all | ours | other) ;;
     *)
-        rad_state_usage
+        help_usage_error rad_patches
         return 2
         ;;
     esac
     [[ "$max" =~ ^[0-9]+$ ]] || {
-        rad_state_usage
+        help_usage_error rad_patches
         return 2
     }
     [[ -n "${BAR_AGENT_JSON:-}" ]] && json=1
@@ -1170,20 +1159,6 @@ function rad_trust_ground_known ## <name> - 0 when <name> is one of the grounds
         fi
     done
     return 1
-}
-
-function rad_trust_usage ## [reason] - usage on stderr
-{
-    [[ -n "${1:-}" ]] && printf 'rad_trust: %s\n' "$1" >&2
-    printf 'usage: rad_trust --repo <rid|path> --author <did|nid|alias> [--issue <id>|--patch <id>]\n' >&2
-    printf '                [--grounds <ground,..>] [--threshold <n|n%%>] [--dump] [--json] [--second-party]\n' >&2
-    printf '       <ground> one of delegate, owner, opened, assigned, contributed; --grounds names the\n' >&2
-    printf '                ones which suffice (default delegate,contributed)\n' >&2
-    printf '       --dump   every ground and nothing evaluated -- no verdict (implies --json)\n' >&2
-    printf '       --second-party\n' >&2
-    printf '                is the actor somebody other than the item opener (implies --dump, needs an item)\n' >&2
-    printf "       <n>      commits (absolute, default 10); <n>%% the share of the commits every\n" >&2
-    printf "                identity authored in this repository (it decides 'contributed' alone)\n" >&2
 }
 
 ## <repo> - the repository and the node storage of it, in RAD_TRUST_RID/RAD_TRUST_STORAGE
@@ -1281,7 +1256,7 @@ function rad_trust_item_nid
     return 1
 }
 
-function rad_trust ## see the module header
+function rad_trust ## --repo <rid|path> --author <did|nid|alias> [--issue <id>|--patch <id>] [--grounds <ground,..>] [--threshold <n|n%>] [--dump] [--json] [--second-party] - the trust verdict of the triage policy
 {
     local -a args=() grounds=() parts=() cmd=() ground_json=() ground_true=()
     local raw="" arg="" value="" part=""
@@ -1307,7 +1282,7 @@ function rad_trust ## see the module header
         i=$(( i + 1 ))
         case "$arg" in
         -h | --help)
-            rad_trust_usage 2>&1
+            help_usage rad_trust
             return 0
             ;;
         --json) json=1 ;;
@@ -1315,7 +1290,7 @@ function rad_trust ## see the module header
         --second-party) second_party=1 ;;
         --repo | --author | --threshold | --grounds | --issue | --patch)
             if (( i >= count )) || [[ -z "${args[i]}" ]]; then
-                rad_trust_usage "'$arg' needs a non-empty value"
+                help_usage_error rad_trust "'$arg' needs a non-empty value"
                 return 2
             fi
             value="${args[i]}"
@@ -1326,7 +1301,7 @@ function rad_trust ## see the module header
             --threshold) threshold="$value" ;;
             --issue | --patch)
                 if [[ -n "$item" ]]; then
-                    rad_trust_usage "only one item can be asked about (got '$item' and '$value')"
+                    help_usage_error rad_trust "only one item can be asked about (got '$item' and '$value')"
                     return 2
                 fi
                 item="$value"
@@ -1341,24 +1316,24 @@ function rad_trust ## see the module header
             esac
             ;;
         *)
-            rad_trust_usage "unknown argument '$arg'"
+            help_usage_error rad_trust "unknown argument '$arg'"
             return 2
             ;;
         esac
     done
 
     if [[ -z "$repo" || -z "$author" ]]; then
-        rad_trust_usage "both --repo and --author are required"
+        help_usage_error rad_trust "both --repo and --author are required"
         return 2
     fi
     if [[ -n "$threshold" && ! "$threshold" =~ ^[0-9]+$ && ! "$threshold" =~ ^[0-9]+(\.[0-9]+)?%$ ]]; then
-        rad_trust_usage "invalid --threshold '$threshold', want a non-negative number or a percent like '10%'"
+        help_usage_error rad_trust "invalid --threshold '$threshold', want a non-negative number or a percent like '10%'"
         return 2
     fi
     # A second party is one *other* than the opener, so the item is the question: without one there is
     # nothing to compare the actor against, and 'true' would be the answer for everybody.
     if [[ -n "$second_party" && -z "$item" ]]; then
-        rad_trust_usage "'--second-party' needs '--issue <id>' or '--patch <id>': a second party is somebody other than the item's opener"
+        help_usage_error rad_trust "'--second-party' needs '--issue <id>' or '--patch <id>': a second party is somebody other than the item's opener"
         return 2
     fi
     [[ -n "$second_party" ]] && dump=1
@@ -1375,7 +1350,10 @@ function rad_trust ## see the module header
     fi
     for part in "${grounds[@]}"; do
         if ! rad_trust_ground_known "$part"; then
-            rad_trust_usage "unknown ground '$part': one of ${RAD_TRUST_GROUNDS[*]}"
+            local grounds
+            IFS=',' grounds="${RAD_TRUST_GROUNDS[*]}"
+            grounds="${grounds//,/, }"
+            help_usage_error rad_trust "unknown ground '$part': one of $grounds"
             return 2
         fi
         case "$part" in
@@ -1593,15 +1571,6 @@ function rad_trust ## see the module header
 }
 
 # --- rad_identity: the identity <-> git-author map, and a verified answer for a commit ----------
-
-function rad_identity_usage ## [reason] - usage on stderr
-{
-    [[ -n "${1:-}" ]] && printf 'rad_identity: %s\n' "$1" >&2
-    printf 'usage: rad_identity --repo <rid|path> [--did <did|nid|alias>] [--commit <sha>] [--json]\n' >&2
-    printf '       --did <did|nid|alias>  one identity; without it every delegate of the repository\n' >&2
-    printf '       --commit <sha>         whether that commit can be tied to an identity\n' >&2
-    printf '       --json                 one JSON object per line, and nothing else on stdout\n' >&2
-}
 
 ## <repo> - the repository and the node storage which holds it, in RAD_IDENTITY_RID, _STORAGE and
 ## _TOPLEVEL (the checkout, empty when the caller is not in one)
@@ -1923,7 +1892,7 @@ function rad_identity_commit
     return 1
 }
 
-function rad_identity ## see the module header
+function rad_identity ## --repo <rid|path> [--did <did|nid|alias>] [--commit <sha>] [--json] - the identities this repository delegates to, and whether a commit can be tied to one
 {
     local -a args=()
     local raw="" arg="" value="" json="" repo="" did="" commit="" nid="" line=""
@@ -1942,13 +1911,13 @@ function rad_identity ## see the module header
         i=$(( i + 1 ))
         case "$arg" in
         -h | --help)
-            rad_identity_usage 2>&1
+            help_usage rad_identity
             return 0
             ;;
         --json) json=1 ;;
         --repo | --did | --commit)
             if (( i >= count )) || [[ -z "${args[i]}" ]]; then
-                rad_identity_usage "'$arg' needs a non-empty value"
+                help_usage_error rad_identity "'$arg' needs a non-empty value"
                 return 2
             fi
             value="${args[i]}"
@@ -1960,12 +1929,12 @@ function rad_identity ## see the module header
             esac
             ;;
         --) break ;;
-        -*) rad_identity_usage "unknown option '$arg'"; return 2 ;;
-        *) rad_identity_usage "unexpected argument '$arg'"; return 2 ;;
+        -*) help_usage_error rad_identity "unknown option '$arg'"; return 2 ;;
+        *) help_usage_error rad_identity "unexpected argument '$arg'"; return 2 ;;
         esac
     done
     if [[ -n "$did" && -n "$commit" ]]; then
-        rad_identity_usage "'--did' and '--commit' ask different questions"
+        help_usage_error rad_identity "'--did' and '--commit' ask different questions"
         return 2
     fi
     rad_identity_store "$repo" || return $?
@@ -2413,18 +2382,6 @@ function rad_comment_metadata_json ## - the whole answer as one object
         "$(json_number "${#entries[@]}")" "$assignees" "$first"
 }
 
-function rad_comment_metadata_usage ## [reason] - usage on stderr
-{
-    [[ -n "${1:-}" ]] && printf 'rad_comment_metadata: %s\n' "$1" >&2
-    printf 'usage: rad_comment_metadata <item> [--query <key>].. [--repo <rid|path>] [--trust <spec>].. [--last] [--json]\n' >&2
-    printf '       <item> the issue or patch (short or full id) the question is about\n' >&2
-    printf '       <key>  one proposal key to answer for, repeatable; no key at all answers for every\n' >&2
-    printf '              key a comment proposes.  The keys with an effect are label, assign, unassign\n' >&2
-    printf '       <spec> one of did:<did|nid>, contributor(<n>); the delegates and the identities\n' >&2
-    printf '              the item is assigned to are trusted without a spec\n' >&2
-    printf '       --last the newest block per key, which is what applies it\n' >&2
-}
-
 ## <name> <rid|path> - the repository and the node storage of it, in the 'RAD_METADATA_*' variables
 function rad_metadata_store
 {
@@ -2462,7 +2419,7 @@ function rad_metadata_store
     return 0
 }
 
-function rad_comment_metadata ## see the module header
+function rad_comment_metadata ## <item> [--query <label|rmlabel|assign|unassign>].. [--repo <rid|path>] [--trust <spec>].. [--last] [--json] - the trusted proposals an item's comments carry
 {
     local -a args=() specs=() parts=() queries=()
     local raw arg value json="" repo="" last="" item="" item_rc=0
@@ -2485,14 +2442,14 @@ function rad_comment_metadata ## see the module header
         i=$(( i + 1 ))
         case "$arg" in
         -h | --help)
-            rad_comment_metadata_usage 2>&1
+            help_usage rad_comment_metadata
             return 0
             ;;
         --json) json=1 ;;
         --last) last=1 ;;
         --query | --repo | --trust)
             if (( i >= count )) || [[ -z "${args[i]}" ]]; then
-                rad_comment_metadata_usage "'$arg' needs a non-empty value"
+                help_usage_error rad_comment_metadata "'$arg' needs a non-empty value"
                 return 2
             fi
             value="${args[i]}"
@@ -2500,7 +2457,7 @@ function rad_comment_metadata ## see the module header
             case "$arg" in
             --query)
                 if [[ ! "$value" =~ ^[A-Za-z][A-Za-z0-9_-]*$ ]]; then
-                    rad_comment_metadata_usage "invalid --query '$value': a key is a word of letters, digits, '_' and '-'"
+                    help_usage_error rad_comment_metadata "invalid --query '$value': a key is a word of letters, digits, '_' and '-'"
                     return 2
                 fi
                 queries+=( "$value" )
@@ -2516,13 +2473,13 @@ function rad_comment_metadata ## see the module header
             esac
             ;;
         -*)
-            rad_comment_metadata_usage "unknown argument '$arg'"
+            help_usage_error rad_comment_metadata "unknown argument '$arg'"
             return 2
             ;;
         *)
             ## the one item the question is about (the only positional argument there is)
             if [[ -n "$item" ]]; then
-                rad_comment_metadata_usage "only one item can be asked about (got '$item' and '$arg')"
+                help_usage_error rad_comment_metadata "only one item can be asked about (got '$item' and '$arg')"
                 return 2
             fi
             item="$arg"
@@ -2532,7 +2489,7 @@ function rad_comment_metadata ## see the module header
 
     [[ -n "${BAR_AGENT_JSON:-}" ]] && json=1
     if [[ -z "$item" ]]; then
-        rad_comment_metadata_usage "the item is required: an issue or patch id, short or full"
+        help_usage_error rad_comment_metadata "the item is required: an issue or patch id, short or full"
         return 2
     fi
     if ! command -v jq >/dev/null 2>&1; then
@@ -2548,12 +2505,12 @@ function rad_comment_metadata ## see the module header
         'contributor('*')')
             n="${spec#'contributor('}"; n="${n%')'}"
             if [[ ! "$n" =~ ^[0-9]+$ ]]; then
-                rad_comment_metadata_usage "invalid trust spec 'contributor($n)', want a number"
+                help_usage_error rad_comment_metadata "invalid trust spec 'contributor($n)', want a number"
                 return 2
             fi
             ;;
         *)
-            rad_comment_metadata_usage "unknown trust spec '$spec', want did:<did|nid> or contributor(<n>)"
+            help_usage_error rad_comment_metadata "unknown trust spec '$spec', want did:<did|nid> or contributor(<n>)"
             return 2
             ;;
         esac
@@ -2598,7 +2555,7 @@ function rad_comment_metadata ## see the module header
     ## An asked-for contributor threshold needs the facts command: without it every count reads
     ## 'unknown', which would answer 'nothing is trusted' where the operator asked for trust.
     if (( ${#RAD_COMMENT_METADATA_THRESHOLDS[@]} )) && [[ -z "${RAD_TRUST_CMD:-}" ]]; then
-        rad_comment_metadata_usage "'--trust contributor(<n>)' needs RAD_TRUST_CMD: the command which answers the authored commits"
+        help_usage_error rad_comment_metadata "'--trust contributor(<n>)' needs RAD_TRUST_CMD: the command which answers the authored commits"
         return 2
     fi
 
@@ -2607,7 +2564,7 @@ function rad_comment_metadata ## see the module header
     if (( item_rc != 0 )); then
         case "$item_rc" in
         2)
-            rad_comment_metadata_usage "'$item' matches more than one issue or patch, use more characters"
+            help_usage_error rad_comment_metadata "'$item' matches more than one issue or patch, use more characters"
             return 2
             ;;
         *)
@@ -2751,14 +2708,6 @@ function rad_metadata_item
     esac
 }
 
-function rad_set_label_usage ## [reason] - usage on stderr
-{
-    [[ -n "${1:-}" ]] && printf 'rad_set_label: %s\n' "$1" >&2
-    printf 'usage: rad_set_label <item> [<add>] [<delete>].. [--repo <rid|path>]\n' >&2
-    printf '       <item> issue:<id>, patch:<id> or a bare issue id\n' >&2
-    printf '       an empty <add> adds nothing: one label to add or one to delete is required\n' >&2
-}
-
 function rad_set_label ## <item> [<add>] [<delete>].. [--repo <rid|path>] - one 'rad <type> label'
 {
     ## One label added, and any number of labels deleted in the same write: that is what makes an
@@ -2782,19 +2731,19 @@ function rad_set_label ## <item> [<add>] [<delete>].. [--repo <rid|path>] - one 
         i=$(( i + 1 ))
         case "$raw" in
         -h | --help)
-            rad_set_label_usage 2>&1
+            help_usage rad_set_label
             return 0
             ;;
         --repo)
             if (( i >= count )) || [[ -z "${args[i]}" ]]; then
-                rad_set_label_usage "'--repo' needs a non-empty value"
+                help_usage_error rad_set_label "'--repo' needs a non-empty value"
                 return 2
             fi
             repo="${args[i]}"
             i=$(( i + 1 ))
             ;;
         -*)
-            rad_set_label_usage "unknown argument '$raw'"
+            help_usage_error rad_set_label "unknown argument '$raw'"
             return 2
             ;;
         *)
@@ -2810,7 +2759,7 @@ function rad_set_label ## <item> [<add>] [<delete>].. [--repo <rid|path>] - one 
         esac
     done
     if [[ -z "$item" || ( -z "$add" && ${#deletes[@]} -eq 0 ) ]]; then
-        rad_set_label_usage "an item, and a label to add or one to delete, are required"
+        help_usage_error rad_set_label "an item, and a label to add or one to delete, are required"
         return 2
     fi
     rad_metadata_item "$item"
@@ -2824,14 +2773,6 @@ function rad_set_label ## <item> [<add>] [<delete>].. [--repo <rid|path>] - one 
     [[ -n "$add" ]] && printf ' add=%s' "$add"
     (( ${#deletes[@]} )) && printf ' delete=%s' "${deletes[*]}"
     printf '\n'
-}
-
-function rad_rm_label_usage ## [reason] - usage on stderr
-{
-    [[ -n "${1:-}" ]] && printf 'rad_rm_label: %s\n' "$1" >&2
-    printf 'usage: rad_rm_label <item> <glob>.. [--repo <rid|path>]\n' >&2
-    printf '       <item> issue:<id>, patch:<id> or a bare issue id\n' >&2
-    printf "       a glob matches the whole stored label, anchored at both ends ('*' and '?')\n" >&2
 }
 
 function rad_rm_label ## <item> <glob>.. [--repo <rid|path>] - remove the labels a glob matches
@@ -2858,19 +2799,19 @@ function rad_rm_label ## <item> <glob>.. [--repo <rid|path>] - remove the labels
         i=$(( i + 1 ))
         case "$raw" in
         -h | --help)
-            rad_rm_label_usage 2>&1
+            help_usage rad_rm_label
             return 0
             ;;
         --repo)
             if (( i >= count )) || [[ -z "${args[i]}" ]]; then
-                rad_rm_label_usage "'--repo' needs a non-empty value"
+                help_usage_error rad_rm_label "'--repo' needs a non-empty value"
                 return 2
             fi
             repo="${args[i]}"
             i=$(( i + 1 ))
             ;;
         -*)
-            rad_rm_label_usage "unknown argument '$raw'"
+            help_usage_error rad_rm_label "unknown argument '$raw'"
             return 2
             ;;
         *)
@@ -2883,7 +2824,7 @@ function rad_rm_label ## <item> <glob>.. [--repo <rid|path>] - remove the labels
         esac
     done
     if [[ -z "$item" || ${#globs[@]} -eq 0 ]]; then
-        rad_rm_label_usage "an item and at least one glob are required"
+        help_usage_error rad_rm_label "an item and at least one glob are required"
         return 2
     fi
     rad_metadata_item "$item"
@@ -2910,13 +2851,6 @@ function rad_rm_label ## <item> <glob>.. [--repo <rid|path>] - remove the labels
     printf 'removed label item=%s delete=%s\n' "$item" "${removed[*]}"
 }
 
-function rad_assign_usage ## [reason] - usage on stderr
-{
-    [[ -n "${1:-}" ]] && printf '%s: %s\n' "$RAD_ASSIGN_WORD" "$1" >&2
-    printf 'usage: %s <item> <did|alias> [--repo <rid|path>]\n' "$RAD_ASSIGN_WORD" >&2
-    printf '       <item> issue:<id>, patch:<id> or a bare issue id\n' >&2
-}
-
 ## <item> <did|alias> [--repo <rid|path>] - one 'rad <type> assign' add or delete
 function rad_metadata_assign
 {
@@ -2938,19 +2872,19 @@ function rad_metadata_assign
         i=$(( i + 1 ))
         case "$raw" in
         -h | --help)
-            rad_assign_usage 2>&1
+            help_usage "$RAD_ASSIGN_WORD"
             return 0
             ;;
         --repo)
             if (( i >= count )) || [[ -z "${args[i]}" ]]; then
-                rad_assign_usage "'--repo' needs a non-empty value"
+                help_usage_error "$RAD_ASSIGN_WORD" "'--repo' needs a non-empty value"
                 return 2
             fi
             repo="${args[i]}"
             i=$(( i + 1 ))
             ;;
         -*)
-            rad_assign_usage "unknown argument '$raw'"
+            help_usage_error "$RAD_ASSIGN_WORD" "unknown argument '$raw'"
             return 2
             ;;
         *)
@@ -2959,14 +2893,14 @@ function rad_metadata_assign
             elif [[ -z "$who" ]]; then
                 who="$raw"
             else
-                rad_assign_usage "unexpected argument '$raw'"
+                help_usage_error "$RAD_ASSIGN_WORD" "unexpected argument '$raw'"
                 return 2
             fi
             ;;
         esac
     done
     if [[ -z "$item" || -z "$who" ]]; then
-        rad_assign_usage "an item and an identity are required"
+        help_usage_error "$RAD_ASSIGN_WORD" "an item and an identity are required"
         return 2
     fi
     rad_metadata_item "$item"
@@ -3136,16 +3070,8 @@ function rad_apply_labels ## <repo> <dry> <entry>.. - the label state of one ite
     done
     return $rc
 }
-function rad_apply_from_comments_usage ## [reason] - usage on stderr
-{
-    [[ -n "${1:-}" ]] && printf 'rad_apply_from_comments: %s\n' "$1" >&2
-    printf 'usage: rad_apply_from_comments <item>.. [--query <key>].. [--repo <rid|path>]\n' >&2
-    printf '       [--trust <spec>].. [--dry-run]\n' >&2
-    printf '       <item> an issue or patch (short or full id) whose proposals are applied\n' >&2
-    printf '       The newest trusted block per key is what applies; superseded ones are history.\n' >&2
-}
 
-function rad_apply_from_comments ## see the module header
+function rad_apply_from_comments ## <item>.. [--query <key>].. [--repo <rid|path>] [--trust <spec>].. [--dry-run] - apply the newest trusted block per key, as one write per entry
 {
     ## The maintenance side of the reader: it asks 'rad_comment_metadata' for the trusted proposals
     ## of an item ('--last', which is the state; a block a later one superseded is history) and
@@ -3174,13 +3100,13 @@ function rad_apply_from_comments ## see the module header
         i=$(( i + 1 ))
         case "$raw" in
         -h | --help)
-            rad_apply_from_comments_usage 2>&1
+            help_usage rad_apply_from_comments
             return 0
             ;;
         --dry-run) dry=1 ;;
         --query | --repo | --trust)
             if (( i >= count )) || [[ -z "${args[i]}" ]]; then
-                rad_apply_from_comments_usage "'$raw' needs a non-empty value"
+                help_usage_error rad_apply_from_comments "'$raw' needs a non-empty value"
                 return 2
             fi
             value="${args[i]}"
@@ -3197,14 +3123,14 @@ function rad_apply_from_comments ## see the module header
             esac
             ;;
         -*)
-            rad_apply_from_comments_usage "unknown argument '$raw'"
+            help_usage_error rad_apply_from_comments "unknown argument '$raw'"
             return 2
             ;;
         *) items+=( "$raw" ) ;;
         esac
     done
     if (( ${#items[@]} == 0 )); then
-        rad_apply_from_comments_usage "at least one item is required"
+        help_usage_error rad_apply_from_comments "at least one item is required"
         return 2
     fi
     if ! command -v jq >/dev/null 2>&1; then
@@ -3765,30 +3691,7 @@ function rad_reaction_state ## <repo> <json> <word>.. - the '--state' form, one 
     done
 }
 
-function rad_reaction_usage ## [reason] - usage on stderr
-{
-    [[ -n "${1:-}" ]] && printf 'rad_reaction: %s\n' "$1" >&2
-    printf 'usage: rad_reaction [--from <emoji>] [--repo <rid|path>] <to> <target>..\n' >&2
-    printf '       rad_reaction <from> <to> <target>.. [--repo <rid|path>]\n' >&2
-    printf '       rad_reaction --state [--json] [--repo <rid|path>] <target>..\n' >&2
-    printf '       <to>     the marker to set; empty withdraws <from> and sets nothing\n' >&2
-    printf '       <from>   the one marker the caller expects to be live; omitted is no expectation\n' >&2
-    printf '                at all and only sets <to> (a target already carrying one of ours then\n' >&2
-    printf '                holds both), the empty string is "no live marker of mine", and anything\n' >&2
-    printf '                else must be live.  One marker, because the step changes one: <from> is\n' >&2
-    printf '                taken back and <to> set in the same op, so a second marker stays and a\n' >&2
-    printf '                <to> which is already live is a no-op\n' >&2
-    printf '       <target> <issue-id> (the issue itself), <issue-id> <comment-id>,\n' >&2
-    printf '                <patch-or-revision-id> (the patch is its root revision),\n' >&2
-    printf '                <patch-or-revision-id> <reaction-able-id> -- whatever an id inside the\n' >&2
-    printf '                patch names: a comment of the revision, a review, a comment of one\n' >&2
-    printf '       --state  report instead of writing: the live markers of ours on each target and\n' >&2
-    printf '                the op that set each of them, one line per target\n' >&2
-    printf '                ('"'"'markers=-'"'"' when none of ours is live: that is a state, not an error).\n' >&2
-    printf '                Takes no <to> and no --from; --json the same as one object per target\n' >&2
-}
-
-function rad_reaction ## see the module header
+function rad_reaction ## [--from <emoji>] [--repo <rid|path>] <to> <target>.. | <from> <to> <target>.. | --state [--json] [--repo <rid|path>] <target>.. - one of our reaction markers set, transitioned or withdrawn against the state the caller expects, or '--state' reporting the live ones
 {
     ## Compare and swap on the caller's *own* reaction state: one target, one marker, and the write
     ## happens only when what the caller expects is what the store reduces.
@@ -3823,14 +3726,14 @@ function rad_reaction ## see the module header
         i=$(( i + 1 ))
         case "$raw" in
         -h | --help)
-            rad_reaction_usage 2>&1
+            help_usage rad_reaction
             return 0
             ;;
         --state) state_given=1 ;;
         --json) json=1 ;;
         --from | --repo)
             if (( i >= count )); then
-                rad_reaction_usage "'$raw' needs a value"
+                help_usage_error rad_reaction "'$raw' needs a value"
                 return 2
             fi
             value="${args[i]}"
@@ -3844,7 +3747,7 @@ function rad_reaction ## see the module header
             esac
             ;;
         -*)
-            rad_reaction_usage "unknown argument '$raw'"
+            help_usage_error rad_reaction "unknown argument '$raw'"
             return 2
             ;;
         *) positional+=( "$raw" ) ;;
@@ -3852,11 +3755,7 @@ function rad_reaction ## see the module header
     done
 
     if (( ${#positional[@]} == 0 )); then
-        if [[ -n "$state_given" ]]; then
-            rad_reaction_usage "'--state' needs at least one target"
-            return 2
-        fi
-        rad_reaction_usage "the reaction to set and its target are required"
+        help_usage_error rad_reaction "the reaction to set and its target are required"
         return 2
     fi
     ## '--state' reports, it does not compare: it takes no '<to>' and no '<from>', and every
@@ -3864,14 +3763,14 @@ function rad_reaction ## see the module header
     ## asking for the state would have to be told which of the two answers it got.
     if [[ -n "$state_given" ]]; then
         if [[ -n "$from_given" ]]; then
-            rad_reaction_usage "'--from' compares before a write; '--state' does not: drop one of them"
+            help_usage_error rad_reaction "'--from' compares before a write; '--state' does not: drop one of them"
             return 2
         fi
         rad_reaction_state "$repo" "$json" "${positional[@]}"
         return $?
     fi
     if [[ -n "$json" ]]; then
-        rad_reaction_usage "'--json' belongs to '--state': a write answers one line already"
+        help_usage_error rad_reaction "'--json' belongs to '--state': a write answers one line already"
         return 2
     fi
     ## The '<from> <to>' form is the two leading positionals, the '<to> <target>' form starts with
@@ -3890,30 +3789,30 @@ function rad_reaction ## see the module header
         targets=( "${positional[@]:1}" )
     fi
     if (( ${#targets[@]} == 0 || ${#targets[@]} > 2 )); then
-        rad_reaction_usage "one target (and its comment) is required, got ${#targets[@]} words"
+        help_usage_error rad_reaction "one target (and its comment) is required, got ${#targets[@]} words"
         return 2
     fi
     if [[ -n "$to" ]] && ! rad_reaction_accepts "$to"; then
-        rad_reaction_usage "'$to' is not a reaction the store accepts: one emoji, no sequence"
+        help_usage_error rad_reaction "'$to' is not a reaction the store accepts: one emoji, no sequence"
         return 2
     fi
     if [[ -z "$to" ]] && [[ -z "$from" || -z "$from_given" ]]; then
-        rad_reaction_usage "an empty reaction only takes back the ones the caller expects"
+        help_usage_error rad_reaction "an empty reaction only takes back the ones the caller expects"
         return 2
     fi
     ## The step changes exactly one marker, so '<from>' names exactly one: a value carrying several
     ## ('--from "✅ ❓"') is refused here -- it is no state a single step could both expect and resolve
     ## -- and the one marker is checked against the same allow list as '<to>' before any call.
     if [[ -n "$from" && "$from" != "${from//[[:space:]]/}" ]]; then
-        rad_reaction_usage "'$from' names more than one marker: a transition changes exactly one"
+        help_usage_error rad_reaction "'$from' names more than one marker: a transition changes exactly one"
         return 2
     fi
     if [[ -n "$from" ]] && ! rad_reaction_accepts "$from"; then
-        rad_reaction_usage "'$from' is not a reaction the store accepts"
+        help_usage_error rad_reaction "'$from' is not a reaction the store accepts"
         return 2
     fi
     if [[ -n "$from_given" && "$from" == "$to" ]]; then
-        rad_reaction_usage "'$from' to '$to' is not a transition"
+        help_usage_error rad_reaction "'$from' to '$to' is not a transition"
         return 2
     fi
 
@@ -4014,12 +3913,6 @@ function rad_reaction ## see the module header
         "$type" "$RAD_METADATA_ID" "$level" "$react_id" "${from:--}" "${to:--}" "${withdrawn:-no}"
 }
 
-function rad_topic_usage ## [reason] - usage on stderr
-{
-    [[ -n "${1:-}" ]] && printf 'rad_topic: %s\n' "$1" >&2
-    printf 'usage: rad_topic <class> <description> [--root <clone>] [--base <ref>] [--no-fetch] [--dry-run] [--json]\n' >&2
-}
-
 function rad_topic_json ## <root> <name> <path> <base> <head> <fetched> - one object
 {
     printf '{"bar_rad":1,"action":"topic","root":%s,"name":%s,"path":%s,"branch":%s,"base":%s,"head":%s,"fetched":%s}\n' \
@@ -4032,7 +3925,7 @@ function rad_topic_json ## <root> <name> <path> <base> <head> <fetched> - one ob
         "$(json_bool "$6")"
 }
 
-function rad_topic ## see the module header
+function rad_topic ## <class> <description> [--root <clone>] [--base <ref>] [--no-fetch] [--dry-run] [--json] - open the topic tree of an incoming item
 {
     ## Body of the 'rad_topic' rule.  Nothing is created before the class, the name, the clone,
     ## the base and the collisions have all been resolved, so a refusal leaves no half-made tree.
@@ -4056,7 +3949,7 @@ function rad_topic ## see the module header
         i=$(( i + 1 ))
         case "$arg" in
         -h | --help)
-            rad_topic_usage 2>&1
+            help_usage rad_topic
             return 0
             ;;
         --json) json=1 ;;
@@ -4064,7 +3957,7 @@ function rad_topic ## see the module header
         --no-fetch) fetch="" ;;
         --root | --base)
             if (( i >= count )) || [[ -z "${args[i]}" ]]; then
-                rad_topic_usage "'$arg' needs a non-empty value"
+                help_usage_error rad_topic "'$arg' needs a non-empty value"
                 return 2
             fi
             value="${args[i]}"
@@ -4075,7 +3968,7 @@ function rad_topic ## see the module header
             esac
             ;;
         -*)
-            rad_topic_usage "unknown argument '$arg'"
+            help_usage_error rad_topic "unknown argument '$arg'"
             return 2
             ;;
         *)
@@ -4084,7 +3977,7 @@ function rad_topic ## see the module header
             elif [[ -z "$description" ]]; then
                 description="$arg"
             else
-                rad_topic_usage "unexpected argument '$arg'"
+                help_usage_error rad_topic "unexpected argument '$arg'"
                 return 2
             fi
             ;;
@@ -4093,7 +3986,7 @@ function rad_topic ## see the module header
 
     [[ -n "${BAR_AGENT_JSON:-}" ]] && json=1
     if [[ -z "$class" || -z "$description" ]]; then
-        rad_topic_usage "a class and a description are required"
+        help_usage_error rad_topic "a class and a description are required"
         return 2
     fi
 
@@ -4109,13 +4002,13 @@ function rad_topic ## see the module header
         [[ "$line" == "$wanted" ]] && known=yes
     done
     if [[ -z "$known" ]]; then
-        rad_topic_usage "unknown class '$class', want one of: ${classes[*]}"
+        help_usage_error rad_topic "unknown class '$class', want one of: ${classes[*]}"
         return 2
     fi
 
     slug="$(rad_slug "$description")"
     if [[ -z "$slug" ]]; then
-        rad_topic_usage "the description '$description' has no usable character"
+        help_usage_error rad_topic "the description '$description' has no usable character"
         return 2
     fi
     name="${wanted}${slug}"
@@ -4129,11 +4022,11 @@ function rad_topic ## see the module header
     ## The clone: always the *main* checkout, also when the caller sits inside a topic tree.
     if [[ -n "$root" ]]; then
         if ! tree="$(git -C "$root" rev-parse --show-toplevel 2>/dev/null)"; then
-            rad_topic_usage "'$root' is not a git repository"
+            help_usage_error rad_topic "'$root' is not a git repository"
             return 2
         fi
     elif ! tree="$(git rev-parse --show-toplevel 2>/dev/null)"; then
-        rad_topic_usage "not inside a git repository, pass --root <clone>"
+        help_usage_error rad_topic "not inside a git repository, pass --root <clone>"
         return 2
     fi
     main_tree="$(git -C "$tree" worktree list --porcelain 2>/dev/null |
@@ -4219,14 +4112,6 @@ function rad_topic ## see the module header
 
 
 # --- merging the acceptances: rad_merge_accepted_prs ---------------------------------------------
-
-function rad_merge_usage ## [reason] - usage on stderr
-{
-    if [[ -n "${1:-}" ]]; then
-        printf 'rad_merge_accepted_prs: %s\n' "$1" >&2
-    fi
-    printf 'usage: rad_merge_accepted_prs [--dry-run] [--no-fetch] [--max <n>] [--json]\n' >&2
-}
 
 function rad_merge_delegate ## <rid> <nid> - 0 when that identity is a delegate of the repository
 {
@@ -4420,7 +4305,7 @@ function rad_merge_abort ## <toplevel> <storage> <revision> <upstream> <nid> <la
     return 0
 }
 
-function rad_merge_accepted_prs ## see the module header
+function rad_merge_accepted_prs ## [--dry-run] [--no-fetch] [--max <n>] [--json] - merge the patches a delegate accepted and which merge cleanly into their target branch
 {
     local -a args=( ${RULE_ARGS[@]+"${RULE_ARGS[@]}"} )
     local -a rows=() ids=()
@@ -4435,7 +4320,7 @@ function rad_merge_accepted_prs ## see the module header
         arg="${args[i]}"
         case "$arg" in
         -h | --help)
-            rad_merge_usage 2>&1
+            help_usage rad_merge_accepted_prs
             return 0
             ;;
         --dry-run) dry=1 ;;
@@ -4444,14 +4329,14 @@ function rad_merge_accepted_prs ## see the module header
         --max)
             i=$(( i + 1 ))
             max="${args[i]:-}"
-            [[ "$max" =~ ^[0-9]+$ ]] || { rad_merge_usage "'--max' needs a number"; return 2; }
+            [[ "$max" =~ ^[0-9]+$ ]] || { help_usage_error rad_merge_accepted_prs "'--max' needs a number"; return 2; }
             ;;
         --max=*)
             max="${arg#--max=}"
-            [[ "$max" =~ ^[0-9]+$ ]] || { rad_merge_usage "'--max' needs a number"; return 2; }
+            [[ "$max" =~ ^[0-9]+$ ]] || { help_usage_error rad_merge_accepted_prs "'--max' needs a number"; return 2; }
             ;;
         *)
-            rad_merge_usage "unknown argument '$arg'"
+            help_usage_error rad_merge_accepted_prs "unknown argument '$arg'"
             return 2
             ;;
         esac
@@ -4656,22 +4541,6 @@ function rad_merge_accepted_prs ## see the module header
 # 'refused' is what is left when an object the store lists fails to reduce for any reason other
 # than 'not found': a store error, an unsupported manifest, an identity it cannot resolve.
 
-function rad_cob_usage ## [reason] - usage on stderr
-{
-    [[ -n "${1:-}" ]] && printf 'rad_cob: %s\n' "$1" >&2
-    printf 'usage: %s rad_cob list [--repo <rid|path>] [--type <type>[,<type>]..] [--json]\n' "${BAR_CALLED_AS:-bar}" >&2
-    printf '       %s rad_cob ops --repo <rid|path> --type <type> --object <cob> [--from <op>] [--until <op>] [--json]\n' "${BAR_CALLED_AS:-bar}" >&2
-    printf '       %s rad_cob document --repo <rid|path> --type <type> --object <cob> [--bodies] [--json]\n' "${BAR_CALLED_AS:-bar}" >&2
-    printf '       %s rad_cob state [--repo <rid|path>] [--type <type>[,<type>]..] [--since <cob>:<op>].. [--json]\n' "${BAR_CALLED_AS:-bar}" >&2
-    printf '       <type> one of issue, patch, id (or the store name xyz.radicle.<type>); the state\n' >&2
-    printf '       reads issue, patch or all\n' >&2
-    printf '       The answer is one JSON object per line on stdout: that is what a consumer reads, and\n' >&2
-    printf '       --json (or --format json) states it as the rest of the family spells it.\n' >&2
-    printf '       Exit 0 answered, 1 the store refused (its own first line is the detail), 2 usage,\n' >&2
-    printf '       3 no such repository, type or object, 4 the store lists the object and nothing\n' >&2
-    printf '       materialises, 5 the store or the node cannot be read.\n' >&2
-}
-
 function rad_cob_call ## <args>.. - one 'rad' invocation, its answer (both streams) and its status
 {
     ## Like 'rad_run', except that the answer is *returned* and nothing is reported: a store failure
@@ -4844,25 +4713,25 @@ function rad_cob_list ## see the module header
         i=$(( i + 1 ))
         case "$arg" in
         -h | --help)
-            rad_cob_usage 2>&1
+            help_usage rad_cob
             return 0
             ;;
         --json) : ;;
         --format)
             if (( i >= count )) || [[ -z "${args[i]}" ]]; then
-                rad_cob_usage "'--format' needs a value"
+                help_usage_error rad_cob "'--format' needs a value"
                 return 2
             fi
             value="${args[i]}"
             i=$(( i + 1 ))
             if [[ "$value" != json ]]; then
-                rad_cob_usage "'--format $value' is not an answer this helper prints (json only)"
+                help_usage_error rad_cob "'--format $value' is not an answer this helper prints (json only)"
                 return 2
             fi
             ;;
         --repo | --type)
             if (( i >= count )) || [[ -z "${args[i]}" ]]; then
-                rad_cob_usage "'$arg' needs a non-empty value"
+                help_usage_error rad_cob "'$arg' needs a non-empty value"
                 return 2
             fi
             value="${args[i]}"
@@ -4880,11 +4749,11 @@ function rad_cob_list ## see the module header
             esac
             ;;
         -*)
-            rad_cob_usage "unknown argument '$arg'"
+            help_usage_error rad_cob "unknown argument '$arg'"
             return 2
             ;;
         *)
-            rad_cob_usage "unexpected argument '$arg'"
+            help_usage_error rad_cob "unexpected argument '$arg'"
             return 2
             ;;
         esac
@@ -4892,7 +4761,7 @@ function rad_cob_list ## see the module header
     (( ${#types[@]} )) || types=(issue patch id)
     for type in "${types[@]}"; do
         if ! rad_cob_typename "$type" >/dev/null; then
-            rad_cob_usage "'$type' is not a COB type this store carries (issue, patch, id)"
+            help_usage_error rad_cob "'$type' is not a COB type this store carries (issue, patch, id)"
             return 2
         fi
     done
@@ -4948,25 +4817,25 @@ function rad_cob_ops ## see the module header
         i=$(( i + 1 ))
         case "$arg" in
         -h | --help)
-            rad_cob_usage 2>&1
+            help_usage rad_cob
             return 0
             ;;
         --json) : ;;
         --format)
             if (( i >= count )) || [[ -z "${args[i]}" ]]; then
-                rad_cob_usage "'--format' needs a value"
+                help_usage_error rad_cob "'--format' needs a value"
                 return 2
             fi
             value="${args[i]}"
             i=$(( i + 1 ))
             if [[ "$value" != json ]]; then
-                rad_cob_usage "'--format $value' is not an answer this helper prints (json only)"
+                help_usage_error rad_cob "'--format $value' is not an answer this helper prints (json only)"
                 return 2
             fi
             ;;
         --repo | --type | --object | --from | --until)
             if (( i >= count )) || [[ -z "${args[i]}" ]]; then
-                rad_cob_usage "'$arg' needs a non-empty value"
+                help_usage_error rad_cob "'$arg' needs a non-empty value"
                 return 2
             fi
             value="${args[i]}"
@@ -4980,21 +4849,21 @@ function rad_cob_ops ## see the module header
             esac
             ;;
         -*)
-            rad_cob_usage "unknown argument '$arg'"
+            help_usage_error rad_cob "unknown argument '$arg'"
             return 2
             ;;
         *)
-            rad_cob_usage "unexpected argument '$arg'"
+            help_usage_error rad_cob "unexpected argument '$arg'"
             return 2
             ;;
         esac
     done
     if [[ -z "$type" || -z "$object" ]]; then
-        rad_cob_usage "'ops' needs --type and --object"
+        help_usage_error rad_cob "'ops' needs --type and --object"
         return 2
     fi
     typename="$(rad_cob_typename "$type")" || {
-        rad_cob_usage "'$type' is not a COB type this store carries (issue, patch, id)"
+        help_usage_error rad_cob "'$type' is not a COB type this store carries (issue, patch, id)"
         return 2
     }
 
@@ -5179,26 +5048,26 @@ function rad_cob_document ## see the module header
         i=$(( i + 1 ))
         case "$arg" in
         -h | --help)
-            rad_cob_usage 2>&1
+            help_usage rad_cob
             return 0
             ;;
         --json) : ;;
         --bodies) bodies="yes" ;;
         --format)
             if (( i >= count )) || [[ -z "${args[i]}" ]]; then
-                rad_cob_usage "'--format' needs a value"
+                help_usage_error rad_cob "'--format' needs a value"
                 return 2
             fi
             value="${args[i]}"
             i=$(( i + 1 ))
             if [[ "$value" != json ]]; then
-                rad_cob_usage "'--format $value' is not an answer this helper prints (json only)"
+                help_usage_error rad_cob "'--format $value' is not an answer this helper prints (json only)"
                 return 2
             fi
             ;;
         --repo | --type | --object)
             if (( i >= count )) || [[ -z "${args[i]}" ]]; then
-                rad_cob_usage "'$arg' needs a non-empty value"
+                help_usage_error rad_cob "'$arg' needs a non-empty value"
                 return 2
             fi
             value="${args[i]}"
@@ -5210,21 +5079,21 @@ function rad_cob_document ## see the module header
             esac
             ;;
         -*)
-            rad_cob_usage "unknown argument '$arg'"
+            help_usage_error rad_cob "unknown argument '$arg'"
             return 2
             ;;
         *)
-            rad_cob_usage "unexpected argument '$arg'"
+            help_usage_error rad_cob "unexpected argument '$arg'"
             return 2
             ;;
         esac
     done
     if [[ -z "$type" || -z "$object" ]]; then
-        rad_cob_usage "'document' needs --type and --object"
+        help_usage_error rad_cob "'document' needs --type and --object"
         return 2
     fi
     typename="$(rad_cob_typename "$type")" || {
-        rad_cob_usage "'$type' is not a COB type this store carries (issue, patch, id)"
+        help_usage_error rad_cob "'$type' is not a COB type this store carries (issue, patch, id)"
         return 2
     }
     rad_cob_repo document "$repo" || return $?
@@ -5514,25 +5383,25 @@ function rad_cob_state ## see the module header
         i=$(( i + 1 ))
         case "$arg" in
         -h | --help)
-            rad_cob_usage 2>&1
+            help_usage rad_cob
             return 0
             ;;
         --json) : ;;
         --format)
             if (( i >= count )) || [[ -z "${args[i]}" ]]; then
-                rad_cob_usage "'--format' needs a value"
+                help_usage_error rad_cob "'--format' needs a value"
                 return 2
             fi
             value="${args[i]}"
             i=$(( i + 1 ))
             if [[ "$value" != json ]]; then
-                rad_cob_usage "'--format $value' is not an answer this helper prints (json only)"
+                help_usage_error rad_cob "'--format $value' is not an answer this helper prints (json only)"
                 return 2
             fi
             ;;
         --repo | --type | --since)
             if (( i >= count )) || [[ -z "${args[i]}" ]]; then
-                rad_cob_usage "'$arg' needs a non-empty value"
+                help_usage_error rad_cob "'$arg' needs a non-empty value"
                 return 2
             fi
             value="${args[i]}"
@@ -5544,11 +5413,11 @@ function rad_cob_state ## see the module header
             esac
             ;;
         -*)
-            rad_cob_usage "unknown argument '$arg'"
+            help_usage_error rad_cob "unknown argument '$arg'"
             return 2
             ;;
         *)
-            rad_cob_usage "unexpected argument '$arg'"
+            help_usage_error rad_cob "unexpected argument '$arg'"
             return 2
             ;;
         esac
@@ -5568,11 +5437,11 @@ function rad_cob_state ## see the module header
             all) typenames+=(xyz.radicle.issue xyz.radicle.patch) ;;
             *)
                 typename="$(rad_cob_typename "$type")" || {
-                    rad_cob_usage "'$type' is not a COB type whose state this helper reads (issue, patch, all)"
+                    help_usage_error rad_cob "'$type' is not a COB type whose state this helper reads (issue, patch, all)"
                     return 2
                 }
                 if [[ "$typename" == xyz.radicle.id ]]; then
-                    rad_cob_usage "'id' is not a COB type whose state this helper reads (issue, patch, all)"
+                    help_usage_error rad_cob "'id' is not a COB type whose state this helper reads (issue, patch, all)"
                     return 2
                 fi
                 typenames+=("$typename")
@@ -5581,7 +5450,7 @@ function rad_cob_state ## see the module header
         done
     done
     if (( ${#typenames[@]} == 0 )); then
-        rad_cob_usage "'--type' named no COB type (issue, patch, all)"
+        help_usage_error rad_cob "'--type' named no COB type (issue, patch, all)"
         return 2
     fi
 
@@ -5591,13 +5460,13 @@ function rad_cob_state ## see the module header
     if (( ${#since_args[@]} > 0 )); then
         for value in "${since_args[@]}"; do
             if [[ "$value" != *:* ]]; then
-                rad_cob_usage "'--since $value' is not '<cob>:<op>'"
+                help_usage_error rad_cob "'--since $value' is not '<cob>:<op>'"
                 return 2
             fi
             key="${value%%:*}"
             since_pair="${value#*:}"
             if [[ -z "$key" || -z "$since_pair" ]]; then
-                rad_cob_usage "'--since $value' is not '<cob>:<op>'"
+                help_usage_error rad_cob "'--since $value' is not '<cob>:<op>'"
                 return 2
             fi
         done
@@ -5657,22 +5526,22 @@ function rad_cob_state ## see the module header
     return 0
 }
 
-function rad_cob ## see the module header
+function rad_cob ## list [--repo <rid|path>] [--type <type>].. | ops|document --repo <rid|path> --type <type> --object <cob> [--from <op>] [--until <op>] [--bodies] | state [--repo <rid|path>] [--type <type>].. [--since <cob>:<op>].. - the COB store as one interface, one verb per question
 {
     local -a args=( ${RULE_ARGS[@]+"${RULE_ARGS[@]}"} )
     local verb="${args[0]:-}"
     case "$verb" in
     -h | --help)
-        rad_cob_usage 2>&1
+        help_usage rad_cob
         return 0
         ;;
     list | ops | document | state) ;;
     "")
-        rad_cob_usage "a verb is required: list, ops, document or state"
+        help_usage_error rad_cob "a verb is required: list, ops, document or state"
         return 2
         ;;
     *)
-        rad_cob_usage "unknown verb '$verb'"
+        help_usage_error rad_cob "unknown verb '$verb'"
         return 2
         ;;
     esac
@@ -5686,14 +5555,6 @@ function rad_cob ## see the module header
 }
 
 # --- asking the siblings to re-cut: rad_rebase_ask ----------------------------------------------
-
-function rad_rebase_ask_usage ## [reason] - usage on stderr
-{
-    if [[ -n "${1:-}" ]]; then
-        printf 'rad_rebase_ask: %s\n' "$1" >&2
-    fi
-    printf 'usage: rad_rebase_ask [--after <patch>] [--branch <branch>] [--onto <sha>] [--dry-run] [--no-fetch] [--json]\n' >&2
-}
 
 function rad_rebase_show_field ## <show> <field> - one header value of 'rad patch show'
 {
@@ -5743,7 +5604,7 @@ function rad_rebase_live_comment ## <storage> <ref> - the newest comment of the 
     return 0
 }
 
-function rad_rebase_ask ## see the module header
+function rad_rebase_ask ## [--after <patch>] [--branch <branch>] [--onto <sha>] [--dry-run] [--no-fetch] [--json] - ask the pending patches of a branch to re-cut themselves after a merge landed
 {
     local -a args=( ${RULE_ARGS[@]+"${RULE_ARGS[@]}"} )
     local -a rows=() ids=() heads=()
@@ -5758,7 +5619,7 @@ function rad_rebase_ask ## see the module header
         raw="${args[i]}"
         case "$raw" in
         -h | --help)
-            rad_rebase_ask_usage 2>&1
+            help_usage rad_rebase_ask
             return 0
             ;;
         --dry-run) dry=1 ;;
@@ -5768,7 +5629,7 @@ function rad_rebase_ask ## see the module header
             i=$(( i + 1 ))
             value="${args[i]:-}"
             if [[ -z "$value" ]]; then
-                rad_rebase_ask_usage "'$raw' needs a value"
+                help_usage_error rad_rebase_ask "'$raw' needs a value"
                 return 2
             fi
             case "$raw" in
@@ -5781,7 +5642,7 @@ function rad_rebase_ask ## see the module header
         --branch=*) branch="${raw#--branch=}" ;;
         --onto=*) onto="${raw#--onto=}" ;;
         *)
-            rad_rebase_ask_usage "unknown argument '$raw'"
+            help_usage_error rad_rebase_ask "unknown argument '$raw'"
             return 2
             ;;
         esac
@@ -5833,7 +5694,7 @@ function rad_rebase_ask ## see the module header
     if [[ -z "$branch" ]]; then
         branch="$(git --git-dir="$storage" symbolic-ref --short HEAD 2>/dev/null)" || branch=""
         if [[ -z "$branch" ]]; then
-            rad_rebase_ask_usage "no branch to sweep: '--after' or '--branch' is required and the storage has no default branch"
+            help_usage_error rad_rebase_ask "no branch to sweep: '--after' or '--branch' is required and the storage has no default branch"
             return 2
         fi
     fi

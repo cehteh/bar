@@ -405,7 +405,8 @@ run --root "$CORPUS" --nonsense
 check "$RC" "2" "AC10: an unknown argument exits 2"
 check "$OUT" "" "AC10: and prints nothing on stdout"
 run_err --root "$CORPUS" --nonsense
-contains "$OUT" "usage: bar hermes_logs" "AC10: the usage goes to stderr"
+contains "$OUT" "hermes_logs: unknown argument '--nonsense'" "AC10: what was wrong goes to stderr"
+contains "$OUT" "try 'bar usage hermes_logs'" "AC10: and where the help is"
 run --root "$CORPUS" --source nonsense
 check "$RC" "2" "AC10: an unknown source exits 2"
 run --root "$CORPUS" --since 'not a time'

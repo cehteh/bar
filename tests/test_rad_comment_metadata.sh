@@ -85,7 +85,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 BAR="$REPO_ROOT/bar"
 
 # the modules a throw-away project needs to run bar, the repertoire and the helper
-FIXTURE_MODULES="std_lib rule_lib tty_lib std_rules git_lib json_lib agent_rules helpers_rules radicle_lib rad rad_rules"
+FIXTURE_MODULES="std_lib rule_lib tty_lib std_rules git_lib json_lib agent_rules helpers_rules radicle_lib rad rad_rules usage help"
 
 failures=0
 pass() { echo "  ✓ $*"; }
@@ -700,7 +700,8 @@ echo "AC9 usage errors exit 2"
 run "$PROJECT" rad_comment_metadata
 check "$RC" 2 "no item, no query"
 err "$PROJECT" rad_comment_metadata
-contains "$OUT" "usage: rad_comment_metadata <item>" "and it says how to call it"
+contains "$OUT" "rad_comment_metadata: the item is required" "and it says what was wrong"
+contains "$OUT" "try 'bar usage rad_comment_metadata'" "and where the help is"
 run "$PROJECT" rad_comment_metadata "$ISSUE_ID" "$PATCH_ID" --query label
 check "$RC" 2 "two items"
 run "$PROJECT" rad_comment_metadata "$ISSUE_ID" --query "9bad"
@@ -1188,7 +1189,7 @@ run "$PROJECT" rad_rm_label "issue:$ISSUE_ID" 'pr:*' --nonsense
 check "$RC" 2 "an unknown argument is a usage error"
 run "$PROJECT" rad_rm_label -h
 check "$RC" 0 "'-h' is the usage on stdout"
-contains "$OUT" "usage: rad_rm_label" "…which says how to call it"
+contains "$OUT" "rad_rm_label <item> <glob>.. [--repo <rid|path>]" "…which says how to call it"
 run "$PROJECT" helpers
 contains "$OUT" "rad_rm_label" "the repertoire lists the removal half"
 run "$PROJECT" helpers --check

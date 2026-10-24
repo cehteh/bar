@@ -100,7 +100,7 @@
 
 # helper-module: hermes
 
-require json_lib
+require json_lib help
 
 declare -gx BAR_HERMES_LOGS_ROOT="${BAR_HERMES_LOGS_ROOT:-}"            ## ':' separated corpus roots, '--root' wins
 declare -gx BAR_HERMES_LOGS_LIMIT="${BAR_HERMES_LOGS_LIMIT:-20}"        ## match lines the digest prints
@@ -123,28 +123,6 @@ declare -g  HERMES_LOGS_R_HITS="" HERMES_LOGS_R_CLIP="" HERMES_LOGS_R_STAT=""
 declare -ga HERMES_LOGS_R_LOST=() HERMES_LOGS_ENV=()
 declare -gA HERMES_LOGS_R_USED=()
 declare -g  HERMES_LOGS_PROGRAM=""
-
-function hermes_logs_usage
-{
-    cat >&2 <<'USAGE'
-usage: bar hermes_logs [--grep <ere>] [-i] [--since <when>] [--source <kind>].. [--task <sel>]
-                       [--session <id>] [--limit <n>] [--count] [--json] [--root <dir>]..
-
-  --grep <ere>       keep only lines matching the extended regular expression
-  -i, --ignore-case  match the pattern case insensitively
-  --since <when>     keep records at or after <when>: '<n>[smhdw]' ago ('90m', '1d') or an
-                     absolute time ('2026-10-10', '2026-10-10 08:00:00')
-  --source <kind>    scan only this source kind, repeatable: logs workers cron sessions store
-  --task <sel>       keep only sources whose path contains <sel> ('--task t_deadbeef')
-  --session <id>     keep only the records of that session
-  --limit <n>        at most <n> match lines in the digest
-  --count            print the exact number of matching lines and nothing else
-  --json             print one JSON object instead of lines
-  --root <dir>       corpus root, repeatable; overrides BAR_HERMES_LOGS_ROOT;
-                     default $HERMES_HOME or ~/.hermes
-USAGE
-    return 2
-}
 
 function hermes_logs_selector ## <option> <value> - reject a selector neither SQL nor the shell can carry
 {
@@ -621,10 +599,10 @@ function hermes_logs_scan ## - scan the corpus of HERMES_LOGS_Q_ROOTS and print 
     return "$rc"
 }
 
-function hermes_logs
+function hermes_logs ## [--grep <ere>] [-i|--ignore-case] [--since <when>] [--source <kind>].. [--task <sel>] [--session <id>] [--limit <n>] [--count] [--json] [--root <dir>].. - the match, range and count questions over the Hermes log corpus
 {
-    ## Body of the 'hermes_logs' rule: parse the options into the query context, resolve the corpus
-    ## roots and hand over to 'hermes_logs_scan'.  See the module header for the contract.
+    # Body of the 'hermes_logs' rule: parse the options into the query context, resolve the corpus
+    # roots and hand over to 'hermes_logs_scan'.  See the module header for the contract.
     local pat="" when="" json="" count="" arg
     local limit="$BAR_HERMES_LOGS_LIMIT"
     local -a kinds=() roots=()
@@ -633,29 +611,32 @@ function hermes_logs
         arg="$1"
         shift
         case "$arg" in
+        -h | --help)
+            help_usage hermes_logs
+            return 0
+            ;;
         --grep)
-            if (( $# )); then pat="$1"; shift; else hermes_logs_usage; return 2; fi ;;
+            if (( $# )); then pat="$1"; shift; else help_usage_error hermes_logs "'--grep' needs a value"; return 2; fi ;;
         -i|--ignore-case)
             HERMES_LOGS_Q_ICASE=1 ;;
         --since)
-            if (( $# )); then when="$1"; shift; else hermes_logs_usage; return 2; fi ;;
+            if (( $# )); then when="$1"; shift; else help_usage_error hermes_logs "'--since' needs a value"; return 2; fi ;;
         --source)
-            if (( $# )); then kinds+=( "$1" ); shift; else hermes_logs_usage; return 2; fi ;;
+            if (( $# )); then kinds+=( "$1" ); shift; else help_usage_error hermes_logs "'--source' needs a value"; return 2; fi ;;
         --task|--run)
-            if (( $# )); then HERMES_LOGS_Q_TASK="$1"; shift; else hermes_logs_usage; return 2; fi ;;
+            if (( $# )); then HERMES_LOGS_Q_TASK="$1"; shift; else help_usage_error hermes_logs "'--task' needs a value"; return 2; fi ;;
         --session)
-            if (( $# )); then HERMES_LOGS_Q_SESSION="$1"; shift; else hermes_logs_usage; return 2; fi ;;
+            if (( $# )); then HERMES_LOGS_Q_SESSION="$1"; shift; else help_usage_error hermes_logs "'--session' needs a value"; return 2; fi ;;
         --limit)
-            if (( $# )); then limit="$1"; shift; else hermes_logs_usage; return 2; fi ;;
+            if (( $# )); then limit="$1"; shift; else help_usage_error hermes_logs "'--limit' needs a value"; return 2; fi ;;
         --root)
-            if (( $# )); then roots+=( "$1" ); shift; else hermes_logs_usage; return 2; fi ;;
+            if (( $# )); then roots+=( "$1" ); shift; else help_usage_error hermes_logs "'--root' needs a value"; return 2; fi ;;
         --count)
             count=1 ;;
         --json)
             json=1 ;;
         *)
-            printf 'hermes_logs: unknown argument: %s\n' "$arg" >&2
-            hermes_logs_usage
+            help_usage_error hermes_logs "unknown argument '$arg'"
             return 2
             ;;
         esac
@@ -951,33 +932,6 @@ function hermes_handoff_json_records ## <record..> - the US records as a JSON ar
     printf '[%s]' "$out"
 }
 
-function hermes_handoff_usage ## - the usage text, on stderr
-{
-    cat >&2 <<'USAGE'
-usage: bar hermes_handoff --goal <line> [--context <text> | --context-file <path>]
-                          [--anchor <phrase>].. [--gate <line>].. [--report-chars <n>]
-                          [--session <id>] [--db <path>] [--json]
-       bar hermes_handoff --anchors <phrase>.. [--limit <n>] [--session <id>] [--db <path>] [--json]
-       bar hermes_handoff --verify [--session <id>] [--db <path>] [--json]
-
-  --goal <line>          the goal of the child, printed verbatim (a brief)
-  --context <text>       context the child cannot retrieve, printed verbatim
-  --context-file <path>  the context read from a file instead
-  --anchor <phrase>      a phrase resolved to 'msg <id> <role> <snippet>'; repeatable
-  --gate <line>          one acceptance gate, printed verbatim; repeatable
-  --report-chars <n>     the report bound told to the child (default 1500)
-  --anchors <phrase>..   resolve phrases and print the matches instead of a brief
-  --verify               print whether a child could retrieve the session
-  --limit <n>            --anchors: print at most n matches (0 = all; default 20)
-  --session <id>         the session (default $HERMES_SESSION_ID)
-  --db <path>            the session store (default $HANDOFF_DB or the Hermes home's state.db)
-  --json                 one object with the same numbers as the text form
-
-exit codes: 0 answered, 1 --anchors matched nothing, 2 usage error,
-            3 session or store unknown/unreadable, 4 a brief anchor did not resolve
-USAGE
-}
-
 function hermes_handoff_brief_text
 {
     local line phrase
@@ -1267,10 +1221,10 @@ function hermes_handoff_verify_run ## <session> <db> <json>
     return "$rc"
 }
 
-function hermes_handoff
+function hermes_handoff ## --goal <line> [--context <text>|--context-file <path>] [--anchor <phrase>].. [--gate <line>].. [--report-chars <n>] | --anchors <phrase>.. [--limit <n>] | --verify [--session <id>] [--db <path>] [--json] - the brief of a delegated child session, its resolved anchors, or whether a child could retrieve the session
 {
-    ## Body of the 'hermes_handoff' rule: parse the options, pick the mode and hand over.  See the
-    ## 'HANDOFF BRIEFS' section of the module header for the modes, the store and the exit codes.
+    # Body of the 'hermes_handoff' rule: parse the options, pick the mode and hand over.  See the
+    # 'HANDOFF BRIEFS' section of the module header for the modes, the store and the exit codes.
     local -a args=()
     local raw arg mode="brief" goal="" context="" context_file="" report_chars=1500 session="" db="" json="" limit="20"
     local -i count i=0
@@ -1289,13 +1243,16 @@ function hermes_handoff
         arg="${args[i]}"
         i=$(( i + 1 ))
         case "$arg" in
+        -h | --help)
+            help_usage hermes_handoff
+            return 0
+            ;;
         --json) json=1 ;;
         --verify) mode="verify" ;;
         --anchors) mode="anchors" ;;
         --goal | --context | --context-file | --anchor | --gate | --report-chars | --session | --db | --limit)
             if (( i >= count )) || [[ -z "${args[i]}" ]]; then
-                printf 'hermes_handoff: %s needs a non-empty value\n' "$arg" >&2
-                hermes_handoff_usage
+                help_usage_error hermes_handoff "'$arg' needs a non-empty value"
                 return 2
             fi
             case "$arg" in
@@ -1312,8 +1269,7 @@ function hermes_handoff
             i=$(( i + 1 ))
             ;;
         --*)
-            printf 'hermes_handoff: unknown argument %s\n' "$arg" >&2
-            hermes_handoff_usage
+            help_usage_error hermes_handoff "unknown argument '$arg'"
             return 2
             ;;
         *)
@@ -1330,8 +1286,7 @@ function hermes_handoff
     case "$mode" in
     brief)
         if [[ -z "$goal" ]]; then
-            printf 'hermes_handoff: --goal is required for a brief\n' >&2
-            hermes_handoff_usage
+            help_usage_error hermes_handoff "--goal is required for a brief"
             return 2
         fi
         if [[ ! "$report_chars" =~ ^[0-9]+$ ]]; then
@@ -1349,8 +1304,7 @@ function hermes_handoff
         ;;
     anchors)
         if (( ${#HERMES_HANDOFF_PHRASES[@]} == 0 )); then
-            printf 'hermes_handoff: --anchors needs at least one phrase\n' >&2
-            hermes_handoff_usage
+            help_usage_error hermes_handoff "--anchors needs at least one phrase"
             return 2
         fi
         if [[ ! "$limit" =~ ^[0-9]+$ ]]; then

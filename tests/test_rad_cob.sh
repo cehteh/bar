@@ -248,7 +248,7 @@ run() { # <args..> - 'bar rad_cob', stdout/stderr split, exit code in RC
 echo "AC1 '-h' answers the usage on stdout, exit 0"
 run -h
 check "$RC" 0 "'-h' exits 0"
-contains "$OUT" "usage: bar rad_cob list" "the usage goes to stdout"
+contains "$OUT" "rad_cob list [--repo <rid|path>]" "the builtin help goes to stdout"
 absent "$ERR" "usage:" "and nothing goes to stderr"
 run --help
 check "$RC" 0 "'--help' exits 0 too"

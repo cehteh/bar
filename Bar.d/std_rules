@@ -150,6 +150,12 @@ rule --bare --help: help
 ## Show help.
 rule --bare -h: help
 
+## <name> - the builtin help of one rule, function or variable, without the whole documentation
+rule usage: -- '
+     require help
+     help_usage ${RULE_ARGS[@]+"${RULE_ARGS[@]}"}
+'
+
 ## [rule] [args] - Evaluate a rule with at debug level.
 rule --always --debug: --conclusive -- '
      BAR_VERBOSITY_LEVEL=5

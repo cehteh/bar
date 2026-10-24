@@ -102,7 +102,7 @@
 
 # helper-module: sourcetree
 
-require json_lib
+require json_lib help
 
 declare -gA SOURCETREE_ROW=()  ## The row 'sourcetree_record' stores, filled by the collector.
 declare -ga SOURCETREE_ROWS=() ## The rows of the clone being collected, sorted before printing.
@@ -113,12 +113,6 @@ declare -ga SOURCETREE_ROWS=() ## The rows of the clone being collected, sorted 
 ## module header for the fields, the JSON shape, the exit codes and what the helper deliberately
 ## does not do.
 rule sourcetree_state: -
-
-function sourcetree_usage
-{
-    printf 'usage: bar sourcetree_state [--json] [<root>]\n' >&2
-    printf '       <root> is the source-work root; without the argument BAR_SOURCE_ROOT is used\n' >&2
-}
 
 function sourcetree_json_flag ## <var> <flags> <name> - put 'true' into <var> when the flag is set
 {
@@ -613,11 +607,15 @@ function sourcetree_state ## [--json] [<root>] - the source-tree digest, see the
     local -a args=()
     for arg in ${RULE_ARGS[@]+"${RULE_ARGS[@]}"}; do
         case "$arg" in
+        -h | --help)
+            help_usage sourcetree_state
+            return 0
+            ;;
         --json)
             json=1
             ;;
         -*)
-            sourcetree_usage
+            help_usage_error sourcetree_state "unknown option '$arg'"
             return 2
             ;;
         *)
@@ -626,14 +624,13 @@ function sourcetree_state ## [--json] [<root>] - the source-tree digest, see the
         esac
     done
     if (( ${#args[@]} > 1 )); then
-        sourcetree_usage
+        help_usage_error sourcetree_state "one root at most (got ${#args[@]})"
         return 2
     fi
 
     local root="${args[0]:-${BAR_SOURCE_ROOT:-}}"
     if [[ -z "$root" ]]; then
-        sourcetree_usage
-        printf 'sourcetree_state: no source-work root: name it as an argument or set BAR_SOURCE_ROOT\n' >&2
+        help_usage_error sourcetree_state "no source-work root: name it as an argument or set BAR_SOURCE_ROOT"
         return 2
     fi
     if [[ ! -d "$root" ]]; then

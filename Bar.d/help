@@ -119,6 +119,12 @@ function help
     local entry span remainder value proto start_line lineno
     local lower_query="${query,,}"
 
+    # Escape regex metacharacters in the query once for safe use in '=~': it is the same pattern
+    # for every index entry, and forking a 'sed' per entry is what made a lookup slow.
+    local q_escaped lower_q_escaped
+    q_escaped=$(printf '%s' "$query" | sed -e 's/[]\\.^$*+?()[\]{}|]/\\&/g')
+    lower_q_escaped="${q_escaped,,}"
+
     # Iterate index (which preserves case) and perform a prefix match.
     while IFS= read -r entry; do
       [[ -z "$entry" ]] && continue
@@ -135,10 +141,6 @@ function help
         continue
       fi
 
-      # Escape regex metacharacters in query for safe use in =~
-      local q_escaped
-      q_escaped=$(printf '%s' "$query" | sed -e 's/[]\\.^$*+?()[\]{}|]/\\&/g')
-
       local matched=0
       local match_exact=0
       local begins_value=0
@@ -154,9 +156,8 @@ function help
           fi
         fi
       else
-        local lower_value lower_q_escaped
+        local lower_value
         lower_value="${value,,}"
-        lower_q_escaped=$(printf '%s' "${q_escaped,,}")
         if [[ "$lower_value" =~ (^|[^[:alnum:]])$lower_q_escaped ]]; then
           matched=1
           if [[ "$lower_value" == "$lower_query" ]]; then
@@ -302,6 +303,52 @@ function help
   fi
 }
 
+function help_usage ## <name> - the builtin help of one rule, function or variable, without the whole documentation
+{
+    ## 'bar help <name>' renders every module before it picks the section asked for, which costs
+    ## seconds on an installation of this size.  This answers it from the one module the name can
+    ## live in, resolved the way 'rule_autoload' resolves it: 'always_', 'is_', 'has_' and 'try_'
+    ## are stripped, the word before the first '_' is the module, and '<module>', '<module>_lib'
+    ## and '<module>_rules' are the files read.
+    ##
+    ## A name the narrowed list does not carry falls back to the full documentation (a helper
+    ## whose module the name does not derive, e.g. 'is_command_installed': 'command' is no
+    ## module), so the answer stays right and only its cost is that of 'bar help'.
+    local name="${1:-}"
+    if [[ -z "$name" ]]; then
+        help_usage_error usage "a rule, function or variable name is required"
+        return 2
+    fi
+
+    local module="$name"
+    module="${module#always_}"
+    module="${module#is_}"
+    module="${module#has_}"
+    module="${module#try_}"
+    module="${module%%_*}"
+
+    local -a modules=()
+    local candidate
+    for candidate in "$module" "${module}_lib" "${module}_rules"; do
+        [[ -n "$module" && -f "$BAR_DIR/$candidate" ]] && modules+=("$candidate")
+    done
+
+    if (( ${#modules[@]} )); then
+        # 'help_render' reads it from the shell it renders in -- the variable is the hand-over.
+        # shellcheck disable=SC2034
+        local HELP_MODULES="${modules[*]}"
+        help --short "$name"
+        return 0
+    fi
+    help --short "$name"
+}
+
+function help_usage_error ## <name> [reason] - a usage error on stderr: what was wrong, and the command which answers the help for name
+{
+    printf '%s: %s\n' "${1:-}" "${2:-invalid arguments}" >&2
+    printf "try '%s usage %s'\n" "${BAR_CALLED_AS:-bar}" "${1:-}" >&2
+}
+
 # Help text formatting rules:
 # - Basic identation step is 2 spaces
 # - Normal text indentation is a even number of spaces
@@ -313,6 +360,20 @@ function help
 function help_render
 {
   local span="${1:-}"
+  # 'HELP_MODULES' narrows the module section to the modules it names (one name per word):
+  # 'help_usage' sets it to the module a name can live in, so the renderer describes that and stops
+  # instead of assembling every module's documentation.  Unset is the whole installation.
+  local -a modules=()
+  if [[ -n "${HELP_MODULES:-}" ]]; then
+    local -a named=()
+    read -r -a named <<<"$HELP_MODULES"
+    local m
+    for m in "${named[@]}"; do
+      [[ -f "$BAR_DIR/$m" ]] && modules+=( "$BAR_DIR/$m" )
+    done
+  else
+    modules=( "$BAR_DIR"/* )
+  fi
   if ! declare -p help_render_cache >/dev/null 2>&1; then
     declare -ga help_render_cache=()
   mapfile -t help_render_cache <<EOF
@@ -422,7 +483,7 @@ INVOCATION AND SEMANTICS
 
 MODULE API/RULES
 
-$(help_describe_files "$BAR_DIR"/* )
+$(help_describe_files ${modules[@]+"${modules[@]}"} )
 
 
 INITIAL INSTALLATION
@@ -1164,6 +1225,13 @@ function help_indexer
         if (candidate == "") {
           continue
         }
+        # Only a heading is a topic: an entry of a Functions:/Rules:/Variables: list is indented
+        # by six, and a one-line entry (no description below it) is isolated by blanks like a
+        # heading.  Recording it as a topic made a lookup of rad_cob jump to rad_cob_list, at a
+        # rank no entry can beat.
+        if (indentation[i] >= 6) {
+          continue
+        }
         if (candidate ~ /^[[:punct:]]/ || candidate ~ /[[:punct:]]$/) {
           continue
         }
@@ -1235,7 +1303,39 @@ function help_describe_functions
             out = out text "\n"
         }
 
+        function emit(name, infopart,    proto, desc, proto_desc) {
+            sub(/^[ \t]+/, "", infopart)
+            proto = infopart
+            desc = ""
+            split(infopart, proto_desc, " - ")
+            if (length(proto_desc) >= 2) {
+                proto = proto_desc[1]
+                desc = substr(infopart, length(proto) + 4)
+            } else {
+                # A leading block is prose unless it carries the prototype separator: then the
+                # whole line is the description and the name stands alone.
+                desc = infopart
+                proto = ""
+            }
+            printout()
+            if (proto != "") {
+                printout("      " name " " proto)
+            } else {
+                printout("      " name)
+            }
+            if (desc != "") {
+                printout("        " desc)
+            }
+        }
+
+    # A ## block at column 0 belongs to the function which follows it, the form a rule uses.
+        /^## / {
+            lead = lead (lead == "" ? "" : " ") substr($0, 4)
+            next
+        }
+
     /^function[ \t]+[A-Za-z_][A-Za-z0-9_]*[ \t]*##/ {
+            lead = ""
             split($0, parts, "##")
             if (length(parts) < 2) {
                 next
@@ -1272,12 +1372,23 @@ function help_describe_functions
             next
         }
 
+        lead != "" && /^function[ \t]+[A-Za-z_][A-Za-z0-9_]*[ \t]*$/ {
+            namepart = $0
+            sub(/^function[ \t]+/, "", namepart)
+            sub(/[ \t].*$/, "", namepart)
+            emit(namepart, lead)
+            lead = ""
+            next
+        }
+
         /^([ \t][ \t])+##[^#].*/ {
             line = $0
             sub(/^.*##[ ]?/, "", line)
             printout("        " line)
             next
         }
+
+        { lead = "" }
 
         END {
             if (out != "") {

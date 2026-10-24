@@ -11,7 +11,7 @@
 # writes against the live node, and the copy-on-write cases in `tests/test_rad_comment_metadata.sh`
 # (same fake-'rad' fixture shape, should one be wanted here too).
 #
-#   AC1  '-h' answers the usage on stdout, exit 0
+#   AC1  '-h' answers the builtin help on stdout, exit 0
 #   AC2  usage errors exit 2 and keep stdout empty (no positionals, '--from' without a value,
 #        an unknown flag, a missing target)
 #   AC3  a reaction the store would not accept is refused before any call, exit 2
@@ -54,7 +54,7 @@ run() {
 echo "AC1 '-h' answers the usage on stdout, exit 0"
 run -h
 check "$RC" 0 "'-h' exits 0"
-contains "$OUT" "usage: rad_reaction" "the usage goes to stdout"
+contains "$OUT" "rad_reaction [--from <emoji>] [--repo <rid|path>] <to> <target>.." "the builtin help goes to stdout"
 absent "$ERR" "usage:" "and nothing goes to stderr"
 run --help
 check "$RC" 0 "'--help' exits 0 too"
@@ -64,7 +64,7 @@ echo "AC2 usage errors exit 2 and keep stdout empty"
 run
 check "$RC" 2 "no positional is a usage error"
 absent "$OUT" "usage" "stdout stays empty"
-contains "$ERR" "usage: rad_reaction" "the usage is on stderr"
+contains "$ERR" "try 'bar usage rad_reaction'" "the help is pointed at, on stderr"
 run --from
 check "$RC" 2 "'--from' without a value is a usage error"
 run --from ":eyes:" ""
@@ -263,7 +263,7 @@ echo "AC6 '--state' usage errors exit 2 and keep stdout empty"
 run_state --state
 check "$SRC" 2 "'--state' without a target is a usage error"
 absent "$SOUT" "state item=" "stdout stays empty"
-contains "$SERR" "usage: rad_reaction" "the usage is on stderr"
+contains "$SERR" "try 'bar usage rad_reaction'" "the usage error points at the help"
 run_state --state --from "👀" "$S_ISSUE"
 check "$SRC" 2 "'--from' with '--state' is a usage error"
 contains "$SERR" "'--from'" "and the error names the flag"

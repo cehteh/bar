@@ -31,7 +31,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 BAR="$REPO_ROOT/bar"
 
 # the modules a throw-away project needs to run bar, the repertoire and the helper
-FIXTURE_MODULES="std_lib rule_lib tty_lib std_rules git_lib json_lib agent_rules helpers_rules radicle_lib rad rad_rules"
+FIXTURE_MODULES="std_lib rule_lib tty_lib std_rules git_lib json_lib agent_rules helpers_rules radicle_lib rad rad_rules usage help"
 
 failures=0
 pass() { echo "  ✓ $*"; }
@@ -498,7 +498,8 @@ check "$(jq -r '.select.state' <<<"$OUT")" "draft" "AC8: and names it"
 # --------------------------------------------------------------------------------------------
 run_bar_err rad_state --nonsense
 check "$RC" "2" "AC9: an unknown argument is a usage error"
-contains "$OUT" "usage:" "AC9: which says how to call it"
+contains "$OUT" "rad_state: invalid arguments" "AC9: which says what was wrong"
+contains "$OUT" "try 'bar usage rad_state'" "AC9: and where the help is"
 run_bar_err rad_state --max notanumber
 check "$RC" "2" "AC9: '--max' wants a number"
 run_bar_err rad_patches --state nonsense
@@ -507,10 +508,10 @@ run_bar_err rad_patches --author nonsense
 check "$RC" "2" "AC9: and '--author'"
 run_bar rad_state --help
 check "$RC" "0" "AC9: '--help' is not an error"
-contains "$OUT" "usage: bar rad_state" "AC9: and the usage is the answer, on stdout"
+contains "$OUT" "rad_state [--json] [--max <n>]" "AC9: and the builtin help is the answer, on stdout"
 run_bar rad_patches --help
 check "$RC" "0" "AC9: 'rad_patches --help' too"
-contains "$OUT" "bar rad_patches [--json]" "AC9: with the patches form of the usage"
+contains "$OUT" "rad_patches [--json] [--max <n>] [--state <open|draft|merged|archived|all>]" "AC9: with the patches form of the help"
 
 # --------------------------------------------------------------------------------------------
 # AC10  no git repository, no radicle repository

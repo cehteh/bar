@@ -462,6 +462,11 @@ MODULE API/RULES
 
   entr - Support for the entr file watcher
 
+    Functions:
+
+      entr_watch_git_index
+        Runs bar in a loop again whenever the git index gets changed. Takes a target rule and its parameters as argument. Defaults to 'MAIN'.
+
     Rules:
 
       is_entr_installed
@@ -595,6 +600,12 @@ MODULE API/RULES
   git_lib - Git support library
 
     Functions:
+
+      git_toplevel
+        Returns the path to the toplevel git repository.
+
+      git_bar
+        Returns the path to the bar that is initialized in the git toplevel. Fails when there is no bar initialized.
 
       git_dir Returns the absolute path to the 'GIT_DIR' (.git/).
         Note that this may be distinct from '$(git_toplevel)/.git/' when worktrees or other git
@@ -746,6 +757,22 @@ MODULE API/RULES
     Documentation says what a thing does and how to use it.  The reasoning behind it -- why it is
     written that way, what was measured -- belongs in single '#' source comments, which are not
     published.
+
+    Functions:
+
+      help_usage <name>
+        the builtin help of one rule, function or variable, without the whole documentation
+        'bar help <name>' renders every module before it picks the section asked for, which costs
+        seconds on an installation of this size.  This answers it from the one module the name can
+        live in, resolved the way 'rule_autoload' resolves it: 'always_', 'is_', 'has_' and 'try_'
+        are stripped, the word before the first '_' is the module, and '<module>', '<module>_lib'
+        and '<module>_rules' are the files read.
+        A name the narrowed list does not carry falls back to the full documentation (a helper
+        whose module the name does not derive, e.g. 'is_command_installed': 'command' is no
+        module), so the answer stays right and only its cost is that of 'bar help'.
+
+      help_usage_error <name> [reason]
+        a usage error on stderr: what was wrong, and the command which answers the help for name
 
     Rules:
 
@@ -1175,8 +1202,9 @@ MODULE API/RULES
         Streams every source once, appends every match to the full match list (bounded by
         HERMES_LOGS_Q_MAX), keeps the digest records (bounded by HERMES_LOGS_Q_LIMIT) and prints one
         of the three answers.  Returns the exit code of the module's contract.
-        Body of the 'hermes_logs' rule: parse the options into the query context, resolve the corpus
-        roots and hand over to 'hermes_logs_scan'.  See the module header for the contract.
+
+      hermes_logs [--grep <ere>] [-i|--ignore-case] [--since <when>] [--source <kind>].. [--task <sel>] [--session <id>] [--limit <n>] [--count] [--json] [--root <dir>]..
+        the match, range and count questions over the Hermes log corpus
 
       hermes_handoff_home - the Hermes home directory
         '$HERMES_HOME' when set, '~/.hermes' otherwise.  Resolved here and nowhere else so no path of
@@ -1247,8 +1275,6 @@ MODULE API/RULES
       hermes_handoff_json_records <record..>
         the US records as a JSON array of objects
 
-      hermes_handoff_usage - the usage text, on stderr
-
       hermes_handoff_brief_run <session> <db> <json> <goal> <context> <report_chars>
 
       hermes_handoff_anchors_json <session> <db> <limit> <matched> <printed> <full>
@@ -1260,8 +1286,9 @@ MODULE API/RULES
       hermes_handoff_verify_json <session> <db> <retrieval>
 
       hermes_handoff_verify_run <session> <db> <json>
-        Body of the 'hermes_handoff' rule: parse the options, pick the mode and hand over.  See the
-        'HANDOFF BRIEFS' section of the module header for the modes, the store and the exit codes.
+
+      hermes_handoff --goal <line> [--context <text>|--context-file <path>] [--anchor <phrase>].. [--gate <line>].. [--report-chars <n>] | --anchors <phrase>.. [--limit <n>] | --verify [--session <id>] [--db <path>] [--json]
+        the brief of a delegated child session, its resolved anchors, or whether a child could retrieve the session
 
     Rules:
 
@@ -1418,11 +1445,8 @@ MODULE API/RULES
 
       hermeskanban_runs_json <task-id> <status> <kind> <path> <branch> <title> <printed> <limit>
 
-      hermeskanban_help - the usage text, on stdout
-
-      hermeskanban_usage <message>
-        the failure report, on stderr
-        RULE_ARGS are the positional parameters of this function: the rule body passes them on.
+      hermeskanban [--json] [--board <slug>|--db <path>] [--status <s>[,<s>]..] [--assignee <name>] [--project <id|slug>] [--parent <task-id>] [--id <task-id>] [--limit <n>|--all] [--runs <task-id>]
+        the local Hermes Kanban board: the summary, the cards a filter selects, or the runs of one card
 
     Rules:
 
@@ -1445,6 +1469,9 @@ MODULE API/RULES
         rules of the local 'Barf' and vendors every module they (transitively) require from the
         installation bar was run from.  Run it again after the Barf grew a dependency to pick up
         the modules it now needs.
+
+      init_update_merge_barf
+        Since the Barf is the users configuration we can't just update it this 'a bit mouthful' rule will do a merge of the local './Barf' with the shipped 'Barf.default'.  This will leave conflicts which have to be manually resolved. This is only useful when the shipped when 'Barf' was not or only slightly edited.
 
       init_install [prefix]
         install links in [prefix] or '~/.local'.
@@ -1737,7 +1764,8 @@ MODULE API/RULES
                                                              ask the pending patches of a branch to
                                                              re-cut themselves after a merge landed
     
-    Every helper answers '-h' or '--help' with its usage on stdout and exit 0.
+    Every helper answers '-h' or '--help' with the builtin help of its rule on stdout and exit 0
+    ('bar usage <name>'), and a refused argument with what was wrong on stderr and exit 2.
     
     'rad_state' answers the questions an agent asks before it touches a radicle repository: which
     repository is this (RID, name, path), which identity does 'rad' use here, how the patches stand
@@ -2085,26 +2113,87 @@ MODULE API/RULES
     Functions:
 
       rad_import import a git repository into radicle
+
+      rad_state_charwise
+        - 0 when this shell counts characters, which reading rad's tables needs
         'rad' pads the cells of its tables by character, so the columns can only be cut at the same
         offsets when the shell measures the same way.  That is the case in a UTF-8 locale, which bar
         exports whenever the system has one; in a byte locale a cell holding a non ASCII character
         shifts everything behind it and 'rad_state' says so instead of reporting it wrongly.
         (A double width character -- CJK, emoji -- is one column to a character wise shell and two
         to rad: such a title would shift the columns of its row too.)
+
+      rad_state_ids <table>
+        the ids of the rows of a 'rad' table, one per line
         A state filter is answered with a table of the same shape and only the ids are taken from
         it.  An empty result is 'Nothing to show.' or nothing at all -- that is no id, not an
         error; box drawing characters without a header to cut by are an error (return 1).
+
+      rad_state_has_id <newline separated ids> <id>
+        0 when <id> is one of them
+
+      rad_state_ids_checked <ids> <description> <table>
+        as 'rad_state_ids', but a table it cannot cut is a diagnostic
+
+      rad_state_table_checked <description> <table> <column>..
+        as 'rad_table', but a table it cannot cut is a diagnostic
         'Nothing to show.' and nothing at all are no rows, not an error; box drawing characters
         without a header to cut by are.
+
+      rad_state_author <cell>
+        an author cell of a table as one name ('<author>  (you)' -> '<author>')
+
+      rad_state_collect
+        - collect the whole state into the 'RAD_STATE_*' variables
           patch  id state own author head title updated created kind
           issue  id state own author labels assignees title updated created kind
           branch name commit ahead patch
         Returns 3 when there is no repository to report on (a radicle repository is a git
         repository with a radicle identity), 1 when rad failed or its output was not understood.
+
+      rad_state_cut <shown> <total>
+        the elision of a cut section, nothing when every item is shown
+
+      rad_state_complete_file
+        - where the complete text of this run is written, see 'rad_state_complete_note'
+
+      rad_state_complete_note <file>
+        say where the complete text went, after a section was cut
+
+      rad_state_text_patches <max> [<state> [<author>]]
+        the patch section as text
         the author of a patch of ours is us, naming it again would only repeat the identity
         line; for the others it says who to talk to
-        'rad_state_usage' reports to stderr for a usage error; as the answer to '--help' the
-        same text is the output, so its stream is folded over.
+
+      rad_state_text_issues <max>
+        the issue section as text
+
+      rad_state_text_branches <max>
+        the branch section as text
+
+      rad_state_text_head
+        - the repository, identity and head lines of the text form
+
+      rad_state_text <max>
+        the whole state as text, at most <max> items per section
+
+      rad_state_json_patches <state> <author>
+        the selected patches as one JSON object
+
+      rad_state_json_issues
+        - the issues as one JSON object
+
+      rad_state_json_branches
+        - the local branches as one JSON object
+
+      rad_state_json <state> <author>
+        the complete state as one JSON object
+
+      rad_state [--json] [--max <n>]
+        the radicle state of this checkout in one invocation
+
+      rad_patches [--json] [--max <n>] [--state <open|draft|merged|archived|all>] [--author <ours|other|all>]
+        the patches of this checkout, by state and by author
 
       rad_classes - the branch classes bar defines, one '<class>-' prefix per line
         Read from the 'is_git_*_branch' rules of the git module, so the vocabulary has one source of
@@ -2119,33 +2208,46 @@ MODULE API/RULES
       rad_trust_ground_known <name>
         0 when <name> is one of the grounds
 
-      rad_trust_usage [reason]
-        usage on stderr
+      rad_trust_store <repo>
+        the repository and the node storage of it, in RAD_TRUST_RID/RAD_TRUST_STORAGE
         Which repository, and where its COBs are: every ground which is a fact about the node's own copy
         ('owner', 'opened', 'assigned') and a relative threshold need it -- the two facts the fact tool
         answers do not, and resolving it costs a 'rad' invocation, so it happens only when a ground asks
         for it.  A repository the node does not hold is *could not answer* (2): nothing about it can be
         established, not even 'false'.
+
+      rad_trust_owner_nid <storage>
+        the NID of the identity which established the repository
         The 'owner' ground.  Radicle has no owner field: a repository belongs to its delegates and the
         identity document (payload, delegates, threshold) names no single owner.  The one identity a
         'whose repository is this' question can be answered with is the identity that *established* it:
         the author of the initial revision of the identity document, which is the one 'rad init' gave
         the project to.  An identity document which is not there, or which has no history, answers
         nothing -- the ground is 'false' then, never an error.
+
+      rad_trust_total_authored <storage>
+        the commits every radicle identity authored in this repository
         The denominator of a relative threshold: the commits authored as *some* identity
         ('<alias>@<NID>'), counted over all refs of the node's copy the same way the fact tool counts the
         author's own -- which is what lets one setting ('10%') mean the same in a big and in a small
         repository.  A count, never a failure: no commits means zero.
+
+      rad_trust_item_ref <storage> <id> <type>
+        the COB of the item, in RAD_TRUST_ITEM_REF
         The item the 'opened' and 'assigned' grounds are about, by its id (short or full) and of the type
         the caller named.  An id the node does not hold, or one which is the other type, is the caller's
         error and not 'false': a caller asking about an item this node cannot show cannot act on a no.
+
+      rad_trust_item_nid <storage> <ref> <type>
+        the NID of the identity which opened the item
         The item's author is the author of the op which *created* it.  A COB is chained onto the identity
         commits -- and a patch COB onto the patch's own commits -- so the create op is found by its
         subject ('Create issue'/'Create patch') and confirmed by the manifest next to it, which names the
         item type: a foreign op in the same chain is not the create op, and an op whose manifest says
         otherwise is skipped rather than believed.
 
-      rad_trust see the module header
+      rad_trust --repo <rid|path> --author <did|nid|alias> [--issue <id>|--patch <id>] [--grounds <ground,..>] [--threshold <n|n%>] [--dump] [--json] [--second-party]
+        the trust verdict of the triage policy
         Which grounds are asked for: the named ones, or -- with no '--grounds' -- the rule this helper
         has always answered (a delegate, or the authored commits reaching the threshold).  '--dump'
         means all of them, and evaluates nothing.
@@ -2171,25 +2273,55 @@ MODULE API/RULES
         The verdict: the first ground which holds **in the order the caller listed them**, so a caller
         lists its grounds in the order it wants them reported.
 
-      rad_identity_usage [reason]
-        usage on stderr
+      rad_identity_store <repo>
+        the repository and the node storage which holds it, in RAD_IDENTITY_RID, _STORAGE and _TOPLEVEL (the checkout, empty when the caller is not in one)
         Everything below is read from the node's own copy: the identity document, the ops and the
         namespaces all live in the storage, so this resolves which repository and nothing else.
         A RID names the repository, so the checkout is wherever this runs: it is only ever read
         for the author line of a commit the store does not hold, and that line proves nothing.
+
+      rad_identity_doc <storage>
+        the accepted identity document: RAD_IDENTITY_OP (its revision op), _OBJECT (the COB it belongs to), _DELEGATES (one DID per line) and _DOC_THRESHOLD; 1 when the store carries none
         The document is an op whose payload blob is the revision: 'delegates' and 'threshold' are read
         from the blob, the op and the COB from the store.  The canonical 'refs/rad/id' is the accepted
         revision; a copy which carries the identity only under its namespaces answers from there.
+
+      rad_identity_authors_pass <storage> <glob>
+        one pass of the author map over the ops of the refs matching <glob>; an identity an earlier pass answered is never overwritten, so the identity COB wins over a comment
+
+      rad_identity_authors <storage>
+        the author lines of every op the store carries: RAD_IDENTITY_MAIL (mail -> name), _SOURCE (nid -> the op its alias was read from) and _SOURCE_MAIL (nid -> its mail)
         An op is authored '<alias> <alias>@<nid>' and signed with that identity's key -- the author
         line is the only place a repository records which git authors an identity uses, so the map is
         built from ops and from nothing else 'git log' would report about a branch.  The identity COB
         is read first, so 'the op the alias was read from' is the document itself whenever the identity
         authored one of its revisions.
+
+      rad_identity_is_op <storage> <sha>
+        0 when that commit is a radicle op: its tree carries the manifest which names the COB type, which no branch commit of a checkout does
         The shape, never the reachability: a patch COB is chained onto the commits the patch was cut
         from, so 'some COB ref reaches this commit' is true of a branch commit as well and would
         report an ordinary commit as an op -- and an op signed by the identity which wrote it.
+
+      rad_identity_nid <value>
+        the bare NID of a DID, a NID or an alias; 1 when nothing in this repository names it, 2 when an alias does and more than one identity answers to it
         An alias is not unique: it is the display name two identities may both use, so the matches are
         counted and an ambiguous one is refused rather than resolved by the hash order of the map.
+
+      rad_identity_facts <nid>
+        one identity, in RAD_IDENTITY_ALIAS, _ALIAS_SOURCE, _DELEGATE, _THRESHOLD and _GIT_AUTHORS ('<mail>\t<name>' per line, the author lines the store carries for it)
+
+      rad_identity_text <nid>
+        one identity as one 'identity …' line
+
+      rad_identity_json_identity <nid>
+        one identity as one JSON object
+
+      rad_identity_json_commit
+        - the commit answer as one JSON object, from RAD_IDENTITY_VERIFIED, _HOW, _NID, _COB, _AUTHOR_*, _REASON (the identity document is the same op the identity answers name)
+
+      rad_identity_commit <storage> <sha>
+        whether that commit can be tied to an identity, in RAD_IDENTITY_VERIFIED ('yes'/'no'), _HOW ('identity', 'namespace' or empty), _NID, _COB, _AUTHOR_NAME/_AUTHOR_MAIL and _REASON; 0 verified, 1 not verified
         Two ways a commit is tied to an identity, and a name is neither of them: it is an op the store
         accepted ('identity' -- 'rad' verified the payload signature against the author's key), or it
         is published in that identity's namespace ('namespace' -- the node takes a ref there only from
@@ -2199,7 +2331,8 @@ MODULE API/RULES
         Not in the store: the author line comes from the caller's own checkout, for the reason --
         and it stays an unauthenticated name, which is what the answer says.
 
-      rad_identity see the module header
+      rad_identity --repo <rid|path> [--did <did|nid|alias>] [--commit <sha>] [--json]
+        the identities this repository delegates to, and whether a commit can be tied to one
 
       rad_metadata_nid <did-or-nid>
         the bare NID of an identity
@@ -2318,14 +2451,15 @@ MODULE API/RULES
         the form the radicle tools want ('rad issue assign --add <DID>'), the same one the text
         output prints: a consumer must never have to re-normalize them.
 
-      rad_comment_metadata_usage [reason]
-        usage on stderr
+      rad_metadata_store <name> <rid|path>
+        the repository and the node storage of it, in the 'RAD_METADATA_*' variables
         Which repository: an explicit one (RID, or a path entered to ask that checkout), else the one
         this runs in.  Sets 'RAD_METADATA_RID' and 'RAD_METADATA_STORAGE'.  '<name>' is the caller,
         only for its diagnostics -- 'not a repository here' and 'the node holds no storage' are not
         the same answer for the operator, and neither is a usage error.
 
-      rad_comment_metadata see the module header
+      rad_comment_metadata <item> [--query <label|rmlabel|assign|unassign>].. [--repo <rid|path>] [--trust <spec>].. [--last] [--json]
+        the trusted proposals an item's comments carry
         the one item the question is about (the only positional argument there is)
         The trust specs are validated before anything is read: a usage error is not worth a node
         lookup, and it has to be reported the same way whether or not the node holds the repository.
@@ -2367,12 +2501,12 @@ MODULE API/RULES
         is what the item carries, and the applier knows what it has to delete from it.  This is *not*
         how the chain state is read -- a label written after a proposal is stale -- it is a different
         question ('what is there' against 'what was proposed').
+
+      rad_metadata_item <item>
+        the 'rad' word and the id of an item as the reader answers it
         '<type>:<id>' is the form 'rad_comment_metadata' answers with, so it is the form the appliers
         take; a bare id is an issue, which is the common case (labels and assignments are mostly issue
         business, and the read side names the type anyway).
-
-      rad_set_label_usage [reason]
-        usage on stderr
 
       rad_set_label <item> [<add>] [<delete>].. [--repo <rid|path>]
         one 'rad <type> label'
@@ -2382,9 +2516,6 @@ MODULE API/RULES
         chain slot with no successor) is the same write with nothing to add, and at least one of the
         two has to be given.  A label the item does not carry is rad's business, not this function's
         -- it hands rad exactly what it was given and reports what it did.
-
-      rad_rm_label_usage [reason]
-        usage on stderr
 
       rad_rm_label <item> <glob>.. [--repo <rid|path>]
         remove the labels a glob matches
@@ -2396,8 +2527,8 @@ MODULE API/RULES
         nothing to remove is an answer, not a failure.  No identity is resolved -- a glob matches
         labels, never identities.
 
-      rad_assign_usage [reason]
-        usage on stderr
+      rad_metadata_assign <item> <did|alias> [--repo <rid|path>]
+        one 'rad <type> assign' add or delete
 
       rad_assign <item> <did|alias> [--repo <rid|path>]
         one 'rad <type> assign --add'
@@ -2447,10 +2578,8 @@ MODULE API/RULES
         Nothing to add and nothing to fix: what is left is the slot's own replacement, a removal
         alone, which the write layer takes as an add-less call.
 
-      rad_apply_from_comments_usage [reason]
-        usage on stderr
-
-      rad_apply_from_comments see the module header
+      rad_apply_from_comments <item>.. [--query <key>].. [--repo <rid|path>] [--trust <spec>].. [--dry-run]
+        apply the newest trusted block per key, as one write per entry
         The maintenance side of the reader: it asks 'rad_comment_metadata' for the trusted proposals
         of an item ('--last', which is the state; a block a later one superseded is history) and
         dispatches every entry to the applier of its key.  The reader owns the trust decision -- an
@@ -2528,10 +2657,8 @@ MODULE API/RULES
         The state of that target, as the store reduces it: the first line names what the target
         really is, the lines after it are the live markers of ours.
 
-      rad_reaction_usage [reason]
-        usage on stderr
-
-      rad_reaction see the module header
+      rad_reaction [--from <emoji>] [--repo <rid|path>] <to> <target>.. | <from> <to> <target>.. | --state [--json] [--repo <rid|path>] <target>..
+        one of our reaction markers set, transitioned or withdrawn against the state the caller expects, or '--state' reporting the live ones
         Compare and swap on the caller's *own* reaction state: one target, one marker, and the write
         happens only when what the caller expects is what the store reduces.
         '--state' reports, it does not compare: it takes no '<to>' and no '<from>', and every
@@ -2545,13 +2672,11 @@ MODULE API/RULES
         ('--from "✅ ❓"') is refused here -- it is no state a single step could both expect and resolve
         -- and the one marker is checked against the same allow list as '<to>' before any call.
 
-      rad_topic_usage [reason]
-        usage on stderr
-
       rad_topic_json <root> <name> <path> <base> <head> <fetched>
         one object
 
-      rad_topic see the module header
+      rad_topic <class> <description> [--root <clone>] [--base <ref>] [--no-fetch] [--dry-run] [--json]
+        open the topic tree of an incoming item
         Body of the 'rad_topic' rule.  Nothing is created before the class, the name, the clone,
         the base and the collisions have all been resolved, so a refusal leaves no half-made tree.
         The clone: always the *main* checkout, also when the caller sits inside a topic tree.
@@ -2559,9 +2684,6 @@ MODULE API/RULES
         tip would drop everything this host has not published yet.  The remote is fetched first to
         *know* the relation; a trunk which is behind upstream is refused, because updating the trunk
         is its own step with its own gate.
-
-      rad_merge_usage [reason]
-        usage on stderr
 
       rad_merge_delegate <rid> <nid>
         0 when that identity is a delegate of the repository
@@ -2622,16 +2744,14 @@ MODULE API/RULES
         revision it is about.  Once per head revision, not once per run: when our own newest comment
         already says exactly that, the patch was reported before and nothing is appended again.
 
-      rad_merge_accepted_prs see the module header
+      rad_merge_accepted_prs [--dry-run] [--no-fetch] [--max <n>] [--json]
+        merge the patches a delegate accepted and which merge cleanly into their target branch
         There is no '--repo': the checkout it is run from is the repository, and its canonical
         branch is the one the patches are merged into.
         Oldest first: an older topic has waited longest, and a merge into the same branch moves the
         base under every younger one anyway.
         Whether it merges at all is read in both modes -- that is the answer a dry run owes,
         and it writes nothing to find out.
-
-      rad_cob_usage [reason]
-        usage on stderr
 
       rad_cob_call <args>..
         one 'rad' invocation, its answer (both streams) and its status
@@ -2709,12 +2829,10 @@ MODULE API/RULES
         An empty answer is no line at all, never a blank one: a consumer reads zero records as
         "nothing moved".
 
-      rad_cob see the module header
+      rad_cob list [--repo <rid|path>] [--type <type>].. | ops|document --repo <rid|path> --type <type> --object <cob> [--from <op>] [--until <op>] [--bodies] | state [--repo <rid|path>] [--type <type>].. [--since <cob>:<op>]..
+        the COB store as one interface, one verb per question
         Every verb's answer is a JSON object -- including the one that names a failure -- so jq is a
         dependency of the family, checked once, before a verb spends a call on the store.
-
-      rad_rebase_ask_usage [reason]
-        usage on stderr
 
       rad_rebase_show_field <show> <field>
         one header value of 'rad patch show'
@@ -2733,7 +2851,8 @@ MODULE API/RULES
         and a read that trusted the text would call a spent '*trigger:rebase' live and never ask that
         patch again.  Walked newest first, so a redaction is always read before the comment it removes.
 
-      rad_rebase_ask see the module header
+      rad_rebase_ask [--after <patch>] [--branch <branch>] [--onto <sha>] [--dry-run] [--no-fetch] [--json]
+        ask the pending patches of a branch to re-cut themselves after a merge landed
         The branch: what the merge landed on, never a guess.  '--after' asks the merged patch itself
         (rad resolves its upstream, else the repository's default branch), '--branch' names it
         outright, and with neither it is the default branch the node's storage points at -- a
@@ -3093,6 +3212,9 @@ MODULE API/RULES
 
     Functions:
 
+      release_is_patch
+        checks whenever the current worktrees release is a patch release
+
       release_state_matches [[!]statematch]
         Check if the current state matches (does not match with '!').
 
@@ -3101,8 +3223,26 @@ MODULE API/RULES
         We prepare releases in dedicated worktrees. This would leave a lot worktrees behind.
         This provides the facility to coalesce worktrees to keep only major, majorpre1x, or majorminor versions.
 
+      release_into_major
+        Transfer over to major version, for workflows that keep 'release-x' worktrees and branches
+
+      release_into_majorpre1x
+        Transfer over to major version with 0.x major semantic, for workflows that keep 'release-0.x' and 'release-x' worktrees and branches
+
+      release_into_majorminor
+        Transfer over to major.minor version, for workflows that keep 'release-x.y' worktrees and branches
+
       release_worktree_rename <version>
         rename worktree and cd into that
+
+      release_worktree_rename_major
+        Rename worktree to'release-x' with major version only.
+
+      release_worktree_rename_majorpre1x
+        Rename worktree to'release-x[.y]' with 0.x major semantic.
+
+      release_worktree_rename_majorminor
+        Rename worktree to 'release-x.y' with major.minor.
 
     Rules:
 
@@ -3742,6 +3882,9 @@ MODULE API/RULES
       -h
         Show help.
 
+      usage <name>
+        the builtin help of one rule, function or variable, without the whole documentation
+
       --debug [rule] [args]
         Evaluate a rule with at debug level.
 
@@ -3783,6 +3926,9 @@ MODULE API/RULES
         Path to the previous testdir if exits.
 
     Functions:
+
+      is_testdir_used
+        Succeeds when a testdir is in use and current working directory is inside it.
 
       testdir_gc Cleanup old testdirs.
         Removed old unused testdirs. This is called automatically. It is only necessary to

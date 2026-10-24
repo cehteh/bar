@@ -30,7 +30,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 BAR="$REPO_ROOT/bar"
 
 # the modules a throw-away project needs to run bar and the helper
-FIXTURE_MODULES="std_lib rule_lib tty_lib std_rules git_lib json_lib agent_rules helpers_rules radicle_lib rad rad_rules"
+FIXTURE_MODULES="std_lib rule_lib tty_lib std_rules git_lib json_lib agent_rules helpers_rules radicle_lib rad rad_rules usage help"
 
 failures=0
 pass() { echo "  ✓ $*"; }
@@ -225,7 +225,7 @@ table_open ddddddd ccccccc bbbbbbb aaaaaaa
 # --------------------------------------------------------------------------------------------
 run -h
 check "$RC" 0 "AC1: '-h' exits 0"
-contains "$OUT" "usage: rad_merge_accepted_prs" "AC1: the usage goes to stdout"
+contains "$OUT" "rad_merge_accepted_prs [--dry-run] [--no-fetch] [--max <n>] [--json]" "AC1: the builtin help goes to stdout"
 absent "$ERR" "usage:" "AC1: and nothing goes to stderr"
 run --help
 check "$RC" 0 "AC1: '--help' exits 0 too"

@@ -31,7 +31,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 BAR="$REPO_ROOT/bar"
 
 # the modules a throw-away project needs to run bar, the repertoire and the helper
-FIXTURE_MODULES="std_lib rule_lib tty_lib std_rules git_lib json_lib agent_rules helpers_rules radicle_lib rad rad_rules"
+FIXTURE_MODULES="std_lib rule_lib tty_lib std_rules git_lib json_lib agent_rules helpers_rules radicle_lib rad rad_rules usage help"
 
 failures=0
 pass() { echo "  ✓ $*"; }
@@ -272,14 +272,14 @@ check "$RC" 2 "'--did' and '--commit' together are a usage error"
 run "$PROJECT" rad_identity --repo "$RID" --nonsense
 check "$RC" 2 "an unknown option is a usage error"
 err "$PROJECT" rad_identity --repo "$RID"
-absent "$OUT" "usage:" "a working call says nothing on stderr"
+absent "$OUT" "try 'bar usage" "a working call says nothing on stderr"
 run "$PROJECT" rad_identity --repo "rad:zIdentityTestUnheld00000000000000"
 check "$RC" 3 "a repository the node does not hold exits 3"
 run "$PROJECT" rad_identity --repo "$EMPTY_RID"
 check "$RC" 3 "a storage without an identity document exits 3"
 run "$PROJECT" rad_identity --repo "$RID" --help
 check "$RC" 0 "'--help' answers with the usage"
-contains "$OUT" "usage: rad_identity" "…on stdout"
+contains "$OUT" "rad_identity --repo <rid|path> [--did <did|nid|alias>] [--commit <sha>] [--json]" "…on stdout"
 echo
 
 echo "AC9 the helper is registered"

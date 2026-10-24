@@ -41,7 +41,7 @@
 
 # helper-module: hermeskanban
 
-require json_lib
+require json_lib help
 
 # --- board resolution ---------------------------------------------------------------------------
 
@@ -731,48 +731,11 @@ function hermeskanban_runs_json ## <task-id> <status> <kind> <path> <branch> <ti
     printf '%s\n' "$out"
 }
 
-# --- usage --------------------------------------------------------------------------------------
-
-function hermeskanban_help ## - the usage text, on stdout
-{
-    cat <<'HERMESKANBAN_USAGE'
-usage: hermeskanban [--json] [--board <slug>|--db <path>] [<selector>..] [--limit <n>|--all]
-       hermeskanban --runs <task-id> [--json] [--limit <n>]
-
-  no selector          the summary: counts by status, the waiting totals (ready, blocked,
-                       scheduled), the age of the oldest ready card, the number of live runs
-  --status <s>[,<s>]   cards in those statuses (triage, todo, scheduled, ready, running,
-                       blocked, review, done, archived)
-  --assignee <name>    cards assigned to those profiles [,] separated
-  --project <id|slug>  cards linked to that project (the slug is resolved via projects.db)
-  --parent <task-id>   the children of one card
-  --id <task-id>       one card, or several [,] separated
-  --runs <task-id>     the runs of one card instead of a listing
-  --limit <n>          print at most n records (0 = all; default 50, 20 for --runs)
-  --all                same as '--limit 0'
-  --json               one JSON object with the same numbers as the text form
-  --board <slug>, --db <path>
-                       read another board (default: this caller's board)
-
-exit codes: 0 answered, 2 usage error (an option without a value, or with an empty one),
-            3 board unreadable, 4 no such card
-HERMESKANBAN_USAGE
-}
-
-function hermeskanban_usage ## <message> - the failure report, on stderr
-{
-    printf 'hermeskanban: %s\n' "$1" >&2
-    printf "usage: hermeskanban [--json] [--status <s>[,<s>]..] [--assignee <n>] [--project <id|slug>] \
-[--parent <task-id>] [--id <task-id>] [--limit <n>|--all] [--board <slug>|--db <path>]\n" >&2
-    printf '       hermeskanban --runs <task-id> [--json]\n' >&2
-    printf "       hermeskanban --help\n" >&2
-}
-
 # --- the rule -----------------------------------------------------------------------------------
 
-function hermeskanban
+function hermeskanban ## [--json] [--board <slug>|--db <path>] [--status <s>[,<s>]..] [--assignee <name>] [--project <id|slug>] [--parent <task-id>] [--id <task-id>] [--limit <n>|--all] [--runs <task-id>] - the local Hermes Kanban board: the summary, the cards a filter selects, or the runs of one card
 {
-    ## RULE_ARGS are the positional parameters of this function: the rule body passes them on.
+    # RULE_ARGS are the positional parameters of this function: the rule body passes them on.
     local -a args=()
     local raw arg
     local json="" db="" board="" runs_id="" limit=""
@@ -795,18 +758,18 @@ function hermeskanban
         i=$(( i + 1 ))
         case "$arg" in
         -h | --help)
-            hermeskanban_help
+            help_usage hermeskanban
             return 0
             ;;
         --json) json=1 ;;
         --all) limit=0 ;;
         --status | --assignee | --project | --parent | --id | --runs | --limit | --db | --board)
             if (( i >= count )); then
-                hermeskanban_usage "'$arg' needs a value"
+                help_usage_error hermeskanban "'$arg' needs a value"
                 return 2
             fi
             if [[ -z "${args[i]}" ]]; then
-                hermeskanban_usage "'$arg' needs a non-empty value"
+                help_usage_error hermeskanban "'$arg' needs a non-empty value"
                 return 2
             fi
             case "$arg" in
@@ -823,7 +786,7 @@ function hermeskanban
             i=$(( i + 1 ))
             ;;
         *)
-            hermeskanban_usage "unknown argument '$arg'"
+            help_usage_error hermeskanban "unknown argument '$arg'"
             return 2
             ;;
         esac
@@ -831,16 +794,16 @@ function hermeskanban
 
     [[ -n "${BAR_AGENT_JSON:-}" ]] && json=1
     if [[ -n "$limit" && ! "$limit" =~ ^[0-9]+$ ]]; then
-        hermeskanban_usage "invalid --limit '$limit', want a non-negative number"
+        help_usage_error hermeskanban "invalid --limit '$limit', want a non-negative number"
         return 2
     fi
     if [[ -n "$board" && ! "$board" =~ ^[a-z0-9][a-z0-9_-]*$ ]]; then
-        hermeskanban_usage "invalid --board '$board'"
+        help_usage_error hermeskanban "invalid --board '$board'"
         return 2
     fi
     if [[ -n "$runs_id" ]] && (( ${#status[@]} + ${#assignee[@]} + ${#projects[@]} + \
         ${#parents[@]} + ${#ids[@]} > 0 )); then
-        hermeskanban_usage "'--runs' takes no card selector"
+        help_usage_error hermeskanban "'--runs' takes no card selector"
         return 2
     fi
 

@@ -256,7 +256,7 @@ else
     fail "AC10 'bar helpers --check' rejects the module"
 fi
 USAGE="$( ( cd "$REPO_ROOT" && "$BAR" rad_cob state -h 2>&1 ) || true )"
-contains "$USAGE" "rad_cob state" "AC10 the usage names the state verb"
+contains "$USAGE" "state [--repo <rid|path>]" "AC10 the help names the state verb"
 contains "$USAGE" "--since <cob>:<op>" "AC10 the usage names --since"
 
 echo

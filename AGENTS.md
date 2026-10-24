@@ -39,6 +39,12 @@ is read on every turn. Architecture, examples and the full command reference are
 - User documentation is terse: a summary line saying what the rule or function does, its arguments in
   the grammar above rather than in prose, one short sentence per mode. Assume the reader knows the
   mechanics bar wraps — no detail explanations, no justifications, no implementation rationale.
+- A rule documents its own arguments on its `##` line and carries no usage text: `bar usage <name>`
+  prints that block without assembling the whole documentation (the module is derived the way the
+  autoloader derives it — `always_`/`is_`/`has_`/`try_` stripped, the word before the first `_`), so
+  `bar usage rad_trust` is what a caller is told to read. `-h`/`--help` calls `usage <name>` and
+  returns 0; a refused argument calls `usage_error <name> "<what was wrong>"` and returns 2 (both from
+  `Bar.d/usage`). Never restate an invocation in a `printf`.
 - Read `Bar.d/help` (or the generated `README`) before writing a rule.
 
 ## Rules and modules

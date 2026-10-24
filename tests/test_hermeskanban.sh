@@ -473,7 +473,8 @@ check "$RC" "2" "AC8: an invalid board slug exits 2"
 kanban --runs t_run_a --status ready
 check "$RC" "2" "AC8: '--runs' with a selector exits 2"
 hermeskanban_err --nonsense
-contains "$OUT" "usage: hermeskanban" "AC8: the usage goes to stderr"
+contains "$OUT" "hermeskanban: unknown argument '--nonsense'" "AC8: what was wrong goes to stderr"
+contains "$OUT" "try 'bar usage hermeskanban'" "AC8: and where the help is"
 
 kanban --db "$WORK/does-not-exist.db"
 check "$RC" "3" "AC8: a missing database exits 3"
@@ -494,7 +495,7 @@ contains "$OUT" "no card t_no_such_card on board default" "AC8: and names the ca
 
 kanban --help
 check "$RC" "0" "AC8: '--help' exits 0"
-contains "$OUT" "usage: hermeskanban" "AC8: and prints the usage on stdout"
+contains "$OUT" "hermeskanban [--json] [--board <slug>|--db <path>]" "AC8: and prints the builtin help on stdout"
 
 # --------------------------------------------------------------------------------------------
 # AC9  the board is resolved like the kernel resolves it

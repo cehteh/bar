@@ -40,7 +40,7 @@ BAR="$REPO_ROOT/bar"
 
 # the modules a throw-away project needs to run bar and the helpers under test ('git' is read for
 # the branch classes, 'agent_rules' supplies the '--json' rule of 'bar --json <rule>')
-FIXTURE_MODULES="std_lib rule_lib tty_lib std_rules git git_lib json_lib agent_rules helpers_rules radicle_lib rad"
+FIXTURE_MODULES="std_lib rule_lib tty_lib std_rules git git_lib json_lib agent_rules helpers_rules radicle_lib rad usage help"
 
 failures=0
 pass() { echo "  ✓ $*"; }
@@ -217,13 +217,14 @@ echo "--- AC4 usage errors and a missing tool ---"
 run_bar "$TRUST" rad_trust
 check "$RC" "2" "no arguments is a usage error"
 check "$OUT" "" "stdout stays empty"
-contains "$ERR" "usage: rad_trust" "the usage goes to stderr"
+contains "$ERR" "rad_trust: both --repo and --author are required" "what is missing goes to stderr"
+contains "$ERR" "try 'bar usage rad_trust'" "and where the help is"
 run_bar "$TRUST" rad_trust --help
 check "$RC" "0" "'--help' is not an error"
-contains "$OUT" "usage: rad_trust" "and the usage is the answer, on stdout"
+contains "$OUT" "rad_trust --repo <rid|path> --author <did|nid|alias>" "and the builtin help is the answer, on stdout"
 run_bar "$TRUST" rad_topic --help
 check "$RC" "0" "and 'rad_topic --help' answers outside a repository too"
-contains "$OUT" "usage: rad_topic" "with its own usage"
+contains "$OUT" "rad_topic <class> <description>" "with its own help"
 run_bar "$TRUST" rad_trust --repo rad:zTEST --author x --threshold nope
 check "$RC" "2" "a non-numeric threshold is a usage error"
 run_bar "$TRUST" rad_trust --repo rad:zTEST --author x --frobnicate

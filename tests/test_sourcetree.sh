@@ -31,7 +31,7 @@ BAR="$REPO_ROOT/bar"
 
 # the modules a throw-away project needs to run bar, the helper and the repertoire guard
 # (agent_rules supplies the '--json' rule of 'bar --json <rule>')
-FIXTURE_MODULES="std_lib rule_lib tty_lib std_rules git_lib json_lib agent_rules helpers_rules sourcetree"
+FIXTURE_MODULES="std_lib rule_lib tty_lib std_rules git_lib json_lib agent_rules helpers_rules sourcetree usage help"
 
 failures=0
 pass() { echo "  ✓ $*"; }
@@ -234,7 +234,7 @@ run_bar_env "$PROJ" "BAR_SOURCE_ROOT=" sourcetree_state
 check "$RC" "2" "AC5: with neither the argument nor '\$BAR_SOURCE_ROOT' it is a usage error"
 check "$OUT" "" "AC5: and nothing is printed on stdout"
 run_bar_env_err "$PROJ" "BAR_SOURCE_ROOT=" sourcetree_state
-contains "$OUT" "usage: bar sourcetree_state [--json] [<root>]" "AC5: the usage goes to stderr"
+contains "$OUT" "try 'bar usage sourcetree_state'" "AC5: and where its help is"
 contains "$OUT" "BAR_SOURCE_ROOT" "AC5: and the reason names the environment variable"
 run_bar_env "$PROJ" "BAR_SOURCE_ROOT=$ROOT" sourcetree_state
 check "$RC" "0" "AC5: the root may come from '\$BAR_SOURCE_ROOT' instead"
@@ -387,7 +387,7 @@ run_bar "$PROJ" sourcetree_state --nonsense
 check "$RC" "2" "AC11: an unknown argument exits 2"
 check "$OUT" "" "AC11: an unknown argument prints nothing on stdout"
 run_bar_err "$PROJ" sourcetree_state --nonsense
-contains "$OUT" "usage: bar sourcetree_state [--json] [<root>]" "AC11: the usage goes to stderr"
+contains "$OUT" "sourcetree_state: unknown option '--nonsense'" "AC11: what was wrong goes to stderr"
 run_bar "$PROJ" sourcetree_state "$ROOT" "$ROOT"
 check "$RC" "2" "AC11: a second root is a usage error"
 check "$OUT" "" "AC11: and prints nothing on stdout"
