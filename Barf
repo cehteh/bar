@@ -68,6 +68,7 @@ rule tests: test_rad_cob test_rad_cob_state
 rule tests: test_rad_comment_metadata test_rad_identity
 rule tests: test_rad_flow
 rule tests: test_rad_merge_accepted_prs
+rule tests: test_rad_reaction
 rule tests: test_rad_state
 rule tests: test_report_condense
 rule tests: test_sourcetree
@@ -102,6 +103,7 @@ rule test_rad_comment_metadata: -- tests/test_rad_comment_metadata.sh
 rule test_rad_identity: -- tests/test_rad_identity.sh
 rule test_rad_flow: -- tests/test_rad_flow.sh
 rule test_rad_merge_accepted_prs: -- tests/test_rad_merge_accepted_prs.sh
+rule test_rad_reaction: -- tests/test_rad_reaction.sh
 rule test_rad_state: -- tests/test_rad_state.sh
 rule test_report_condense: -- tests/test_report_condense.sh
 rule test_sourcetree: -- tests/test_sourcetree.sh

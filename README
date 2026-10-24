@@ -1720,6 +1720,8 @@ MODULE API/RULES
                                                              '*unassign:' proposals of one item
       bar rad_topic <class> "<description>"                  open the topic tree of an item
       bar rad_reaction [--from <emoji>] <to> <target>..      set/transition/withdraw our own marker
+      bar rad_reaction --state [--json] <target>..           the live markers of a target, and the
+                                                             op that set each
       bar rad_identity --repo <rid> [--did <who>] [--commit <sha>]
                                                              the delegated identities, the git
                                                              authors each one uses, and a commit
@@ -1949,6 +1951,13 @@ MODULE API/RULES
     
       bar rad_reaction [--from <emoji>] [--repo <rid|path>] <to> <target>..
       bar rad_reaction <from> <to> <target>.. [--repo <rid|path>]
+      bar rad_reaction --state [--json] [--repo <rid|path>] <target>..
+    
+    '--state' reports instead of writing: one line per target, the live markers of ours there and the
+    op that set the newest of them.  It takes no '<to>' and no '--from', and 'markers=-' (no marker
+    of ours is live) is an answer, not an error.  '--json' the same as one object per target, keys
+    'item', 'level', 'target', 'markers' ('emoji', 'op', 'date' each), 'since', 'op'.  A target is
+    named exactly as the writing forms name it, and several targets are read in one call.
     
     '<to>' is the marker to set: one emoji of the store's allow list, checked before any call, so the
     '❤️' an emoji picker hands out (heart plus a variation selector) is refused here instead of by the
@@ -2488,12 +2497,46 @@ MODULE API/RULES
         one 'cob update' action
         The 'cob update' action for one marker on a target, as the payload rad's own commands write.
 
+      rad_reaction_level <type> <reader-kind> <id> <cob>
+        the level a target really is
+        The level a caller is told about, mapped from the part of the document the reader matched:
+        an issue's root comment is 'root', a comment of the thread or of a revision is 'comment', a
+        revision is 'revision', a review is 'review'.  One mapping, used by both forms of the command,
+        so 'rad_reaction' never answers in two vocabularies.
+
+      rad_reaction_dates <rid> <typename> <cob> <reader-kind> <id> <review> <revision> <nid> <marker>..
+        one JSON object per marker
+        When each live marker was set: '{"emoji","op","date"}' per marker, oldest first, with '-' for
+        a marker no op of ours accounts for.
+
+      rad_reaction_cob_index <rid>
+        fill RAD_REACTION_COBS with every COB the node holds
+        The ids the '--state' form needs to tell one target from the next: a word the node holds as an
+        issue or a patch starts a target, and any other word is the id inside it.  Filled once.
+
+      rad_reaction_is_cob <word>
+        0 when the word names a COB the node holds
+
+      rad_reaction_state <repo> <json> <word>..
+        the '--state' form, one line per target
+        Publishes what the write path already reads: the live markers of *ours* on a target, and the
+        op that set each of them.  Read-only -- the store is opened for 'cob show', 'cob log' and
+        'cob list' and nothing else.
+        One target needs no listing: the id is resolved (which walks the store when it names something
+        inside a patch) and that is the answer.  Several do, because only the listing says where one
+        ends and the next begins.
+        The state of that target, as the store reduces it: the first line names what the target
+        really is, the lines after it are the live markers of ours.
+
       rad_reaction_usage [reason]
         usage on stderr
 
       rad_reaction see the module header
         Compare and swap on the caller's *own* reaction state: one target, one marker, and the write
         happens only when what the caller expects is what the store reduces.
+        '--state' reports, it does not compare: it takes no '<to>' and no '<from>', and every
+        positional is a target.  The two forms are exclusive because a caller that set a marker while
+        asking for the state would have to be told which of the two answers it got.
         The '<from> <to>' form is the two leading positionals, the '<to> <target>' form starts with
         the reaction to set.  What tells them apart is what can be a reaction at all: a target is an
         id, never an emoji -- and an empty second word is only a '<to>' if that is what it can be,
@@ -2765,7 +2808,10 @@ MODULE API/RULES
         '<to>' withdraws '<from>' and sets nothing: patch level only, and it needs '--from', because the
         expectation is what names the marker.  A target is '<issue-id>', '<issue-id> <comment-id>',
         '<patch-or-revision-id>' (a patch id is its root revision) or '<patch-or-revision-id> <comment-id>'.
-        Exit 0 applied, 1 the expected marker is not what the store reduces (nothing was written),
+        '--state' reports instead of writing, one line per target: the live markers of ours and the op
+        that set the newest, so a consumer can age what it parked.  It takes no '<to>' and no '--from', and
+        'markers=-' is a state (exit 0), never a failure.  Exit 0 applied (or reported), 1 the expected
+        marker is not what the store reduces (nothing was written) or the store could not be read,
         2 could not answer (usage, a reaction the store would not accept, a missing target),
         3 the node holds no such repository, item or revision.
 

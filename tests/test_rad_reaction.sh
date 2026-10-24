@@ -117,6 +117,235 @@ contains "$OUT" "withdraw one of our reaction markers" "with its declaration's d
 contains "$OUT" "rad_reaction [--from <emoji>] [--repo <rid,path>] <to> <target>.." "and its usage"
 echo
 
+# --- the '--state' form: a faked node, a faked store, and a recorded call log -------------------
+#
+# What is faked: 'rad' (a script answering from $FIXTURES and recording every invocation) and the
+# node storage (a directory, so 'rad_metadata_store' resolves).  What is *not* faked is the
+# reduction under test: the document, the op chain and the store's own semantics (one op, several
+# actions, the last one winning) are the shapes measured on a live node, written into the fixtures.
+
+SRID="rad:z3StateProbeRepo"
+OURS="z6MkOursoursoursoursoursoursoursoursoursou"
+OTHER="z6MkTheothertheothertheothertheothertheoth"
+
+S_ISSUE="aaaa111122223333444455556666777788889999"
+S_ICOM="aaaa222233334444555566667777888899990000"
+S_PATCH="bbbb111122223333444455556666777788889999"
+S_REV2="bbbb444455556666777788889999000011112222"
+S_PCOMM="bbbb222233334444555566667777888899990000"
+S_REVIEW="bbbb333344445555666677778888999900001111"
+S_NOCOB="cccc111122223333444455556666777788889999"
+
+OP1="1000000000000000000000000000000000000001"
+OP2="1000000000000000000000000000000000000002"
+OP3="1000000000000000000000000000000000000003"
+OP4="1000000000000000000000000000000000000004"
+OP5="1000000000000000000000000000000000000005"
+OP6="1000000000000000000000000000000000000006"
+POP1="2000000000000000000000000000000000000001"
+POP2="2000000000000000000000000000000000000002"
+POP3="2000000000000000000000000000000000000003"
+POP4="2000000000000000000000000000000000000004"
+
+SRADHOME="$WORKDIR/sradhome"
+SFIX="$WORKDIR/sfix"
+SCALLS="$WORKDIR/scalls"
+mkdir -p "$SRADHOME/storage/${SRID#rad:}" "$SFIX/bin" "$SFIX"
+: >"$SCALLS"
+
+cat >"$SFIX/bin/rad" <<'FAKE'
+#!/usr/bin/env bash
+# A fake 'rad': answers from $SFIX, records every invocation in $SCALLS.
+set -uo pipefail
+printf '%s\n' "$*" >>"$SCALLS"
+cmd="${1:-}"
+shift || true
+case "$cmd" in
+path) printf '%s\n' "$SRADHOME" ;;
+self) printf 'did:key:%s\n' "$OURS" ;;
+cob)
+    sub="${1:-}"
+    shift || true
+    type="" object=""
+    while (( $# )); do
+        case "$1" in
+        -t | --type) type="${2:-}"; shift 2 ;;
+        -o | --object) object="${2:-}"; shift 2 ;;
+        *) shift ;;
+        esac
+    done
+    case "$sub" in
+    list)
+        if [[ -f "$SFIX/list.$type" ]]; then cat "$SFIX/list.$type"; fi
+        ;;
+    show | log)
+        if [[ -f "$SFIX/$sub.$type.$object" ]]; then
+            cat "$SFIX/$sub.$type.$object"
+        else
+            printf '✗ Error: object `%s` of type `%s` was not found\n' "$object" "$type"
+            exit 1
+        fi
+        ;;
+    *) exit 1 ;;
+    esac
+    ;;
+*) exit 1 ;;
+esac
+FAKE
+chmod +x "$SFIX/bin/rad"
+
+printf '%s\n' "$S_ISSUE" >"$SFIX/list.xyz.radicle.issue"
+printf '%s\n' "$S_PATCH" >"$SFIX/list.xyz.radicle.patch"
+
+# The issue: ours carries two markers on the root (🔧, ❓) beside another identity's 👀, and one on
+# a comment.  The reduction is the store's: one op may set and withdraw in the same action list.
+cat >"$SFIX/show.xyz.radicle.issue.$S_ISSUE" <<JSON
+{"assignees":[],"title":"an issue","state":{"status":"open"},"labels":[],
+ "thread":{"comments":{
+   "$S_ISSUE":{"author":"$OTHER","reactions":[["$OURS","🔧"],["$OTHER","👀"],["$OURS","❓"]],
+               "resolved":false,"body":"the description"},
+   "$S_ICOM":{"author":"$OTHER","reactions":[["$OURS","👀"]],"resolved":false,"body":"a comment"}},
+  "timeline":["$OP1","$OP2","$OP3","$OP4","$OP5","$OP6"]}}
+JSON
+
+# The chain, newest first as 'rad cob log --format json' prints it.  OP4 sets and withdraws 👀 in
+# one action list -- the shape a reader reducing the chain by hand reports as live for ever.
+cat >"$SFIX/log.xyz.radicle.issue.$S_ISSUE" <<JSON
+{"id":"$OP6","actions":[{"type":"comment.react","id":"$S_ICOM","reaction":"👀","active":true}],"author":"$OURS","timestamp":1790000600000,"parents":["$OP5"]}
+{"id":"$OP5","actions":[{"type":"comment.react","id":"$S_ISSUE","reaction":"🔧","active":true}],"author":"$OURS","timestamp":1790000500000,"parents":["$OP4"]}
+{"id":"$OP4","actions":[{"type":"comment.react","id":"$S_ISSUE","reaction":"👀","active":true},{"type":"comment.react","id":"$S_ISSUE","reaction":"👀","active":false}],"author":"$OURS","timestamp":1790000400000,"parents":["$OP3"]}
+{"id":"$OP3","actions":[{"type":"comment.react","id":"$S_ISSUE","reaction":"❓","active":true}],"author":"$OURS","timestamp":1790000300000,"parents":["$OP2"]}
+{"id":"$OP2","actions":[{"type":"comment.react","id":"$S_ISSUE","reaction":"🔧","active":true},{"type":"comment.react","id":"$S_ISSUE","reaction":"👀","active":false}],"author":"$OURS","timestamp":1790000200000,"parents":["$OP1"]}
+{"id":"$OP1","actions":[{"type":"comment","body":"the description"}],"author":"$OURS","timestamp":1790000100000,"parents":[]}
+JSON
+
+# The patch: a root revision, a second revision, a comment of the revision, a review.
+cat >"$SFIX/show.xyz.radicle.patch.$S_PATCH" <<JSON
+{"title":"a patch","author":{"id":"did:key:$OURS"},"state":{"status":"open"},"target":"main",
+ "labels":[],"assignees":[],"merges":{},
+ "revisions":{
+  "$S_PATCH":{"id":"$S_PATCH","author":{"id":"did:key:$OURS"},"base":"$OP1","oid":"$OP2",
+    "description":[],"resolves":[],"reactions":[{"location":null,"emoji":"✅","authors":["$OURS"]}],
+    "discussion":{"comments":{"$S_PCOMM":{"author":"$OTHER","reactions":[],"resolved":false,"body":"a revision comment"}},
+                  "timeline":["$S_PCOMM"]},
+    "reviews":{"$OTHER":{"id":"$S_REVIEW","author":{"id":"did:key:$OTHER"},"verdict":"comment",
+      "summary":[],"labels":[],"reactions":[],"comments":{"comments":{},"timeline":[]}}}},
+  "$S_REV2":{"id":"$S_REV2","author":{"id":"did:key:$OURS"},"base":"$OP2","oid":"$OP2",
+    "description":[],"resolves":[],"reactions":[{"location":null,"emoji":"✅","authors":["$OURS"]}],
+    "discussion":{"comments":{},"timeline":[]},"reviews":{}}},
+ "timeline":["$S_PATCH","$S_REV2","$S_PCOMM","$S_REVIEW"]}
+JSON
+
+# The chain a patch really has: a merge op with two parents, and the marker's op hanging off the
+# *second* one -- unreachable for a reader that walks 'parents[0]' down from the tip.  The lines are
+# deliberately out of order: '--format json' promises none.
+cat >"$SFIX/log.xyz.radicle.patch.$S_PATCH" <<JSON
+{"id":"$POP1","actions":[{"type":"revision.react","revision":"$S_PATCH","reaction":"✅","active":true}],"author":"$OURS","timestamp":1790000650000,"parents":[]}
+{"id":"$POP3","actions":[{"type":"revision.react","revision":"$S_REV2","reaction":"✅","active":true}],"author":"$OURS","timestamp":1790000800000,"parents":["$POP1"]}
+{"id":"$POP2","actions":[],"author":"$OURS","timestamp":1790000700000,"parents":["$POP1"]}
+{"id":"$POP4","actions":[],"author":"$OURS","timestamp":1790000900000,"parents":["$POP2","$POP3"]}
+JSON
+
+# run_state <args..> - 'bar rad_reaction' against the faked node, stdout/stderr split
+SOUT=""
+SERR=""
+SRC=0
+run_state() {
+    SRC=0
+    SOUT="$(RAD_BIN="$SFIX/bin/rad" RADHOME="$SRADHOME" SFIX="$SFIX" SCALLS="$SCALLS" \
+        SRADHOME="$SRADHOME" OURS="$OURS" "$BAR" rad_reaction "$@" 2>"$WORKDIR/serr")" || SRC=$?
+    SERR="$(cat "$WORKDIR/serr")"
+}
+iso() { date -u -d "@$1" +%Y-%m-%dT%H:%M:%SZ; }
+
+echo "AC6 '--state' usage errors exit 2 and keep stdout empty"
+: >"$SCALLS"
+run_state --state
+check "$SRC" 2 "'--state' without a target is a usage error"
+absent "$SOUT" "state item=" "stdout stays empty"
+contains "$SERR" "usage: rad_reaction" "the usage is on stderr"
+run_state --state --from "👀" "$S_ISSUE"
+check "$SRC" 2 "'--from' with '--state' is a usage error"
+contains "$SERR" "'--from'" "and the error names the flag"
+run_state --state --nope "$S_ISSUE"
+check "$SRC" 2 "an unknown flag with '--state' is a usage error"
+check "$(grep -c 'cob ' "$SCALLS" || true)" 0 "a usage error opens no store"
+echo
+
+echo "AC7 '--state' answers the reduced state, dated by the op that set it"
+: >"$SCALLS"
+run_state --state --repo "$SRID" "$S_ISSUE"
+check "$SRC" 0 "the root comment answers 0"
+contains "$SOUT" "item=issue:$S_ISSUE" "the line names the item"
+contains "$SOUT" "level=root" "and its level"
+contains "$SOUT" "target=$S_ISSUE" "and the full target id"
+contains "$SOUT" "markers=❓,🔧" "both live markers of ours, oldest first"
+absent "$SOUT" "👀" "the one withdrawn in the same op is not live"
+absent "$SOUT" "✅" "and another identity's marker is not ours"
+contains "$SOUT" "since=$(iso 1790000500)" "since is the op that set the newest marker"
+contains "$SOUT" "op=$OP5" "with that op's id"
+check "$(printf '%s\n' "$SOUT" | wc -l | tr -d ' ')" 1 "one line per target"
+echo
+
+echo "AC8 a target named a second way reports the level it really is"
+run_state --state --repo "$SRID" "$S_ISSUE" "$S_ICOM"
+check "$SRC" 0 "a comment of the issue answers 0"
+contains "$SOUT" "level=comment" "a comment is level=comment, not root"
+contains "$SOUT" "target=$S_ICOM" "and the target is the comment"
+contains "$SOUT" "markers=👀" "with its own marker"
+contains "$SOUT" "op=$OP6" "dated by the op that set it"
+run_state --state --repo "$SRID" "$S_PATCH"
+check "$SRC" 0 "a patch id answers 0"
+contains "$SOUT" "item=patch:$S_PATCH" "the item is the patch"
+contains "$SOUT" "level=revision" "a patch id is its root revision"
+contains "$SOUT" "markers=✅" "with the revision's marker"
+run_state --state --repo "$SRID" "$S_REV2"
+check "$SRC" 0 "a revision id answers 0"
+contains "$SOUT" "level=revision" "a second revision is level=revision too"
+contains "$SOUT" "target=$S_REV2" "and is reported as itself"
+contains "$SOUT" "op=$POP3" "dated by its own op, which hangs off the merge's second parent"
+run_state --state --repo "$SRID" "$S_PATCH" "$S_REVIEW"
+check "$SRC" 0 "a review of the patch answers 0"
+contains "$SOUT" "level=review" "a review is level=review"
+contains "$SOUT" "markers=-" "and no marker of ours is a state, not an error"
+echo
+
+echo "AC9 '--state' is read-only and names every target it was given"
+: >"$SCALLS"
+run_state --state --repo "$SRID" "$S_ISSUE" "$S_PATCH"
+check "$SRC" 0 "one invocation, two targets"
+check "$(printf '%s\n' "$SOUT" | wc -l | tr -d ' ')" 2 "one line for each"
+contains "$SOUT" "item=issue:$S_ISSUE" "the first is the issue"
+contains "$SOUT" "item=patch:$S_PATCH" "the second the patch"
+run_state --state --repo "$SRID" "$S_ISSUE" "$S_ICOM"
+check "$SRC" 0 "an item and one id inside it is one target"
+check "$(printf '%s\n' "$SOUT" | wc -l | tr -d ' ')" 1 "and one line"
+contains "$SOUT" "target=$S_ICOM" "the second word is the target, not a second item"
+check "$(grep -c 'cob update' "$SCALLS" || true)" 0 "no 'cob update' was made"
+check "$(grep -ci 'react' "$SCALLS" || true)" 0 "and no typed react either"
+echo
+
+echo "AC10 '--state --json' is one object per target, marked as bar's"
+run_state --state --json --repo "$SRID" "$S_ISSUE"
+check "$SRC" 0 "'--json' answers 0"
+check "$(printf '%s' "$SOUT" | jq -r '.bar_rad')" 1 "the object is marked bar_rad: 1"
+check "$(printf '%s' "$SOUT" | jq -r '.item')" "issue:$S_ISSUE" "item names the COB and its type"
+check "$(printf '%s' "$SOUT" | jq -r '.level')" root "level is the one it really is"
+check "$(printf '%s' "$SOUT" | jq -r '.markers | length')" 2 "both markers"
+check "$(printf '%s' "$SOUT" | jq -r '.markers[-1].emoji')" "🔧" "newest last"
+check "$(printf '%s' "$SOUT" | jq -r '.markers[-1].op')" "$OP5" "each marker carries its op"
+check "$(printf '%s' "$SOUT" | jq -r '.markers[-1].date')" "$(iso 1790000500)" "and its date"
+check "$(printf '%s' "$SOUT" | jq -r '.since')" "$(iso 1790000500)" "since belongs to the newest"
+check "$(printf '%s' "$SOUT" | jq -r '.op')" "$OP5" "op too"
+echo
+
+echo "AC11 a target the store does not carry is exit 3, never 'markers=-'"
+run_state --state --repo "$SRID" "$S_NOCOB"
+check "$SRC" 3 "an id nothing carries is exit 3"
+absent "$SOUT" "markers=-" "and it is not reported as an empty state"
+contains "$SERR" "holds no" "the store says what it holds no such thing of"
+echo
+
 if (( failures )); then
     echo "FAILED: $failures"
     exit 1
