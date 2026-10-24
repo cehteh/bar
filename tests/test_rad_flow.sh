@@ -147,7 +147,12 @@ BARF
 mkclone_with_rad() {
     local root="$1"
     mkdir -p "$root"
-    git init -q --bare "$root/upstream.git"
+    ## '-b main' names the branch 'git clone' below checks out; without it the bare repository's HEAD
+    ## is the caller's 'init.defaultBranch' -- 'master' where nothing is configured, and the clone
+    ## then lands with no checkout so the push of 'main' has nothing to push.
+    git init -q --bare -b main "$root/upstream.git"
+    check "$(git -C "$root/upstream.git" symbolic-ref --short HEAD)" "main" \
+        "the bare upstream's branch is named, not inherited from the host"
     mkclone "$root/proj"
     git -C "$root/proj" remote add rad "$root/upstream.git"
     git -C "$root/proj" push -q rad main

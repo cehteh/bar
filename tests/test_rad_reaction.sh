@@ -86,22 +86,30 @@ check "$RC" 2 "a reaction without a target is a usage error"
 run ":eyes:" "$NOREPO"
 check "$RC" 2 "the ':eyes:' shortcode is NOT a reaction: the store wants the codepoint itself"
 contains "$ERR" "is not a reaction the store accepts" "and says which rule it broke"
-run "👀" "$NOREPO"
-check "$RC" 3 "an accepted emoji gets past the argument check to the repository"
-contains "$ERR" "" "with nothing on stdout"
-echo
+# AC3's last case and AC4 stop *at* the store: the helper refuses a path that is not a repository
+# only after it has found the command it would talk to, so where that command is absent the case
+# cannot be reached at all.  Said out loud rather than asserted, the way the suite's other
+# tool-dependent cases are (a check container carries no radicle binary).
+if command -v "${n:-rad}" >/dev/null 2>&1; then
+    run "👀" "$NOREPO"
+    check "$RC" 3 "an accepted emoji gets past the argument check to the repository"
+    contains "$ERR" "" "with nothing on stdout"
+    echo
 
-echo "AC4 the forms parse (a store that holds nothing answers 3, never a usage error)"
-run --from "👀" "" "$NOREPO"
-check "$RC" 3 "the empty <to> parses as a withdrawal"
-absent "$ERR" "usage:" "the parser is past its argument check"
-run "👀" "" "$NOREPO"
-check "$RC" 3 "the positional '<from> <to>' form parses the same way"
-run --from "👀" "🔧" "$NOREPO"
-check "$RC" 3 "the '<from> <to>' form with a marker to set parses"
-run --repo "$NOREPO" "👀" "a" 
-check "$RC" 3 "'--repo' is read as the repository, not as a target"
-contains "$ERR" "neither a RID nor a checkout" "and the store says what the path is not"
+    echo "AC4 the forms parse (a store that holds nothing answers 3, never a usage error)"
+    run --from "👀" "" "$NOREPO"
+    check "$RC" 3 "the empty <to> parses as a withdrawal"
+    absent "$ERR" "usage:" "the parser is past its argument check"
+    run "👀" "" "$NOREPO"
+    check "$RC" 3 "the positional '<from> <to>' form parses the same way"
+    run --from "👀" "🔧" "$NOREPO"
+    check "$RC" 3 "the '<from> <to>' form with a marker to set parses"
+    run --repo "$NOREPO" "👀" "a"
+    check "$RC" 3 "'--repo' is read as the repository, not as a target"
+    contains "$ERR" "neither a RID nor a checkout" "and the store says what the path is not"
+else
+    echo "  - AC3/AC4 store cases skipped: no '${n:-rad}' installed, so the helper stops before the store"
+fi
 echo
 
 echo "AC5 the helper is registered"

@@ -70,7 +70,7 @@ mkproject() {
         ln -s "$REPO_ROOT/Bar.d/$module" "$1/Bar.d/$module"
     done
     printf 'rule MAIN: -- true\n' >"$1/Barf"
-    git init -q "$1"
+    git init -q -b main "$1"
     git -C "$1" config user.name fixture
     git -C "$1" config user.email fixture@example.com
 }
