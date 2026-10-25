@@ -15,7 +15,7 @@
 ###   bar rad_state [--json] [--max <n>]                     the whole state, one screen
 ###   bar rad_patches [--state <s>] [--author <a>] [--json] [--max <n>]
 ###                                                          only the patches, filtered
-###   bar rad_trust --repo <rid> --author <who> [--grounds <..>] [--dump] [--second-party]
+###   bar rad_trust --repo <rid> --author <who> [--grounds <..>] [--dump] [--second-party] [--requester <who>]
 ###                                                          which grounds of trust that author has
 ###   bar rad_comment_metadata <item> --query <label|assign|unassign>
 ###                                                          the trusted '*label:'/'*assign:'/
@@ -128,11 +128,14 @@
 ### the decision is the caller's -- so a second call in the same scope is wasted work.
 ###
 ### '--second-party' answers the one question an approval asks: is this actor somebody *other* than
-### the identity which opened the item -- the second party a consent needs.  It is the dump above
-### plus one field, 'second_party': 'false' when the actor opened the item, 'true' otherwise.  A
-### verdict about no item has no opener to compare against, so it needs '--issue <id>' or
-### '--patch <id>' and is a usage error (2) without one.  Whatever the grounds say, our own identity
-### answering on an item it opened is not a second party.
+### the identity which asked for the decision -- the second party a consent needs.  '--requester'
+### names that identity -- the loop, the agent, whoever opened the gate -- as a unique id, a bare NID
+### ('z6M…') or a 'did:key:' one; an alias is refused, because two identities can answer to one and a
+### comparison against the wrong one is worse than no answer.  The flag answers 'false' when the actor
+### *is* the requester and 'true' otherwise, and the comparison needs no item.  Without '--requester'
+### the requester **is the actor**, so the answer is 'false': the identity which asked is never a
+### second party to its own question, and the item's opener is not consulted.  The output is the dump
+### above plus one field, 'second_party'.
 ###
 ### '--threshold' decides 'contributed' alone: a bare number counts commits (default 10), a percent
 ### ('10%', '0.5%') is the share of the commits every identity authored in this repository, which is
@@ -356,7 +359,7 @@ rule rad_state: -
 ## The patches of this checkout, by state and by author.
 rule rad_patches: -
 
-# helper: rad_trust | whether the author of an incoming Radicle issue or patch counts as a trusted source, and which grounds of trust it has: a delegate, the identity which established the repository, the opener or an assignee of the item, and the commits the identity authored as itself; '--second-party' asks instead whether the actor is somebody other than the item's opener | rad_trust --repo <rid-or-path> --author <did-or-nid-or-alias> [--issue <id>] [--patch <id>] [--grounds <ground,..>] [--threshold <n-or-n%>] [--dump] [--json] [--second-party] | one '<verdict> author=… delegate=… authored=… threshold=… ground=… reason=… repo=…' line, <verdict> one of trusted, untrusted, unknown and <ground> one of delegate, owner, opened, assigned, contributed; '--json' the same facts as one object plus 'grounds'; '--dump' every ground and no verdict at all (implies '--json'); '--second-party' the dump plus 'second_party', the actor against the item's opener
+# helper: rad_trust | whether the author of an incoming Radicle issue or patch counts as a trusted source, and which grounds of trust it has: a delegate, the identity which established the repository, the opener or an assignee of the item, and the commits the identity authored as itself; '--second-party' asks instead whether the actor is somebody other than the requester ('--requester'), or, without one, the actor itself | rad_trust --repo <rid-or-path> --author <did-or-nid-or-alias> [--issue <id>] [--patch <id>] [--grounds <ground,..>] [--threshold <n-or-n%>] [--dump] [--json] [--second-party] [--requester <did-or-nid>] | one '<verdict> author=… delegate=… authored=… threshold=… ground=… reason=… repo=…' line, <verdict> one of trusted, untrusted, unknown and <ground> one of delegate, owner, opened, assigned, contributed; '--json' the same facts as one object plus 'grounds'; '--dump' every ground and no verdict at all (implies '--json'); '--second-party' the dump plus 'second_party', the actor against the requester, and 'false' without one because the requester is then the actor
 ## The trust verdict of the triage policy; exit 0 trusted, 1 untrusted, 2 could not answer.
 rule rad_trust: -
 
@@ -1160,7 +1163,6 @@ function rad_trust_ground_known ## <name> - 0 when <name> is one of the grounds
     done
     return 1
 }
-
 ## <repo> - the repository and the node storage of it, in RAD_TRUST_RID/RAD_TRUST_STORAGE
 function rad_trust_store
 {
@@ -1256,11 +1258,12 @@ function rad_trust_item_nid
     return 1
 }
 
-function rad_trust ## --repo <rid|path> --author <did|nid|alias> [--issue <id>|--patch <id>] [--grounds <ground,..>] [--threshold <n|n%>] [--dump] [--json] [--second-party] - the trust verdict of the triage policy
+function rad_trust ## --repo <rid|path> --author <did|nid|alias> [--issue <id>|--patch <id>] [--grounds <ground,..>] [--threshold <n|n%>] [--dump] [--json] [--second-party] [--requester <did|nid>] - the trust verdict of the triage policy; '--second-party' is the actor against '--requester', and against itself without one
 {
     local -a args=() grounds=() parts=() cmd=() ground_json=() ground_true=()
     local raw="" arg="" value="" part=""
     local json="" dump="" repo="" author="" threshold="" item="" item_type="" second_party=""
+    local requester="" requester_nid=""
     local tool="" facts="" fields="" did="" nid="" alias="" delegate="no" authored="" reason="" rid=""
     local thr="" commits="" total="" share="" owner_nid="" item_nid="" verdict="" ground="" grounds_json="" sp=""
     local want_delegate=no want_owner=no want_opened=no want_assigned=no want_contributed=no
@@ -1288,7 +1291,7 @@ function rad_trust ## --repo <rid|path> --author <did|nid|alias> [--issue <id>|-
         --json) json=1 ;;
         --dump) dump=1 ;;
         --second-party) second_party=1 ;;
-        --repo | --author | --threshold | --grounds | --issue | --patch)
+        --repo | --author | --threshold | --grounds | --issue | --patch | --requester)
             if (( i >= count )) || [[ -z "${args[i]}" ]]; then
                 help_usage_error rad_trust "'$arg' needs a non-empty value"
                 return 2
@@ -1298,6 +1301,7 @@ function rad_trust ## --repo <rid|path> --author <did|nid|alias> [--issue <id>|-
             case "$arg" in
             --repo) repo="$value" ;;
             --author) author="$value" ;;
+            --requester) requester="$value" ;;
             --threshold) threshold="$value" ;;
             --issue | --patch)
                 if [[ -n "$item" ]]; then
@@ -1330,12 +1334,20 @@ function rad_trust ## --repo <rid|path> --author <did|nid|alias> [--issue <id>|-
         help_usage_error rad_trust "invalid --threshold '$threshold', want a non-negative number or a percent like '10%'"
         return 2
     fi
-    # A second party is one *other* than the opener, so the item is the question: without one there is
-    # nothing to compare the actor against, and 'true' would be the answer for everybody.
-    if [[ -n "$second_party" && -z "$item" ]]; then
-        help_usage_error rad_trust "'--second-party' needs '--issue <id>' or '--patch <id>': a second party is somebody other than the item's opener"
+    ## '--requester' is the reference '--second-party' compares against; on its own it decides
+    ## nothing, so it is a usage error rather than a value which is silently dropped.
+    if [[ -n "$requester" && -z "$second_party" ]]; then
+        help_usage_error rad_trust "'--requester <who>' names who asked for the decision: it needs '--second-party'"
         return 2
     fi
+    ## The requester has to be a unique identity: an alias is not one (two identities can answer to
+    ## one), and a comparison against the wrong identity is worse than a refusal.
+    if [[ -n "$requester" && "$requester" != z6M* && "$requester" != did:key:z6M* ]]; then
+        help_usage_error rad_trust "'--requester <who>' names the identity which asked: a bare NID ('z6M…') or 'did:key:z6M…', never an alias"
+        return 2
+    fi
+    # A second party is one *other* than the identity which asked for the decision.  '--requester'
+    # names that identity; without one the requester *is* the actor, so the flag answers 'false'.
     [[ -n "$second_party" ]] && dump=1
 
     ## Which grounds are asked for: the named ones, or -- with no '--grounds' -- the rule this helper
@@ -1364,9 +1376,6 @@ function rad_trust ## --repo <rid|path> --author <did|nid|alias> [--issue <id>|-
         contributed) want_contributed=yes ;;
         esac
     done
-    # The comparison is the 'opened' ground, so it is always computed -- even where an explicit
-    # '--grounds' did not name it.
-    [[ -n "$second_party" ]] && want_opened=yes
     [[ -n "$dump" ]] && json=1
 
     tool="${RAD_TRIAGE_FACTS:-}"
@@ -1428,6 +1437,14 @@ function rad_trust ## --repo <rid|path> --author <did|nid|alias> [--issue <id>|-
     fi
     nid="$(rad_metadata_nid "$did")"
     thr="${threshold:-10}"
+
+    ## Who asked for the decision.  With no '--requester' it is the actor itself -- no item is read to
+    ## find an opener, and the answer is 'false'.  A named requester is a NID or a 'did:key:' one and
+    ## nothing else (checked above), so there is nothing here which could resolve to another identity.
+    requester_nid="$nid"
+    if [[ -n "$requester" ]]; then
+        requester_nid="$(rad_metadata_nid "$requester")"
+    fi
 
     ## 'contributed': the commits this identity authored as itself against the threshold -- absolute, or
     ## as the share of the commits every identity authored in this repository.  The total is read when a
@@ -1534,9 +1551,11 @@ function rad_trust ## --repo <rid|path> --author <did|nid|alias> [--issue <id>|-
     fi
 
     grounds_json="{$(IFS=,; printf '%s' "${ground_json[*]}")}"
+    ## 'second_party': somebody *other* than the identity which asked for the decision.  '--requester'
+    ## names that identity; without one it is the actor, so the same identity -- 'false'.
     if [[ -n "$second_party" ]]; then
-        sp=false
-        [[ "$opened_ok" == yes ]] || sp=true
+        sp=true
+        [[ "$requester_nid" == "$nid" ]] && sp=false
     fi
     if [[ -n "$json" ]]; then
         if [[ -n "$dump" ]]; then

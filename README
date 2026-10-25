@@ -1740,7 +1740,7 @@ MODULE API/RULES
       bar rad_state [--json] [--max <n>]                     the whole state, one screen
       bar rad_patches [--state <s>] [--author <a>] [--json] [--max <n>]
                                                              only the patches, filtered
-      bar rad_trust --repo <rid> --author <who> [--grounds <..>] [--dump] [--second-party]
+      bar rad_trust --repo <rid> --author <who> [--grounds <..>] [--dump] [--second-party] [--requester <who>]
                                                              which grounds of trust that author has
       bar rad_comment_metadata <item> --query <label|assign|unassign>
                                                              the trusted '*label:'/'*assign:'/
@@ -1853,11 +1853,14 @@ MODULE API/RULES
     the decision is the caller's -- so a second call in the same scope is wasted work.
     
     '--second-party' answers the one question an approval asks: is this actor somebody *other* than
-    the identity which opened the item -- the second party a consent needs.  It is the dump above
-    plus one field, 'second_party': 'false' when the actor opened the item, 'true' otherwise.  A
-    verdict about no item has no opener to compare against, so it needs '--issue <id>' or
-    '--patch <id>' and is a usage error (2) without one.  Whatever the grounds say, our own identity
-    answering on an item it opened is not a second party.
+    the identity which asked for the decision -- the second party a consent needs.  '--requester'
+    names that identity -- the loop, the agent, whoever opened the gate -- as a unique id, a bare NID
+    ('z6M…') or a 'did:key:' one; an alias is refused, because two identities can answer to one and a
+    comparison against the wrong one is worse than no answer.  The flag answers 'false' when the actor
+    *is* the requester and 'true' otherwise, and the comparison needs no item.  Without '--requester'
+    the requester **is the actor**, so the answer is 'false': the identity which asked is never a
+    second party to its own question, and the item's opener is not consulted.  The output is the dump
+    above plus one field, 'second_party'.
     
     '--threshold' decides 'contributed' alone: a bare number counts commits (default 10), a percent
     ('10%', '0.5%') is the share of the commits every identity authored in this repository, which is
@@ -2246,8 +2249,12 @@ MODULE API/RULES
         item type: a foreign op in the same chain is not the create op, and an op whose manifest says
         otherwise is skipped rather than believed.
 
-      rad_trust --repo <rid|path> --author <did|nid|alias> [--issue <id>|--patch <id>] [--grounds <ground,..>] [--threshold <n|n%>] [--dump] [--json] [--second-party]
-        the trust verdict of the triage policy
+      rad_trust --repo <rid|path> --author <did|nid|alias> [--issue <id>|--patch <id>] [--grounds <ground,..>] [--threshold <n|n%>] [--dump] [--json] [--second-party] [--requester <did|nid>]
+        the trust verdict of the triage policy; '--second-party' is the actor against '--requester', and against itself without one
+        '--requester' is the reference '--second-party' compares against; on its own it decides
+        nothing, so it is a usage error rather than a value which is silently dropped.
+        The requester has to be a unique identity: an alias is not one (two identities can answer to
+        one), and a comparison against the wrong identity is worse than a refusal.
         Which grounds are asked for: the named ones, or -- with no '--grounds' -- the rule this helper
         has always answered (a delegate, or the authored commits reaching the threshold).  '--dump'
         means all of them, and evaluates nothing.
@@ -2262,6 +2269,9 @@ MODULE API/RULES
         would collapse it.
         An author the repository cannot resolve is *not* an error of the tool: it has no data, and that
         is 'unknown' (exit 2), never 'untrusted'.  Nothing can be established for it, so no ground is.
+        Who asked for the decision.  With no '--requester' it is the actor itself -- no item is read to
+        find an opener, and the answer is 'false'.  A named requester is a NID or a 'did:key:' one and
+        nothing else (checked above), so there is nothing here which could resolve to another identity.
         'contributed': the commits this identity authored as itself against the threshold -- absolute, or
         as the share of the commits every identity authored in this repository.  The total is read when a
         relative threshold compares it, and in '--dump' (the cache call wants the share of a repository,
@@ -2272,6 +2282,8 @@ MODULE API/RULES
         -- a caller which asks about them without an item has nothing to decide either.
         The verdict: the first ground which holds **in the order the caller listed them**, so a caller
         lists its grounds in the order it wants them reported.
+        'second_party': somebody *other* than the identity which asked for the decision.  '--requester'
+        names that identity; without one it is the actor, so the same identity -- 'false'.
 
       rad_identity_store <repo>
         the repository and the node storage which holds it, in RAD_IDENTITY_RID, _STORAGE and _TOPLEVEL (the checkout, empty when the caller is not in one)
