@@ -4,10 +4,15 @@
 
 ### Support for the shellcheck shell linter
 ###
+### A bar module or a rule file is not plain bash: it may be written in the make/just spellings
+### 'preprocess' expands.  Those files are checked through 'bar_lint', which lets shellcheck read
+### the expanded text, so the sugar is no longer reported as a syntax error.  Everything else is
+### checked as it is written.
+###
 ### Shellcheck is surprisingly slow.  In projects using bar one can prevent the bar files
 ### themselves being checked by setting in 'Barf':
 ###
-###  SHELLCHECK_LS_FILES=":!bar :!Bar.d"  # Perhaps adding ':!Barf' too
+###  SHELLCHECK_LS_FILES=":!bar :!Bar.d :!Barf"
 
 require git_lib
 
@@ -16,6 +21,52 @@ declare -gx SHELLCHECK_LS_FILES="${SHELLCHECK_LS_FILES:-}" ## List of file match
 function shellcheck_is_shscript ## <file> - Check if <file> is a shell script
 {
     [[ -f "$1" ]] && head -5 "$1" | grep -Eq '^#!.*sh|^# shellcheck'
+}
+
+function shellcheck_is_barfile ## <file> - Check if <file> is a bar module or a rule file
+{
+    ## A module is sourced from a 'Bar.d' directory and carries no shebang.  A rule file names bar
+    ## in its shebang ('#!/usr/bin/env bar') or is one of the names bar looks for.
+    case "/$1/" in
+    */Bar.d/*) return 0 ;;
+    esac
+    case "${1##*/}" in
+    Barf | barf | .Barf | .barf | Barf.default | Pleasef | pleasef | .Pleasef | .pleasef | Pleasef.default)
+        return 0
+        ;;
+    esac
+    head -1 "$1" 2>/dev/null | grep -Eq '^#!.*[ /]bar([[:space:]]|$)'
+}
+
+function bar_lint ## <file> - Lint a bar module or rule file with shellcheck
+{
+    ## <file> - The module or rule file to check.
+    ##
+    ## Shellcheck reads the text 'preprocess' prints, which is the text 'require' sources: a file
+    ## written in the make/just spellings is checked as the 'rule' syntax it is expanded to, and
+    ## only genuine shell defects are reported.  Diagnostics name the file, not the descriptor the
+    ## printed text was read from.  '--shell=bash' because the file's shebang names 'bar'.
+    ##
+    ## A <file> which is not there is an error (exit 2), never a silent pass.
+    local file="$1"
+    local from out fd
+    local color=auto
+    local rc=0
+    if [[ ! -f "$file" ]]; then
+        error "not a file: $file"
+        return 2
+    fi
+    if [[ -t 1 ]]; then
+        color=always
+    fi
+    exec {fd}< <(preprocess "$file")
+    from="/dev/fd/$fd"
+    out="$(shellcheck --color="$color" --shell=bash "$from" 2>&1)" || rc=$?
+    exec {fd}<&-
+    if [[ -n "$out" ]]; then
+        printf '%s\n' "${out//$from/$file}"
+    fi
+    return "$rc"
 }
 
 function shellcheck_has_shscripts
@@ -52,9 +103,27 @@ function shellcheck_lint ## Test if all shell scripts under git control pass the
     ## '--color' (without a value) forces ANSI colour even when the output is not a terminal, so
     ## every captured log or memodb entry was full of escape sequences.  '--color=auto' is the
     ## shellcheck default: colour for a human at a terminal, plain text for a capture.
-    trace "shellcheck --color=auto $(shellcheck_list_shscripts)"
-    # shellcheck disable=SC2046
-    shellcheck --color=auto $(shellcheck_list_shscripts)
+    ##
+    ## A bar module or rule file goes through 'bar_lint': it is filtered before it is checked, the
+    ## make/just spellings are not bash.  Every other file is checked as it is written.
+    trace "shellcheck $(shellcheck_list_shscripts)"
+    local rc=0
+    local file
+    local -a plain=()
+    while IFS= read -r file; do
+        if [[ -z "$file" ]]; then
+            continue
+        fi
+        if shellcheck_is_barfile "$file"; then
+            bar_lint "$file" || rc=1
+        else
+            plain+=("$file")
+        fi
+    done < <(shellcheck_list_shscripts)
+    if (( ${#plain[@]} )); then
+        shellcheck --color=auto "${plain[@]}" || rc=1
+    fi
+    return "$rc"
 }
 
 # Define --bare rules for shellcheck query/predicate functions

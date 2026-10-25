@@ -35,7 +35,7 @@ rule lints: 'is_testdir_used?' nodbg
 rule lints: helpers_check
 
 # manually testing the staged changes
-rule test_staged: testdir_enter lints
+test_staged: testdir_enter lints
 
 # maintenance rules
 rule build_docs: -- './bar help >README'
@@ -46,96 +46,98 @@ rule pre-commit: MAIN
 # TODO: test Barf.default
 
 ## Run all tests in tests/ directory
-rule tests: test_cache
-rule tests: test_agent_rules
-rule tests: test_cargo_completers
-rule tests: test_cargo_variable_expansion
-rule tests: test_completion
-rule tests: test_ext_completers
-rule tests: test_extcomp
-rule tests: test_function_completion
-rule tests: test_helpers
-rule tests: test_hermes_logs
-rule tests: test_hermes_handoff
-rule tests: test_hermeskanban
-rule tests: test_integration
-rule tests: test_is_cargo_tool_completion
-rule tests: test_issue_fixes
-rule tests: test_prototype_parsing
-rule tests: test_prototype_scoping
-rule tests: test_preprocess
-rule tests: test_public_mode
-rule tests: test_rad_cob test_rad_cob_state
-rule tests: test_rad_comment_metadata test_rad_identity
-rule tests: test_rad_flow
-rule tests: test_rad_merge_accepted_prs
-rule tests: test_rad_reaction
-rule tests: test_rad_state
-rule tests: test_rad_trust_requester
-rule tests: test_report_condense
-rule tests: test_rule_tools
-rule tests: test_sourcetree
-rule tests: test_toplevel
-rule tests: test_tty_lib
-rule tests: test_usage
-rule tests: test_user_requirements
-rule tests: test_vendoring
-rule tests: test_verbosity
+tests: test_cache
+tests: test_agent_rules
+tests: test_cargo_completers
+tests: test_cargo_variable_expansion
+tests: test_completion
+tests: test_ext_completers
+tests: test_extcomp
+tests: test_function_completion
+tests: test_helpers
+tests: test_hermes_logs
+tests: test_hermes_handoff
+tests: test_hermeskanban
+tests: test_integration
+tests: test_is_cargo_tool_completion
+tests: test_issue_fixes
+tests: test_prototype_parsing
+tests: test_prototype_scoping
+tests: test_preprocess
+tests: test_public_mode
+tests: test_rad_cob test_rad_cob_state
+tests: test_rad_comment_metadata test_rad_identity
+tests: test_rad_flow
+tests: test_rad_merge_accepted_prs
+tests: test_rad_reaction
+tests: test_rad_state
+tests: test_rad_trust_requester
+tests: test_report_condense
+tests: test_rule_tools
+tests: test_shellcheck_lint
+tests: test_sourcetree
+tests: test_toplevel
+tests: test_tty_lib
+tests: test_usage
+tests: test_user_requirements
+tests: test_vendoring
+tests: test_verbosity
 
 # Individual test rules
-rule test_cache: -- tests/test_cache.sh
-rule test_agent_rules: -- tests/test_agent_rules.sh
-rule test_cargo_completers: -- tests/test_cargo_completers.sh
-rule test_cargo_variable_expansion: -- tests/test_cargo_variable_expansion.sh
-rule test_completion: -- tests/test_completion.sh
-rule test_ext_completers: -- tests/test_ext_completers.sh
-rule test_extcomp: -- tests/test_extcomp.sh
-rule test_function_completion: -- tests/test_function_completion.sh
-rule test_helpers: -- tests/test_helpers.sh
-rule test_hermeskanban: -- tests/test_hermeskanban.sh
-rule test_hermes_logs: -- tests/test_hermes_logs.sh
-rule test_hermes_handoff: -- tests/test_hermes_handoff.sh
-rule test_integration: -- tests/test_integration.sh
-rule test_is_cargo_tool_completion: -- tests/test_is_cargo_tool_completion.sh
-rule test_issue_fixes: -- tests/test_issue_fixes.sh
-rule test_prototype_parsing: -- tests/test_prototype_parsing.sh
-rule test_prototype_scoping: -- tests/test_prototype_scoping.sh
-rule test_preprocess: -- tests/test_preprocess.sh
-rule test_public_mode: -- tests/test_public_mode.sh
-rule test_rad_cob: -- tests/test_rad_cob.sh
-rule test_rad_cob_state: -- tests/test_rad_cob_state.sh
-rule test_rad_comment_metadata: -- tests/test_rad_comment_metadata.sh
-rule test_rad_identity: -- tests/test_rad_identity.sh
-rule test_rad_flow: -- tests/test_rad_flow.sh
-rule test_rad_merge_accepted_prs: -- tests/test_rad_merge_accepted_prs.sh
-rule test_rad_reaction: -- tests/test_rad_reaction.sh
-rule test_rad_state: -- tests/test_rad_state.sh
-rule test_rad_trust_requester: -- tests/test_rad_trust_requester.sh
-rule test_report_condense: -- tests/test_report_condense.sh
-rule test_rule_tools: -- tests/test_rule_tools.sh
-rule test_sourcetree: -- tests/test_sourcetree.sh
-rule test_toplevel: -- tests/test_toplevel.sh
-rule test_tty_lib: -- tests/test_tty_lib.sh
-rule test_user_requirements: -- tests/test_user_requirements.sh
-rule test_usage: -- tests/test_usage.sh
-rule test_vendoring: -- tests/test_vendoring.sh
-rule test_verbosity: -- tests/test_verbosity.sh
+test_cache: -- tests/test_cache.sh
+test_agent_rules: -- tests/test_agent_rules.sh
+test_cargo_completers: -- tests/test_cargo_completers.sh
+test_cargo_variable_expansion: -- tests/test_cargo_variable_expansion.sh
+test_completion: -- tests/test_completion.sh
+test_ext_completers: -- tests/test_ext_completers.sh
+test_extcomp: -- tests/test_extcomp.sh
+test_function_completion: -- tests/test_function_completion.sh
+test_helpers: -- tests/test_helpers.sh
+test_hermeskanban: -- tests/test_hermeskanban.sh
+test_hermes_logs: -- tests/test_hermes_logs.sh
+test_hermes_handoff: -- tests/test_hermes_handoff.sh
+test_integration: -- tests/test_integration.sh
+test_is_cargo_tool_completion: -- tests/test_is_cargo_tool_completion.sh
+test_issue_fixes: -- tests/test_issue_fixes.sh
+test_prototype_parsing: -- tests/test_prototype_parsing.sh
+test_prototype_scoping: -- tests/test_prototype_scoping.sh
+test_preprocess: -- tests/test_preprocess.sh
+test_public_mode: -- tests/test_public_mode.sh
+test_rad_cob: -- tests/test_rad_cob.sh
+test_rad_cob_state: -- tests/test_rad_cob_state.sh
+test_rad_comment_metadata: -- tests/test_rad_comment_metadata.sh
+test_rad_identity: -- tests/test_rad_identity.sh
+test_rad_flow: -- tests/test_rad_flow.sh
+test_rad_merge_accepted_prs: -- tests/test_rad_merge_accepted_prs.sh
+test_rad_reaction: -- tests/test_rad_reaction.sh
+test_rad_state: -- tests/test_rad_state.sh
+test_rad_trust_requester: -- tests/test_rad_trust_requester.sh
+test_report_condense: -- tests/test_report_condense.sh
+test_rule_tools: -- tests/test_rule_tools.sh
+test_shellcheck_lint: -- tests/test_shellcheck_lint.sh
+test_sourcetree: -- tests/test_sourcetree.sh
+test_toplevel: -- tests/test_toplevel.sh
+test_tty_lib: -- tests/test_tty_lib.sh
+test_user_requirements: -- tests/test_user_requirements.sh
+test_usage: -- tests/test_usage.sh
+test_vendoring: -- tests/test_vendoring.sh
+test_verbosity: -- tests/test_verbosity.sh
 
-rule SETUP: 'called_as? pre-commit' testdir_enter
-rule SETUP: 'called_as? pre-merge-commit' testdir_enter
-rule SETUP: 'called_as? prepare-commit-msg' testdir_enter
-rule SETUP: 'called_as? commit-msg' testdir_enter
+SETUP: 'called_as? pre-commit' testdir_enter
+SETUP: 'called_as? pre-merge-commit' testdir_enter
+SETUP: 'called_as? prepare-commit-msg' testdir_enter
+SETUP: 'called_as? commit-msg' testdir_enter
 
-rule activate: \
-     'githook_enable~ pre-commit'\
-     'githook_enable~ pre-merge-commit'\
-     'githook_enable~ prepare-commit-msg'\
+activate:
+     'githook_enable~ pre-commit'
+     'githook_enable~ pre-merge-commit'
+     'githook_enable~ prepare-commit-msg'
      'githook_enable~ commit-msg'
 
 #rule watch: --conclusive is_entr_installed? -- 'rule_eval entr_watch "${RULE_ARGS[@]}"'
 
 # enter a recursive shell for debugging
-rule dbgsh: -- '
+dbgsh:
      echo "Entering bar shell, try <help>."
      bash --rcfile <(
           declare -f
@@ -146,4 +148,4 @@ rule dbgsh: -- '
           require help
           "
      )
-'
+

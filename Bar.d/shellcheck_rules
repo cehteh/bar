@@ -4,6 +4,10 @@
 
 ### Hooks shellcheck_lint into the std lint rule
 
+# loaded here rather than autoloaded: 'bar_lint' and the file predicates a lint answers for are
+# named 'bar_*', which no module name resolves
+require shellcheck
+
 ## Checks if shellcheck is installed and the project has any shell scripts.
 rule is_shellcheck_available: --pure 'is_command_installed shellcheck' shellcheck_has_shscripts
 

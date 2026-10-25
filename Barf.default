@@ -13,113 +13,92 @@
 #
 
 # default/MAIN
-rule lints tests doc build
+MAIN: lints tests doc build
 
 # the checks an agent runs; 'bar check agent' prints the terse contract block for them
 rule agent: lints tests
 
 # faster checking, can be used standalone or with 'watch'
-rule fastchk: --conclusive is_git_release_branch? lints tests doc
-rule fastchk: --conclusive is_git_main_branch? lints tests doc
-rule fastchk: --conclusive is_git_devel_branch? lints
-rule fastchk: --conclusive is_git_feature_branch? lint_sources
-rule fastchk: --conclusive is_git_bugfix_branch? lint_sources
-rule fastchk: --conclusive is_git_hotfix_branch? lint_sources tests
-rule fastchk: --conclusive is_git_improvement_branch? lint_sources
-rule fastchk: --conclusive is_git_doc_branch? lint_docs
-rule fastchk: --conclusive is_git_wip_branch? lint_sources
-rule fastchk: --conclusive is_git_experimental_branch? lint_sources
-rule fastchk: lints tests doc
+fastchk: [conclusive] is_git_release_branch? lints tests doc
+fastchk: [conclusive] is_git_main_branch? lints tests doc
+fastchk: [conclusive] is_git_devel_branch? lints
+fastchk: [conclusive] is_git_feature_branch? lint_sources
+fastchk: [conclusive] is_git_bugfix_branch? lint_sources
+fastchk: [conclusive] is_git_hotfix_branch? lint_sources tests
+fastchk: [conclusive] is_git_improvement_branch? lint_sources
+fastchk: [conclusive] is_git_doc_branch? lint_docs
+fastchk: [conclusive] is_git_wip_branch? lint_sources
+fastchk: [conclusive] is_git_experimental_branch? lint_sources
+fastchk: lints tests doc
 
 # automatically format fix code as much as possible and do a check
-rule dwim: fmt fix fastchk
+dwim: fmt fix fastchk
 
 # rules using this should be responsible to do only work that is necessary.
-rule PREPROCESS: fetch_resources build_assets
+PREPROCESS: fetch_resources build_assets
 
 # commits and merges to release branches
-rule pre-commit: is_git_release_branch? release_commit
-rule pre-merge-commit: is_git_release_branch? release_commit
-rule commit-msg: is_git_release_branch? release_commit_results
+pre-commit: is_git_release_branch? release_commit
+pre-merge-commit: is_git_release_branch? release_commit
+commit-msg: is_git_release_branch? release_commit_results
 
-rule release_commit: main_commit 'memodb_schedule bench'
-rule release_commit_results: main_commit_results 'memodb_result bench'
+release_commit: main_commit 'memodb_schedule bench'
+release_commit_results: main_commit_results 'memodb_result bench'
 
 # commits and merges to the main branch
-rule pre-commit: is_git_main_branch? main_commit
-rule pre-merge-commit: is_git_main_branch? main_commit
-rule commit-msg: is_git_main_branch? main_commit_results
+pre-commit: is_git_main_branch? main_commit
+pre-merge-commit: is_git_main_branch? main_commit
+commit-msg: is_git_main_branch? main_commit_results
 
-rule main_commit: \
-     devel_commit \
-     'memodb_schedule audit' \
-     'memodb_schedule doc' \
-     'memodb_schedule build'
-rule main_commit_results: \
-     devel_commit_results \
-     'memodb_result audit' \
-     'memodb_result doc' \
-     'memodb_result build'
+main_commit: devel_commit (memodb_schedule audit) (memodb_schedule doc) (memodb_schedule build)
+main_commit_results: devel_commit_results (memodb_result audit) (memodb_result doc) (memodb_result build)
 
 # commits and merges to devel branches
-rule pre-commit: is_git_devel_branch? devel_commit
-rule pre-merge-commit: is_git_devel_branch? devel_commit
-rule commit-msg: is_git_devel_branch? devel_commit_results
+pre-commit: is_git_devel_branch? devel_commit
+pre-merge-commit: is_git_devel_branch? devel_commit
+commit-msg: is_git_devel_branch? devel_commit_results
 
-rule devel_commit: \
-     feature_commit \
-     'memodb_schedule tests' \
-     'memodb_schedule test_expensive'
-rule devel_commit_results: \
-     feature_commit_results \
-     'memodb_result tests' \
-     'memodb_result test_expensive'
+devel_commit: feature_commit (memodb_schedule tests) (memodb_schedule test_expensive)
+devel_commit_results: feature_commit_results (memodb_result tests) (memodb_result test_expensive)
 
 # commits and merges to feature branches
-rule pre-commit: is_git_feature_branch? feature_commit
-rule pre-merge-commit: is_git_feature_branch? feature_commit
-rule commit-msg: is_git_feature_branch? feature_commit_results
+pre-commit: is_git_feature_branch? feature_commit
+pre-merge-commit: is_git_feature_branch? feature_commit
+commit-msg: is_git_feature_branch? feature_commit_results
 
-rule feature_commit: \
-     lints \
-     'memodb_schedule test_units'
-rule feature_commit_results: \
-     'memodb_result test_units'
+feature_commit: lints (memodb_schedule test_units)
+feature_commit_results: (memodb_result test_units)
 
 # commits and merges to bugfix branches
-rule pre-commit: is_git_bugfix_branch? devel_commit
-rule pre-merge-commit: is_git_bugfix_branch? devel_commit
-rule commit-msg: is_git_bugfix_branch? devel_commit_results
+pre-commit: is_git_bugfix_branch? devel_commit
+pre-merge-commit: is_git_bugfix_branch? devel_commit
+commit-msg: is_git_bugfix_branch? devel_commit_results
 
 # commits and merges to hotfix branches
-rule pre-commit: is_git_hotfix_branch? devel_commit
-rule pre-merge-commit: is_git_hotfix_branch? devel_commit
-rule commit-msg: is_git_hotfix_branch? devel_commit_results
+pre-commit: is_git_hotfix_branch? devel_commit
+pre-merge-commit: is_git_hotfix_branch? devel_commit
+commit-msg: is_git_hotfix_branch? devel_commit_results
 
 # commits and merges to improvement branches
-rule pre-commit: is_git_improvement_branch? devel_commit
-rule pre-merge-commit: is_git_improvement_branch? devel_commit
-rule commit-msg: is_git_improvement_branch? devel_commit_results
+pre-commit: is_git_improvement_branch? devel_commit
+pre-merge-commit: is_git_improvement_branch? devel_commit
+commit-msg: is_git_improvement_branch? devel_commit_results
 
-rule pre-commit: is_git_doc_branch? lint_docs
-rule pre-merge-commit: is_git_doc_branch? lint_docs
+pre-commit: is_git_doc_branch? lint_docs
+pre-merge-commit: is_git_doc_branch? lint_docs
 
-rule pre-commit: is_git_wip_branch? feature_commit
-rule pre-merge-commit: is_git_wip_branch? feature_commit
-rule commit-msg: is_git_wip_branch? feature_commit_results
+pre-commit: is_git_wip_branch? feature_commit
+pre-merge-commit: is_git_wip_branch? feature_commit
+commit-msg: is_git_wip_branch? feature_commit_results
 
-rule pre-commit: is_git_experimental_branch? feature_commit
-rule pre-merge-commit: is_git_experimental_branch? feature_commit
-rule commit-msg: is_git_experimental_branch? feature_commit_results
+pre-commit: is_git_experimental_branch? feature_commit
+pre-merge-commit: is_git_experimental_branch? feature_commit
+commit-msg: is_git_experimental_branch? feature_commit_results
 
 # called by githook, create temporary testdir and run the main rule there
-rule SETUP: 'called_as? pre-commit' testdir_enter
-rule SETUP: 'called_as? pre-merge-commit' testdir_enter
-rule SETUP: 'called_as? prepare-commit-msg' testdir_enter
-rule SETUP: 'called_as? commit-msg' testdir_enter
+SETUP: (called_as? pre-commit) testdir_enter
+SETUP: (called_as? pre-merge-commit) testdir_enter
+SETUP: (called_as? prepare-commit-msg) testdir_enter
+SETUP: (called_as? commit-msg) testdir_enter
 
-rule activate: \
-     'githook_enable~ pre-commit'\
-     'githook_enable~ pre-merge-commit'\
-     'githook_enable~ prepare-commit-msg'\
-     'githook_enable~ commit-msg'
+activate: (githook_enable~ pre-commit) (githook_enable~ pre-merge-commit) (githook_enable~ prepare-commit-msg) (githook_enable~ commit-msg)

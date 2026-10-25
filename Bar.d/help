@@ -825,6 +825,9 @@ RULE FILE SPELLINGS
   * 'NAME := value' assigns a variable, 'NAME ?= value' assigns it only when it is unset or
     empty.
 
+  * Shellcheck checks a module and a rule file through this filter ('bar_lint'), so a spelling
+    is not reported as a syntax error and only genuine shell defects are.
+
 
 RULE ENVIRONMENT
 

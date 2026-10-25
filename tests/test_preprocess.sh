@@ -5,9 +5,9 @@
 # Acceptance tests for the rule file filter ('preprocess' in bar, applied by 'require'), and for
 # the two readers which find rules by their header ('rule_source_blocks', 'help_describe_rules').
 #
-#   AC1  the filter is an identity over this repository's rule files: 'Barf', 'Barf.default',
-#        'example', 'Bar.d/*' and 'tests/*.sh' come back unchanged -- content and line count (a
-#        file whose last line has no newline gets one, which is all awk's 'print' does)
+#   AC1  the filter is an identity over the rule files which use no spelling, and a rule file
+#        written in the spellings expands once, keeping its line count (the expansion is a fixed
+#        point: a second pass changes nothing)
 #   AC2  one input line yields exactly one output line, counted on a file which uses every
 #        spelling
 #   AC3  every spelling behaves exactly like its hand expanded twin: same output, same exit code
@@ -67,8 +67,9 @@ runin() {
 echo "=== Testing the rule file filter ('preprocess') ==="
 echo
 
-echo "AC1 the filter is an identity over this repository's rule files"
-CORPUS=( "$REPO_ROOT/Barf" "$REPO_ROOT/Barf.default" "$REPO_ROOT/example" )
+echo "AC1 the filter is an identity over the rule files which use no spelling"
+SPELLED=( "$REPO_ROOT/Barf" "$REPO_ROOT/Barf.default" )
+CORPUS=( "$REPO_ROOT/example" )
 while IFS= read -r file; do
     CORPUS+=( "$file" )
 done < <(find "$REPO_ROOT/Bar.d" "$REPO_ROOT/tests" -maxdepth 1 -type f | sort)
@@ -83,6 +84,25 @@ for file in "${CORPUS[@]}"; do
     fi
 done
 check "$identical" "${#CORPUS[@]}" "${#CORPUS[@]} rule files come back unchanged${differed:+ (differed:$differed)}"
+
+# the repository's own rule files do use the spellings: they expand, one line out per line in, and
+# what they expand to uses no spelling any more
+for file in "${SPELLED[@]}"; do
+    name="${file#"$REPO_ROOT/"}"
+    "$BAR" preprocess "$file" >"$WORK/pp1" 2>/dev/null
+    "$BAR" preprocess "$WORK/pp1" >"$WORK/pp2" 2>/dev/null
+    check "$(wc -l <"$WORK/pp1")" "$(wc -l <"$file")" "$name: one line out per line in"
+    if cmp -s "$file" "$WORK/pp1"; then
+        fail "$name: no spelling was expanded"
+    else
+        pass "$name: the spellings were expanded"
+    fi
+    if cmp -s "$WORK/pp1" "$WORK/pp2"; then
+        pass "$name: the expansion is a fixed point"
+    else
+        fail "$name: a second pass changed the expansion"
+    fi
+done
 echo
 
 echo "AC2 one input line yields exactly one output line"
