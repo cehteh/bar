@@ -686,17 +686,28 @@ function preprocess ## <file> - Print a rule file with its make/just spellings e
     awk "$BARF_PP_AWK" "$1"
 }
 
-# 'require' sources a rule file as it is unless it is written in one of the spellings: the filter
-# is one awk per file, and a file it would hand back unchanged is worth neither the fork nor the
-# '/dev/fd/NN' its lines would carry -- bar's own 'file:line:function' reports read the path they
-# were sourced from.  This is the check, cheap and fork-free: one read, one match.
-function barf_needs_pp # <file> - true when the file carries a make/just spelling
+# 'require' sources the text the filter prints, which means the module's statements are read from
+# a pipe rather than from the module: 'BASH_SOURCE' inside it names '/dev/fd/NN'.  'BARF_PP_FILES'
+# keeps the module behind each such descriptor so a report can name the file it happened in.  It
+# is a plain '<fd>=<path>' list and exported, because a rule body runs in a subshell where an array
+# would be lost and its reports would fall back to '/dev/fd/NN'.  The descriptor is never closed:
+# bash hands out the lowest free one, so a closed one is reused by the next module and every
+# function defined from the earlier module would report the later one.
+declare -gx BARF_PP_FILES=""
+declare -g BARF_PP_NAME=""
+
+function barf_pp_name # <path> - Sets BARF_PP_NAME to the module behind a filtered stream
 {
-    local nl=$'\n'
-    local re="(^|${nl})(\\[|[A-Za-z_][A-Za-z0-9_.-]*:|[A-Za-z_][A-Za-z0-9_]*[[:space:]]*(\\?=|:=))"
-    local text=""
-    IFS= read -r -d '' text <"$1" || true
-    [[ $text =~ $re ]]
+    ## The path itself when it does not name one of our descriptors.
+    local fd="${1#/dev/fd/}"
+    local entry
+    BARF_PP_NAME="$1"
+    for entry in $BARF_PP_FILES; do
+        if [[ "${entry%%=*}" == "$fd" ]]; then
+            BARF_PP_NAME="${entry#*=}"
+            return 0
+        fi
+    done
 }
 
 function require ## [--opt] [modules..] - Loads modules.
@@ -739,13 +750,11 @@ function require ## [--opt] [modules..] - Loads modules.
                 if [[ -f "$mod_file" ]]; then
                     debug "loading: $mod_file"
                     BAR_REQUIRE_LOADED["$modname"]=pending
-                    if barf_needs_pp "$mod_file"; then
-                        # shellcheck disable=SC1090 # dynamic source
-                        source <(preprocess "$mod_file") && BAR_REQUIRE_LOADED["$modname"]=true
-                    else
-                        # shellcheck disable=SC1090 # dynamic source
-                        source "$mod_file" && BAR_REQUIRE_LOADED["$modname"]=true
-                    fi
+                    local pp_fd
+                    exec {pp_fd}< <(preprocess "$mod_file")
+                    BARF_PP_FILES+=" ${pp_fd}=${mod_file}"
+                    # shellcheck disable=SC1090 # dynamic source
+                    source "/dev/fd/$pp_fd" && BAR_REQUIRE_LOADED["$modname"]=true
                 else
                     if [[ -z "$try_load" ]]; then
                         warn "failed loading: $mod_file"
@@ -766,7 +775,15 @@ function tty_newline { :; }
 
 function source_info # [N] - returns file:line N (or 0) up the bash call stack
 {
-    echo "${BASH_SOURCE[$((${1:-0}+1))]}:${BASH_LINENO[$((${1:-0}))]}:${FUNCNAME[$((${1:-0}+1))]:+${FUNCNAME[$((${1:-0}+1))]}:}"
+    ## A module is sourced from the text the filter printed, so its frame names '/dev/fd/NN'; the
+    ## descriptor is mapped back to the module.  Line numbers need no such help: the filter prints
+    ## one line per line.
+    local file="${BASH_SOURCE[$((${1:-0}+1))]}"
+    if [[ "$file" == /dev/fd/* ]]; then
+        barf_pp_name "$file"
+        file="$BARF_PP_NAME"
+    fi
+    echo "$file:${BASH_LINENO[$((${1:-0}))]}:${FUNCNAME[$((${1:-0}+1))]:+${FUNCNAME[$((${1:-0}+1))]}:}"
 }
 
 ## Source site (file and function) of the last report, and the location prefix of the current

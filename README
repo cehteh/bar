@@ -4361,8 +4361,7 @@ RULE FILE SPELLINGS
   expands a few spellings, known from make and just, into the 'rule' syntax above. Everything
   else is passed through unchanged: the filter never refuses a line, what it does not know is
   reported by the parser, at the line it is on. Spellings and 'rule' statements may be mixed in
-  one file. 'bar preprocess <file>' prints the text which gets sourced. A file which uses none
-  of the spellings is sourced as it is, the filter is not run for it.
+  one file. 'bar preprocess <file>' prints the text which gets sourced.
 
    <name>: <deps>..                    rule <name>: <deps>..
    [<rule-flag>]..                     attached to the next header
@@ -4536,6 +4535,7 @@ MAIN API
         is reported by bar's own parser, at the line it is on.  'bar preprocess <file>' shows
         exactly the text which gets sourced.  The spellings are documented under "RULE FILE
         SPELLINGS" in 'bar help'.
+        The path itself when it does not name one of our descriptors.
 
       require [--opt] [modules..]
         Loads modules.
@@ -4548,6 +4548,9 @@ MAIN API
         run from (see :func:`bar_vendor_modules`) and loaded from there.  When there is no origin
         or the module does not exist there either it is missing: with '--opt' that is silent and
         succeeds, without it a warning is emitted and a failure returned.
+        A module is sourced from the text the filter printed, so its frame names '/dev/fd/NN'; the
+        descriptor is mapped back to the module.  Line numbers need no such help: the filter prints
+        one line per line.
 
       bar_report_condense - True when the source location should be condensed on the console.
         The verbose 'file:line:func:' location is only condensed when the output goes to the

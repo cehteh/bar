@@ -790,8 +790,7 @@ RULE FILE SPELLINGS
   expands a few spellings, known from make and just, into the 'rule' syntax above. Everything
   else is passed through unchanged: the filter never refuses a line, what it does not know is
   reported by the parser, at the line it is on. Spellings and 'rule' statements may be mixed in
-  one file. 'bar preprocess <file>' prints the text which gets sourced. A file which uses none
-  of the spellings is sourced as it is, the filter is not run for it.
+  one file. 'bar preprocess <file>' prints the text which gets sourced.
 
    <name>: <deps>..                    rule <name>: <deps>..
    [<rule-flag>]..                     attached to the next header

@@ -19,7 +19,9 @@
 #        indented follows stays a plain header
 #   AC7  'rule_show' prints a rule written in the sugar, and the documentation lists it under its
 #        '##' description
-#   AC8  a plain run stays inside the startup budget, and what the filter costs against the trunk's
+#   AC8  a report from a module names the module and the line, never the descriptor the text was
+#        sourced from ('source_info' maps '/dev/fd/NN' back)
+#   AC9  a plain run stays inside the startup budget, and what the filter costs against the trunk's
 #        'bar' is printed rather than hidden (one awk per module, optimised in a later item)
 #
 # The filter is infallible by design: it never refuses a line, what it does not know is passed
@@ -246,7 +248,23 @@ runin "$R" usage zz_sugared
 contains "$OUT" "listed from a sugared header" "the documentation lists a sugared rule with its '##' text"
 echo
 
-echo "AC8 a plain run stays inside the startup budget"
+echo "AC8 a report from a module names the module, not the stream it was sourced from"
+L="$WORK/locations"
+mkproj "$L"
+printf 'loc: -- report_from_here\n' >"$L/Barf"
+cat >"$L/Bar.d/loc_rules" <<'EOS'
+function report_from_here
+{
+    error "from a module"
+}
+EOS
+runin "$L" loc
+ERR="$(cat "$WORK/err")"
+contains "$ERR" "Bar.d/loc_rules:3:report_from_here:" "the location is the module and the line"
+absent "$ERR" "/dev/fd/" "and never the descriptor the text came from"
+echo
+
+echo "AC9 a plain run stays inside the startup budget"
 # bestrun <bar> <dir> - best of three runs of a trivial rule, in milliseconds
 bestrun() {
     local bar="$1" dir="$2" best="" start ms
