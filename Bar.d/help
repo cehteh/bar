@@ -438,6 +438,9 @@ QUICKSTART
    bar help [topic]
    ./bar help [topic]
 
+  A rule file may be written in a few make/just spellings instead of the 'rule' statements,
+  see RULE FILE SPELLINGS below.
+
 
 INVOCATION AND SEMANTICS
 
@@ -779,6 +782,49 @@ RULE DEFINITION SYNTAX
     side effects must not alter the behavior of subsequent rules when they fail. For rules
     where this may be the case, like rules changing directories they must rather die than
     proceed with a undefined state in case of a failure.
+
+
+RULE FILE SPELLINGS
+
+  A rule file -- the 'Barf' and every module in 'Bar.d/' -- is read through a filter which
+  expands a few spellings, known from make and just, into the 'rule' syntax above. Everything
+  else is passed through unchanged: the filter never refuses a line, what it does not know is
+  reported by the parser, at the line it is on. Spellings and 'rule' statements may be mixed in
+  one file. 'bar preprocess <file>' prints the text which gets sourced. A file which uses none
+  of the spellings is sourced as it is, the filter is not run for it.
+
+   <name>: <deps>..                    rule <name>: <deps>..
+   [<rule-flag>]..                     attached to the next header
+   <name>: [<clause-flag>].. <deps>..  rule <name>: --<clause-flag>.. <deps>..
+   <name>: <deps>.. ; <body>           rule <name>: <deps>.. -- <body>
+   <name>:                             an indented block below is the body
+   <name>: (<dep> <arg>..)             one dependency, quoted, arguments included
+   <NAME> := <value>                   <NAME>=<value>
+   <NAME> ?= <value>                   : "\${<NAME>:=<value>}"
+
+  * A header is a line which starts at column 0 with a name and a colon. Indented lines,
+    heredoc bodies and multi line quoted strings are never touched.
+
+  * '[<rule-flag>]..' are stacked lines at column 0, each a '--rule-flag' of RULE DEFINITION
+    SYNTAX without the dashes. They attach to the next header. They are printed as comments
+    ('# [always]'): the flags travel on the rule line, and one line in stays one line out, so a
+    parse error names the line of the file.
+
+  * '[<clause-flag>]..' after the colon are the '--clause-flag' of RULE DEFINITION SYNTAX
+    without the dashes, brackets stack.
+
+  * '; <body>' ends the dependencies, everything behind it is the clause body.
+
+  * The body of an indented block is the block's text: the indentation of its first line is
+    stripped from all its lines, blank lines belong to it, and it ends at the first non blank
+    line indented less.
+
+  * '(<dep> <arg>..)' is one dependency which carries arguments. Modifiers written outside the
+    parentheses are lifted onto it, '!(dep arg)' is the dependency '!dep arg'. Parentheses may
+    nest and inner quoting is kept as written.
+
+  * 'NAME := value' assigns a variable, 'NAME ?= value' assigns it only when it is unset or
+    empty.
 
 
 RULE ENVIRONMENT
@@ -1423,7 +1469,7 @@ function help_describe_rules
       doc_count = 0
     }
 
-    /^rule([ \t].*)?/ {
+    /^(rule([ \t].*)?|[A-Za-z_][A-Za-z0-9_.-]*:)/ {
       if (doc_count > 0) {
         line = $0
         sub(/^.*rule[ \t]+/, "", line)
@@ -1474,6 +1520,11 @@ function help_describe_rules
       sub(/^##[ \t]*/, "", line)
       doc_count++
       doc_lines[doc_count] = line
+      next
+    }
+
+    # the '[flag]' lines of a rule file spelling sit between the documentation and the header
+    /^\[[a-z][a-z-]*([ \t]+[a-z][a-z-]*)*\][ \t]*(#.*)?$/ {
       next
     }
 

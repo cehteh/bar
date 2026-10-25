@@ -59,6 +59,9 @@ QUICKSTART
    bar help [topic]
    ./bar help [topic]
 
+  A rule file may be written in a few make/just spellings instead of the 'rule' statements,
+  see RULE FILE SPELLINGS below.
+
 
 INVOCATION AND SEMANTICS
 
@@ -4352,6 +4355,49 @@ RULE DEFINITION SYNTAX
     proceed with a undefined state in case of a failure.
 
 
+RULE FILE SPELLINGS
+
+  A rule file -- the 'Barf' and every module in 'Bar.d/' -- is read through a filter which
+  expands a few spellings, known from make and just, into the 'rule' syntax above. Everything
+  else is passed through unchanged: the filter never refuses a line, what it does not know is
+  reported by the parser, at the line it is on. Spellings and 'rule' statements may be mixed in
+  one file. 'bar preprocess <file>' prints the text which gets sourced. A file which uses none
+  of the spellings is sourced as it is, the filter is not run for it.
+
+   <name>: <deps>..                    rule <name>: <deps>..
+   [<rule-flag>]..                     attached to the next header
+   <name>: [<clause-flag>].. <deps>..  rule <name>: --<clause-flag>.. <deps>..
+   <name>: <deps>.. ; <body>           rule <name>: <deps>.. -- <body>
+   <name>:                             an indented block below is the body
+   <name>: (<dep> <arg>..)             one dependency, quoted, arguments included
+   <NAME> := <value>                   <NAME>=<value>
+   <NAME> ?= <value>                   : "${<NAME>:=<value>}"
+
+  * A header is a line which starts at column 0 with a name and a colon. Indented lines,
+    heredoc bodies and multi line quoted strings are never touched.
+
+  * '[<rule-flag>]..' are stacked lines at column 0, each a '--rule-flag' of RULE DEFINITION
+    SYNTAX without the dashes. They attach to the next header. They are printed as comments
+    ('# [always]'): the flags travel on the rule line, and one line in stays one line out, so a
+    parse error names the line of the file.
+
+  * '[<clause-flag>]..' after the colon are the '--clause-flag' of RULE DEFINITION SYNTAX
+    without the dashes, brackets stack.
+
+  * '; <body>' ends the dependencies, everything behind it is the clause body.
+
+  * The body of an indented block is the block's text: the indentation of its first line is
+    stripped from all its lines, blank lines belong to it, and it ends at the first non blank
+    line indented less.
+
+  * '(<dep> <arg>..)' is one dependency which carries arguments. Modifiers written outside the
+    parentheses are lifted onto it, '!(dep arg)' is the dependency '!dep arg'. Parentheses may
+    nest and inner quoting is kept as written.
+
+  * 'NAME := value' assigns a variable, 'NAME ?= value' assigns it only when it is unset or
+    empty.
+
+
 RULE ENVIRONMENT
 
   Rules implicitly depend on the arguments passed and the current directory they run in. Any
@@ -4480,6 +4526,16 @@ MAIN API
         written to, installing only ever adds a copy here.  Prints the installed paths, returns
         non-zero when there is no origin, the name is not a module of this 'Bar.d' or the origin
         does not have it either.
+
+      preprocess <file>
+        Print a rule file with its make/just spellings expanded
+        <file> - The rule file to print.
+        Prints the text which 'require' sources for the file: a line written in one of the make/just
+        spellings is expanded into the 'rule' syntax and every other line is passed through
+        unchanged.  The filter is infallible, it never refuses input -- what it does not understand
+        is reported by bar's own parser, at the line it is on.  'bar preprocess <file>' shows
+        exactly the text which gets sourced.  The spellings are documented under "RULE FILE
+        SPELLINGS" in 'bar help'.
 
       require [--opt] [modules..]
         Loads modules.

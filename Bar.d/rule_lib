@@ -681,6 +681,7 @@ function rule_source_blocks
             printed = 0
             cont = 0
             infunc = 0
+            inbody = 0
         }
 
         {
@@ -690,6 +691,14 @@ function rule_source_blocks
                     infunc = 0
                 }
                 next
+            }
+            # an indented block below a header of a rule file spelling is the body
+            if (inbody) {
+                if ($0 ~ /^[ \t]/ || $0 ~ /^[ \t]*$/) {
+                    print
+                    next
+                }
+                inbody = 0
             }
             if (cont) {
                 print
@@ -704,6 +713,11 @@ function rule_source_blocks
             matched = 0
             if (mode == "rule" && $0 ~ /^rule([ \t]|$)/) {
                 matched = (rule_name($0) == want)
+            } else if (mode == "rule" && $0 ~ /^[A-Za-z_][A-Za-z0-9_.-]*:/) {
+                # a header in one of the rule file spellings (see "RULE FILE SPELLINGS")
+                line = $0
+                sub(/:.*$/, "", line)
+                matched = (line == want)
             } else if (mode == "function" && $0 ~ /^function[ \t]+/) {
                 matched = (function_name($0) == want)
             } else if (mode == "function" && $0 ~ /^[A-Za-z_][A-Za-z0-9_]*[ \t]*\(\)/) {
@@ -719,8 +733,10 @@ function rule_source_blocks
                 printed++
                 if (mode == "function") {
                     infunc = (index($0, "}") > 0) ? 0 : 1
-                } else {
+                } else if ($0 ~ /^rule([ \t]|$)/) {
                     cont = ($0 ~ /\\[ \t]*$/)
+                } else {
+                    inbody = 1
                 }
                 next
             }

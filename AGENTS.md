@@ -50,6 +50,8 @@ is read on every turn. Architecture, examples and the full command reference are
 ## Rules and modules
 
 - `rule [name:] [deps..] -- body`; a rule is a cached pure function of its inputs.
+- A rule file may be written in make/just spellings (`bar help "RULE FILE SPELLINGS"`); the filter is
+  `preprocess` in `bar`, and `bar preprocess <file>` prints the text which gets sourced.
 - Default rules are conjunctive; `--disjunct` stops at the first succeeding clause.
 - Dependency modifiers: `dep?` skips a dependency that fails, `!dep` expects it to fail, `dep~`
   forces execution.

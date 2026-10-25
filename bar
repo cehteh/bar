@@ -258,6 +258,447 @@ function bar_vendor_modules ## <modpath> - installs a module of Bar.d which is m
     (( installed ))
 }
 
+# The rule-file filter (see :func:`preprocess`).  It is embedded here rather than kept in a
+# 'Bar.d' module: it has to exist before the first module is sourced, and 'bar_vendor_modules'
+# copies a module into a project's 'Bar.d', where a copy would trail the 'bar' that runs it.
+declare -g BARF_PP_AWK=""
+IFS= read -r -d '' BARF_PP_AWK <<'AWK' || true
+# bar's rule-file filter: expand make/just spellings into the 'rule' syntax.
+#
+# Infallible by design.  A line which matches no transform is printed unchanged; one input line
+# produces exactly one output line, in order, and nothing is added, dropped, merged or reordered.
+# 'source <(preprocess f)' cannot report a failure of this program, so it must not have one: every
+# state machine closes in END and no path exits.
+
+function indentof(line,   i, n) {
+    n = length(line)
+    for (i = 1; i <= n; i++)
+        if (substr(line, i, 1) != " " && substr(line, i, 1) != "\t")
+            return i - 1
+    return n
+}
+
+# text as one single quoted shell word
+function squote(text) {
+    gsub(/\047/, "\047\\\047\047", text)
+    return text
+}
+
+function closebody(   i) {
+    for (i = 1; i <= nbody; i++)
+        print (i == nbody ? body[i] "\047" : body[i])
+    nbody = 0
+    inbody = 0
+}
+
+function flushheader(   i) {
+    if (!havehdr)
+        return
+    print hdr
+    for (i = 1; i <= nblank; i++)
+        print ""
+    nblank = 0
+    havehdr = 0
+}
+
+function flushattrs(   i) {
+    for (i = 1; i <= nattr; i++)
+        print attrline[i]
+    nattr = 0
+    attrflags = ""
+}
+
+# The '[flag]' lines of a header which carries them are kept as comments: the flags travel on the
+# 'rule' line, and one line in has to stay one line out, or every line number behind a flagged
+# header would name the wrong line in bar's own diagnostics.  '[always]' is not a command.
+function commentattrs(   i) {
+    for (i = 1; i <= nattr; i++)
+        print "# " attrline[i]
+}
+
+# Track the quote state across lines and queue the heredocs a line opens.  Sets sq/dq for a
+# string left open at the end of the line.
+function scan(line,   i, n, c, q, st, w, strip, pos) {
+    # the common line carries neither a quote, an escape, a comment nor a '<': nothing to track
+    if (!sq && !dq && line !~ /[\\\047"#<]/) {
+        sq = 0
+        dq = 0
+        return
+    }
+    n = length(line)
+    st = (sq ? 1 : (dq ? 2 : 0))
+    for (i = 1; i <= n; i++) {
+        c = substr(line, i, 1)
+        if (st == 1) {
+            if (c == "\047")
+                st = 0
+            continue
+        }
+        if (st == 2) {
+            if (c == "\\") { i++; continue }
+            if (c == "\"")
+                st = 0
+            continue
+        }
+        if (c == "\\") { i++; continue }
+        if (c == "#" && (i == 1 || substr(line, i - 1, 1) ~ /[ \t;|&(]/))
+            break
+        if (c == "\047") { st = 1; continue }
+        if (c == "\"") { st = 2; continue }
+        if (c != "<" || substr(line, i + 1, 1) != "<")
+            continue
+        if (substr(line, i + 2, 1) == "<") { i += 2; continue }     # <<< herestring
+        pos = i + 2
+        strip = 0
+        if (substr(line, pos, 1) == "-") { strip = 1; pos++ }
+        while (substr(line, pos, 1) == " " || substr(line, pos, 1) == "\t")
+            pos++
+        q = substr(line, pos, 1)
+        if (q == "\047" || q == "\"")
+            pos++
+        else if (q == "\\") { q = ""; pos++ }
+        else
+            q = ""
+        w = ""
+        while (pos <= n) {
+            c = substr(line, pos, 1)
+            if (q != "") {
+                if (c == q) { pos++; break }
+            } else if (c ~ /[ \t;|&<>()]/)
+                break
+            w = w c
+            pos++
+        }
+        # a number is an arithmetic shift, not a here document
+        if (w != "" && w !~ /^[0-9]+$/) {
+            nh++
+            hterm[nh] = w
+            hstrip[nh] = strip
+        }
+        i = pos - 1
+    }
+    sq = (st == 1)
+    dq = (st == 2)
+}
+
+# length of the word starting at <start> of <text>, quote, escape and paren aware
+function wordlen(text, start,   i, n, c, depth, q) {
+    n = length(text)
+    i = start
+    depth = 0
+    q = ""
+    while (i <= n) {
+        c = substr(text, i, 1)
+        if (q == "\047") {
+            if (c == "\047") q = ""
+            i++
+            continue
+        }
+        if (q == "\"") {
+            if (c == "\\") { i += 2; continue }
+            if (c == "\"") q = ""
+            i++
+            continue
+        }
+        if (c == "\\") { i += 2; continue }
+        if (c == "\047" || c == "\"") { q = c; i++; continue }
+        if (c == "(") { depth++; i++; continue }
+        if (c == ")") { if (depth > 0) depth--; i++; continue }
+        if (depth == 0 && (c == " " || c == "\t" || c == ";"))
+            break
+        i++
+    }
+    return i - start
+}
+
+# '<pre>(<inner>)<post>' as one quoted dependency, the modifiers lifted onto its first word
+function parens(tok,   i, n, c, q, depth, op, cl, pre, inner, post, len, first, more) {
+    n = length(tok)
+    q = ""
+    depth = 0
+    op = 0
+    for (i = 1; i <= n; i++) {
+        c = substr(tok, i, 1)
+        if (q != "") {
+            if (q == "\"" && c == "\\") { i++; continue }
+            if (c == q) q = ""
+            continue
+        }
+        if (c == "\\") { i++; continue }
+        if (c == "\047" || c == "\"") { q = c; continue }
+        if (c == "(" && depth == 0 && op == 0) { op = i; depth = 1; continue }
+        if (c == "(" && op != 0) { depth++; continue }
+        if (c == ")" && op != 0) {
+            depth--
+            if (depth == 0) { cl = i; break }
+        }
+    }
+    if (op == 0 || cl == 0)
+        return tok
+    pre = substr(tok, 1, op - 1)
+    inner = substr(tok, op + 1, cl - op - 1)
+    post = substr(tok, cl + 1)
+    sub(/^[ \t]+/, "", inner)
+    sub(/[ \t]+$/, "", inner)
+    if (inner == "")
+        return tok
+    len = wordlen(inner, 1)
+    first = substr(inner, 1, len)
+    more = substr(inner, len + 1)
+    sub(/^[ \t]+/, "", more)
+    return "\047" squote(pre first post (more == "" ? "" : " " more)) "\047"
+}
+
+# the text after 'name:' -- clause flags, dependencies, an inline body
+function depregion(rest,   i, n, c, k, cnt, j, inner, lead, flags, cf, tok, w, out) {
+    n = length(rest)
+    i = 1
+    while (i <= n && substr(rest, i, 1) ~ /[ \t]/)
+        i++
+    lead = substr(rest, 1, i - 1)
+    flags = ""
+    while (substr(rest, i, 1) == "[") {
+        j = index(substr(rest, i), "]")
+        if (j == 0)
+            break
+        inner = substr(rest, i + 1, j - 2)
+        if (inner !~ /^[a-z][a-z-]*([ \t]+[a-z][a-z-]*)*$/)
+            break
+        cnt = split(inner, cf, /[ \t]+/)
+        for (k = 1; k <= cnt; k++)
+            flags = flags " --" cf[k]
+        i += j
+        while (i <= n && substr(rest, i, 1) ~ /[ \t]/)
+            i++
+    }
+    rest = substr(rest, i)
+    if (flags != "") {
+        lead = ""
+        rest = (rest == "" ? "" : " " rest)
+    }
+
+    out = ""
+    i = 1
+    n = length(rest)
+    while (i <= n) {
+        c = substr(rest, i, 1)
+        if (c == " " || c == "\t") {
+            out = out c
+            i++
+            continue
+        }
+        if (c == ";") {
+            sub(/[ \t]+$/, "", out)
+            w = substr(rest, i + 1)
+            sub(/^[ \t]+/, "", w)
+            out = out " -- " w
+            break
+        }
+        w = wordlen(rest, i)
+        tok = substr(rest, i, w)
+        if (index(tok, "("))
+            tok = parens(tok)
+        out = out tok
+        i += w
+    }
+    return lead flags out
+}
+
+BEGIN {
+    nh = 0
+    sq = 0
+    dq = 0
+    nattr = 0
+    attrflags = ""
+    havehdr = 0
+    hdr = ""
+    nblank = 0
+    inbody = 0
+    base = 0
+    nbody = 0
+}
+
+{
+    line = $0
+
+    # a here document body is data
+    if (nh > 0) {
+        print line
+        cmp = line
+        if (hstrip[1])
+            sub(/^\t+/, "", cmp)
+        if (cmp == hterm[1]) {
+            for (i = 1; i < nh; i++) {
+                hterm[i] = hterm[i + 1]
+                hstrip[i] = hstrip[i + 1]
+            }
+            nh--
+        }
+        next
+    }
+
+    # the rest of a multi line quoted string is data
+    if (sq || dq) {
+        print line
+        scan(line)
+        next
+    }
+
+    # an indented body block
+    if (inbody) {
+        if (line ~ /^[ \t]*$/) {
+            body[++nbody] = ""
+            next
+        }
+        if (indentof(line) >= base) {
+            body[++nbody] = squote(substr(line, base + 1))
+            next
+        }
+        closebody()
+    }
+
+    # blank lines between a buffered header and its body belong to the body
+    if (havehdr && line ~ /^[ \t]*$/) {
+        nblank++
+        next
+    }
+
+    if (line ~ /^[ \t]*$/) {
+        flushattrs()
+        print line
+        next
+    }
+
+    # an indented line after a buffered header is its body
+    if (havehdr && indentof(line) > 0) {
+        print hdr ((hdr ~ /--?$/) ? "\047" : " -- \047")
+        for (i = 1; i <= nblank; i++)
+            print ""
+        nblank = 0
+        havehdr = 0
+        base = indentof(line)
+        inbody = 1
+        nbody = 0
+        body[++nbody] = squote(substr(line, base + 1))
+        next
+    }
+
+    # a header which nothing indented follows stays a plain header
+    if (havehdr)
+        flushheader()
+
+    # 'NAME := value' is make's 'NAME=value'
+    if (match(line, /^[A-Za-z_][A-Za-z0-9_]*[ \t]*:=/)) {
+        flushattrs()
+        name = substr(line, 1, RLENGTH)
+        sub(/[ \t]*:=$/, "", name)
+        value = substr(line, RLENGTH + 1)
+        sub(/^[ \t]+/, "", value)
+        print name "=" value
+        scan(line)
+        next
+    }
+
+    # 'NAME ?= value' is make's 'NAME ?= value' with the current value kept
+    if (match(line, /^[A-Za-z_][A-Za-z0-9_]*[ \t]*\?=/)) {
+        flushattrs()
+        name = substr(line, 1, RLENGTH)
+        sub(/[ \t]*\?=$/, "", name)
+        value = substr(line, RLENGTH + 1)
+        sub(/^[ \t]+/, "", value)
+        print ": \"${" name ":=" value "}\""
+        scan(line)
+        next
+    }
+
+    # stacked '[flag]' lines attach to the next header
+    if (line ~ /^\[[a-z][a-z-]*([ \t]+[a-z][a-z-]*)*\][ \t]*(#.*)?$/) {
+        inner = line
+        sub(/^\[/, "", inner)
+        sub(/\].*$/, "", inner)
+        cnt = split(inner, tok, /[ \t]+/)
+        for (k = 1; k <= cnt; k++)
+            attrflags = attrflags " --" tok[k]
+        attrline[++nattr] = line
+        next
+    }
+
+    # a header: '<name>: ...' at column 0
+    if (line ~ /^[A-Za-z_][A-Za-z0-9_.-]*:/ && line !~ /\\$/) {
+        flushheader()
+        nblank = 0
+        match(line, /^[A-Za-z_][A-Za-z0-9_.-]*:/)
+        name = substr(line, 1, RLENGTH - 1)
+        hdr = "rule" (nattr ? attrflags : "") " " name ":" depregion(substr(line, RLENGTH + 1))
+        commentattrs()
+        attrflags = ""
+        nattr = 0
+        havehdr = 1
+        scan(line)
+        # a header line which opens a string or a heredoc has its data behind it: it can not be
+        # waiting for a body block, or the data would overtake it
+        if (sq || dq || nh > 0)
+            flushheader()
+        next
+    }
+
+    # anything else passes through
+    flushattrs()
+    print line
+    scan(line)
+}
+
+# an indented body may start with the first indented line after a buffered header
+END {
+    if (inbody)
+        closebody()
+    flushheader()
+    flushattrs()
+}
+AWK
+
+function preprocess ## <file> - Print a rule file with its make/just spellings expanded
+{
+    ## <file> - The rule file to print.
+    ##
+    ## Prints the text which 'require' sources for the file: a line written in one of the make/just
+    ## spellings is expanded into the 'rule' syntax and every other line is passed through
+    ## unchanged.  The filter is infallible, it never refuses input -- what it does not understand
+    ## is reported by bar's own parser, at the line it is on.  'bar preprocess <file>' shows
+    ## exactly the text which gets sourced.  The spellings are documented under "RULE FILE
+    ## SPELLINGS" in 'bar help'.
+    case "${1:-}" in
+    -h | --help)
+        require --opt help
+        help_usage preprocess
+        return 0
+        ;;
+    "")
+        require --opt help
+        help_usage_error preprocess "no rule file given"
+        return 2
+        ;;
+    esac
+    if [[ -z "${BARF_PP_AWK:-}" ]] || ! command -v awk >/dev/null; then
+        cat -- "$1"
+        return 0
+    fi
+    awk "$BARF_PP_AWK" "$1"
+}
+
+# 'require' sources a rule file as it is unless it is written in one of the spellings: the filter
+# is one awk per file, and a file it would hand back unchanged is worth neither the fork nor the
+# '/dev/fd/NN' its lines would carry -- bar's own 'file:line:function' reports read the path they
+# were sourced from.  This is the check, cheap and fork-free: one read, one match.
+function barf_needs_pp # <file> - true when the file carries a make/just spelling
+{
+    local nl=$'\n'
+    local re="(^|${nl})(\\[|[A-Za-z_][A-Za-z0-9_.-]*:|[A-Za-z_][A-Za-z0-9_]*[[:space:]]*(\\?=|:=))"
+    local text=""
+    IFS= read -r -d '' text <"$1" || true
+    [[ $text =~ $re ]]
+}
+
 function require ## [--opt] [modules..] - Loads modules.
 {
     ## [--opt]     - Make the modules optional, when they do not exist then no warning is emitted
@@ -298,8 +739,13 @@ function require ## [--opt] [modules..] - Loads modules.
                 if [[ -f "$mod_file" ]]; then
                     debug "loading: $mod_file"
                     BAR_REQUIRE_LOADED["$modname"]=pending
-                    # shellcheck disable=SC1090 # dynamic source
-                    source "$mod_file" && BAR_REQUIRE_LOADED["$modname"]=true
+                    if barf_needs_pp "$mod_file"; then
+                        # shellcheck disable=SC1090 # dynamic source
+                        source <(preprocess "$mod_file") && BAR_REQUIRE_LOADED["$modname"]=true
+                    else
+                        # shellcheck disable=SC1090 # dynamic source
+                        source "$mod_file" && BAR_REQUIRE_LOADED["$modname"]=true
+                    fi
                 else
                     if [[ -z "$try_load" ]]; then
                         warn "failed loading: $mod_file"
