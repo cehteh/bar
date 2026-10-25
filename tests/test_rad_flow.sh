@@ -18,7 +18,7 @@
 #   AC18 rad_trust: '--threshold' counts commits, '<n>%' the share of the repository's authored ones
 #   AC19 rad_trust: an item the node does not hold, or one of the other type, is exit 2
 #   AC20 rad_trust: 'owner' is the identity which established the repository, not its latest reviser
-#   AC21 rad_trust: '--second-party' is the actor against the item's opener, and needs an item
+#   AC21 rad_trust: '--second-party' is the actor against the requester, and against itself without one
 #   AC6  rad_topic: creates '<class>-<description>' on the branch of the same name, exit 0
 #   AC7  rad_topic: the main checkout stays clean, '.worktrees/' is excluded, base is the trunk
 #   AC8  rad_topic: the description is slugified, a name over 40 characters is refused
@@ -423,24 +423,32 @@ run_bar_env "$TRUST" "RAD_TRIAGE_FACTS=$STUB" "RAD_BIN=$FAKERAD" "STUB_ARGS=/dev
     -- rad_trust --repo "$FACT_RID" --author "$REVISER" --grounds owner --issue "$ITEM"
 check "$RC" "1" "the identity of a later revision is not"
 
-echo "--- AC21 '--second-party': somebody other than the item's opener ---"
+echo "--- AC21 '--second-party': somebody other than the identity which asked ---"
 run_bar_env "$TRUST" "RAD_TRIAGE_FACTS=$STUB" "RAD_BIN=$FAKERAD" "STUB_ARGS=/dev/null" \
     "STUB_JSON=$(fact_json "did:key:$OPENER" true 2)" \
     -- rad_trust --repo "$FACT_RID" --author "$OPENER" --second-party --issue "$ITEM"
 check "$RC" "0" "a verdict is an answer, exit 0"
-check "$(printf '%s' "$OUT" | jq -r '.second_party')" "false" "the opener is nobody's second party"
-check "$(printf '%s' "$OUT" | jq -r '.grounds.opened')" "true" "and the dump still carries the ground it was read from"
+check "$(printf '%s' "$OUT" | jq -r '.second_party')" "false" \
+    "without '--requester' the actor is the requester, so nobody is a second party"
+check "$(printf '%s' "$OUT" | jq -r '.grounds.opened')" "true" "the named item is still read as a ground"
 check "$(printf '%s' "$OUT" | jq -r '.verdict // "none"')" "none" "the dump decides nothing, as '--dump' does"
 run_bar_env "$TRUST" "RAD_TRIAGE_FACTS=$STUB" "RAD_BIN=$FAKERAD" "STUB_ARGS=/dev/null" \
     "STUB_JSON=$(fact_json "did:key:$ASSIGNEE" false 1)" \
     -- rad_trust --repo "$FACT_RID" --author "$ASSIGNEE" --second-party --issue "$ITEM"
 check "$RC" "0" "exit 0 for somebody who did not open the item"
-check "$(printf '%s' "$OUT" | jq -r '.second_party')" "true" "an assignee is a second party"
+check "$(printf '%s' "$OUT" | jq -r '.second_party')" "false" \
+    "an assignee is no second party to its own question: the opener is not consulted"
+run_bar_env "$TRUST" "RAD_TRIAGE_FACTS=$STUB" "RAD_BIN=$FAKERAD" "STUB_ARGS=/dev/null" \
+    "STUB_JSON=$(fact_json "did:key:$OPENER" false 1)" \
+    -- rad_trust --repo "$FACT_RID" --author "$OPENER" --second-party --requester "$OWNER" --issue "$ITEM"
+check "$RC" "0" "a named requester answers too"
+check "$(printf '%s' "$OUT" | jq -r '.second_party')" "true" "and somebody else is a second party"
 run_bar_env "$TRUST" "RAD_TRIAGE_FACTS=$STUB" "RAD_BIN=$FAKERAD" "STUB_ARGS=/dev/null" \
     "STUB_JSON=$(fact_json "did:key:$OPENER" false 1)" \
     -- rad_trust --repo "$FACT_RID" --author "$OPENER" --second-party --grounds delegate --issue "$ITEM"
-check "$(printf '%s' "$OUT" | jq -r '.grounds.opened')" "true" "an explicit --grounds does not drop the comparison"
-check "$(printf '%s' "$OUT" | jq -r '.second_party')" "false" "and the verdict is still the opener's"
+check "$(printf '%s' "$OUT" | jq -r '.grounds.opened // "absent"')" "absent" \
+    "no ground is computed for the comparison"
+check "$(printf '%s' "$OUT" | jq -r '.second_party')" "false" "and the comparison is the actor's own"
 run_bar_env "$TRUST" "RAD_TRIAGE_FACTS=$STUB" "RAD_BIN=$FAKERAD" "STUB_ARGS=/dev/null" \
     "STUB_JSON=$(fact_json "did:key:$ASSIGNEE" false 1)" \
     -- rad_trust --repo "$FACT_RID" --author "$ASSIGNEE" --dump --issue "$ITEM"
@@ -449,9 +457,14 @@ check "$(printf '%s' "$OUT" | jq -r '.second_party // "absent"')" "absent" \
 run_bar_env "$TRUST" "RAD_TRIAGE_FACTS=$STUB" "RAD_BIN=$FAKERAD" "STUB_ARGS=/dev/null" \
     "STUB_JSON=$(fact_json "did:key:$ASSIGNEE" false 1)" \
     -- rad_trust --repo "$FACT_RID" --author "$ASSIGNEE" --second-party
-check "$RC" "2" "'--second-party' without an item is a usage error, never 'true' for everybody"
+check "$RC" "0" "'--second-party' alone needs no item: the requester is the actor"
+check "$(printf '%s' "$OUT" | jq -r '.second_party')" "false" "and the answer is 'false'"
+run_bar_env "$TRUST" "RAD_TRIAGE_FACTS=$STUB" "RAD_BIN=$FAKERAD" "STUB_ARGS=/dev/null" \
+    "STUB_JSON=$(fact_json "did:key:$ASSIGNEE" false 1)" \
+    -- rad_trust --repo "$FACT_RID" --author "$ASSIGNEE" --second-party --requester opener
+check "$RC" "2" "an alias is not a requester: two identities can answer to one"
 check "$OUT" "" "and nothing is printed on stdout"
-contains "$ERR" "needs '--issue <id>' or '--patch <id>'" "the refusal names what it needs"
+contains "$ERR" "never an alias" "the refusal says what a requester may be"
 
 # -------------------------------------------------------------------------------------------------
 # AC6..AC13 - rad_topic
