@@ -4,10 +4,10 @@
 
 ### Support for the shellcheck shell linter
 ###
-### A bar module or a rule file is not plain bash: it may be written in the make/just spellings
-### 'preprocess' expands.  Those files are checked through 'bar_lint', which lets shellcheck read
-### the expanded text, so the sugar is no longer reported as a syntax error.  Everything else is
-### checked as it is written.
+### A bar module or a rule file is not plain bash: it may be written in the make/just-like
+### syntax 'preprocess' expands.  Those files are checked through 'bar_lint', which lets shellcheck
+### read the expanded text, so the sugar is no longer reported as a syntax error.  Everything else
+### is checked as it is written.
 ###
 ### Shellcheck is surprisingly slow.  In projects using bar one can prevent the bar files
 ### themselves being checked by setting in 'Barf':
@@ -43,7 +43,7 @@ function bar_lint ## <file> - Lint a bar module or rule file with shellcheck
     ## <file> - The module or rule file to check.
     ##
     ## Shellcheck reads the text 'preprocess' prints, which is the text 'require' sources: a file
-    ## written in the make/just spellings is checked as the 'rule' syntax it is expanded to, and
+    ## written in the make/just syntax is checked as the 'rule' syntax it is expanded to, and
     ## only genuine shell defects are reported.  Diagnostics name the file, not the descriptor the
     ## printed text was read from.  '--shell=bash' because the file's shebang names 'bar'.
     ##
@@ -104,8 +104,8 @@ function shellcheck_lint ## Test if all shell scripts under git control pass the
     ## every captured log or memodb entry was full of escape sequences.  '--color=auto' is the
     ## shellcheck default: colour for a human at a terminal, plain text for a capture.
     ##
-    ## A bar module or rule file goes through 'bar_lint': it is filtered before it is checked, the
-    ## make/just spellings are not bash.  Every other file is checked as it is written.
+    ## A bar module or rule file goes through 'bar_lint': it is preprocessed before it is checked,
+    ## the make/just syntax is not bash.  Every other file is checked as it is written.
     trace "shellcheck $(shellcheck_list_shscripts)"
     local rc=0
     local file

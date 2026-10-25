@@ -263,7 +263,7 @@ function bar_vendor_modules ## <modpath> - installs a module of Bar.d which is m
 # copies a module into a project's 'Bar.d', where a copy would trail the 'bar' that runs it.
 declare -g BARF_PP_AWK=""
 IFS= read -r -d '' BARF_PP_AWK <<'AWK' || true
-# bar's rule-file filter: expand make/just spellings into the 'rule' syntax.
+# bar's rule-file preprocessor: expand the make/just syntax into the 'rule' syntax.
 #
 # Infallible by design.  A line which matches no transform is printed unchanged; one input line
 # produces exactly one output line, in order, and nothing is added, dropped, merged or reordered.
@@ -657,16 +657,16 @@ END {
 }
 AWK
 
-function preprocess ## <file> - Print a rule file with its make/just spellings expanded
+function preprocess ## <file> - Print a rule file with its make/just syntax expanded
 {
     ## <file> - The rule file to print.
     ##
-    ## Prints the text which 'require' sources for the file: a line written in one of the make/just
-    ## spellings is expanded into the 'rule' syntax and every other line is passed through
-    ## unchanged.  The filter is infallible, it never refuses input -- what it does not understand
-    ## is reported by bar's own parser, at the line it is on.  'bar preprocess <file>' shows
-    ## exactly the text which gets sourced.  The spellings are documented under "RULE FILE
-    ## SPELLINGS" in 'bar help'.
+    ## Prints the text which 'require' sources for the file: a line written in the syntax close to
+    ## makefiles and justfiles is expanded into the 'rule' syntax and every other line is passed
+    ## through unchanged.  The preprocessor is infallible, it never refuses input -- what it does
+    ## not understand is reported by bar's own parser, at the line it is on.  'bar preprocess
+    ## <file>' shows exactly the text which gets sourced.  That syntax is documented under
+    ## "RULE FILE PREPROCESSOR" in 'bar help'.
     case "${1:-}" in
     -h | --help)
         require --opt help

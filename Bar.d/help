@@ -438,8 +438,8 @@ QUICKSTART
    bar help [topic]
    ./bar help [topic]
 
-  A rule file may be written in a few make/just spellings instead of the 'rule' statements,
-  see RULE FILE SPELLINGS below.
+  A rule file may be written in a syntax close to makefiles and justfiles, see RULE FILE
+  PREPROCESSOR below.
 
 
 INVOCATION AND SEMANTICS
@@ -595,7 +595,58 @@ RULE SEMANTICS
   shortcuts to make the body refer to shell functions, this should be preferred.
 
 
+RULE FILE PREPROCESSOR
+
+  A rule file -- the 'Barf' and every module in 'Bar.d/' -- may be written in a syntax close to
+  the one of makefiles and justfiles.  'bar' runs a preprocessor over it which expands that syntax
+  into the 'rule' statements of RULE DEFINITION SYNTAX below and passes every other line through
+  unchanged: it never refuses a line, what it does not know is reported by the parser, at the line
+  it is on.  Both syntaxes may be mixed in one file, and for a rule file you write this is the
+  preferred one: 'rule' is the plain form it expands to, for what it cannot express.
+  'bar preprocess <file>' prints the text which gets sourced.
+
+   <name>: <deps>..                    rule <name>: <deps>..
+   [<rule-flag>]..                     attached to the next header
+   <name>: [<clause-flag>].. <deps>..  rule <name>: --<clause-flag>.. <deps>..
+   <name>: <deps>.. ; <body>           rule <name>: <deps>.. -- <body>
+   <name>:                             an indented block below is the body
+   <name>: (<dep> <arg>..)             one dependency, quoted, arguments included
+   <NAME> := <value>                   <NAME>=<value>
+   <NAME> ?= <value>                   : "\${<NAME>:=<value>}"
+
+  * A header is a line which starts at column 0 with a name and a colon. Indented lines,
+    heredoc bodies and multi line quoted strings are never touched.
+
+  * '[<rule-flag>]..' are stacked lines at column 0, each a '--rule-flag' of RULE DEFINITION
+    SYNTAX without the dashes. They attach to the next header. They are printed as comments
+    ('# [always]'): the flags travel on the rule line, and one line in stays one line out, so a
+    parse error names the line of the file.
+
+  * '[<clause-flag>]..' after the colon are the '--clause-flag' of RULE DEFINITION SYNTAX
+    without the dashes, brackets stack.
+
+  * '; <body>' ends the dependencies, everything behind it is the clause body.
+
+  * The body of an indented block is the block's text: the indentation of its first line is
+    stripped from all its lines, blank lines belong to it, and it ends at the first non blank
+    line indented less.
+
+  * '(<dep> <arg>..)' is one dependency which carries arguments. Modifiers written outside the
+    parentheses are lifted onto it, '!(dep arg)' is the dependency '!dep arg'. Parentheses may
+    nest and inner quoting is kept as written.
+
+  * 'NAME := value' assigns a variable, 'NAME ?= value' assigns it only when it is unset or
+    empty.
+
+  * Shellcheck checks a module and a rule file through this preprocessor ('bar_lint'), so the
+    make/just syntax is not reported as a syntax error and only genuine shell defects are.
+
+
 RULE DEFINITION SYNTAX
+
+  This is the plain form a rule file is preprocessed into.  A rule file you write is normally
+  written in the make/just-like syntax of RULE FILE PREPROCESSOR above, which is the preferred
+  one; 'rule' statements are for what that syntax cannot express.
 
    rule [[--rule-flag].. <name>:] [--clause-flag].. [[!]deps[?|~][??] args..]..
    rule [[--rule-flag].. <name>:] [--clause-flag].. [[!]deps[?|~][??] args..].. -
@@ -782,51 +833,6 @@ RULE DEFINITION SYNTAX
     side effects must not alter the behavior of subsequent rules when they fail. For rules
     where this may be the case, like rules changing directories they must rather die than
     proceed with a undefined state in case of a failure.
-
-
-RULE FILE SPELLINGS
-
-  A rule file -- the 'Barf' and every module in 'Bar.d/' -- is read through a filter which
-  expands a few spellings, known from make and just, into the 'rule' syntax above. Everything
-  else is passed through unchanged: the filter never refuses a line, what it does not know is
-  reported by the parser, at the line it is on. Spellings and 'rule' statements may be mixed in
-  one file. 'bar preprocess <file>' prints the text which gets sourced.
-
-   <name>: <deps>..                    rule <name>: <deps>..
-   [<rule-flag>]..                     attached to the next header
-   <name>: [<clause-flag>].. <deps>..  rule <name>: --<clause-flag>.. <deps>..
-   <name>: <deps>.. ; <body>           rule <name>: <deps>.. -- <body>
-   <name>:                             an indented block below is the body
-   <name>: (<dep> <arg>..)             one dependency, quoted, arguments included
-   <NAME> := <value>                   <NAME>=<value>
-   <NAME> ?= <value>                   : "\${<NAME>:=<value>}"
-
-  * A header is a line which starts at column 0 with a name and a colon. Indented lines,
-    heredoc bodies and multi line quoted strings are never touched.
-
-  * '[<rule-flag>]..' are stacked lines at column 0, each a '--rule-flag' of RULE DEFINITION
-    SYNTAX without the dashes. They attach to the next header. They are printed as comments
-    ('# [always]'): the flags travel on the rule line, and one line in stays one line out, so a
-    parse error names the line of the file.
-
-  * '[<clause-flag>]..' after the colon are the '--clause-flag' of RULE DEFINITION SYNTAX
-    without the dashes, brackets stack.
-
-  * '; <body>' ends the dependencies, everything behind it is the clause body.
-
-  * The body of an indented block is the block's text: the indentation of its first line is
-    stripped from all its lines, blank lines belong to it, and it ends at the first non blank
-    line indented less.
-
-  * '(<dep> <arg>..)' is one dependency which carries arguments. Modifiers written outside the
-    parentheses are lifted onto it, '!(dep arg)' is the dependency '!dep arg'. Parentheses may
-    nest and inner quoting is kept as written.
-
-  * 'NAME := value' assigns a variable, 'NAME ?= value' assigns it only when it is unset or
-    empty.
-
-  * Shellcheck checks a module and a rule file through this filter ('bar_lint'), so a spelling
-    is not reported as a syntax error and only genuine shell defects are.
 
 
 RULE ENVIRONMENT
@@ -1525,7 +1531,7 @@ function help_describe_rules
       next
     }
 
-    # the '[flag]' lines of a rule file spelling sit between the documentation and the header
+    # the '[flag]' lines of a make/just style header sit between the documentation and the header
     /^\[[a-z][a-z-]*([ \t]+[a-z][a-z-]*)*\][ \t]*(#.*)?$/ {
       next
     }

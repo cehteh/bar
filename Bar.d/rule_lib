@@ -692,7 +692,7 @@ function rule_source_blocks
                 }
                 next
             }
-            # an indented block below a header of a rule file spelling is the body
+            # an indented block below a make/just style header is the body
             if (inbody) {
                 if ($0 ~ /^[ \t]/ || $0 ~ /^[ \t]*$/) {
                     print
@@ -714,7 +714,7 @@ function rule_source_blocks
             if (mode == "rule" && $0 ~ /^rule([ \t]|$)/) {
                 matched = (rule_name($0) == want)
             } else if (mode == "rule" && $0 ~ /^[A-Za-z_][A-Za-z0-9_.-]*:/) {
-                # a header in one of the rule file spellings (see "RULE FILE SPELLINGS")
+                # a make/just style header (see "RULE FILE PREPROCESSOR")
                 line = $0
                 sub(/:.*$/, "", line)
                 matched = (line == want)
