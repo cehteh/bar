@@ -3354,6 +3354,18 @@ MODULE API/RULES
         lists all loaded rules or rules matching pattern
         Because of automatic module loading this list is only a current view for diagnostics.
 
+    Rules:
+
+      rule_show <rulename>
+        Prints the source of a rule, with the function it calls
+        - a rule which only calls the function of its name: that function is shown too
+
+      rule_edit <rulename> [-f|--function] [filepattern]
+        Opens a definition in the users editor
+        - [-f|--function]: a function definition instead of a rule
+        - [filepattern]: glob or word narrowing the files, one file opens directly
+        - only a file below the base directory opens: change into the directory of one written outside it
+
   run - Module for running tests in resource limited environments
 
     Variables:

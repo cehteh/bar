@@ -586,9 +586,395 @@ function rule_list ## [pattern] - lists all loaded rules or rules matching patte
     done | less -SR
 }
 
+# Rule sources -- where a rule is written down
+#
+# 'rule_show' and 'rule_edit' answer what a rule's name alone does not: how its source looks and
+# in which file it stands.  Both read the rule files instead of the loaded rule, so what is
+# shown is what an edit would change.
+#
+# The rule files are the rulefile ('$BARF_FILE'), every module of '$BAR_DIR' and bar itself.  A
+# rule is found by its 'rule <name>:' statement, a function by its 'function <name>' definition;
+# the '##' documentation above a definition belongs to what is shown.
+#
+# The scan reaches outside the project when bar falls back to an installed copy, so 'rule_show'
+# answers those too while 'rule_edit' opens only a file below '$BAR_TOPLEVEL'.
+
+function rule_source_files
+{
+    # The rule files in the order they are searched: the project's own rules first.
+    local -a files=()
+    [[ -n "${BARF_FILE:-}" && -f "${BARF_FILE:-}" ]] && files+=("$BARF_FILE")
+    if [[ -n "${BAR_DIR:-}" && -d "${BAR_DIR:-}" ]]; then
+        files+=("$BAR_DIR"/*)
+    fi
+    [[ -n "${BAR_SELF:-}" && -f "${BAR_SELF:-}" ]] && files+=("$BAR_SELF")
+
+    local file
+    local -A seen=()
+    for file in ${files[@]+"${files[@]}"}; do
+        [[ -f "$file" ]] || continue
+        [[ -n "${seen[$file]:-}" ]] && continue
+        seen[$file]=1
+        printf '%s\n' "$file"
+    done
+}
+
+# rule_source_inside <file> - true when the file is written below the base directory
+function rule_source_inside
+{
+    # 'rule_edit' opens files of the project only.  The scan reaches outside it -- the installed
+    # bar and the modules bar falls back to when no rule directory exists -- and reading those is
+    # what 'rule_show' is for; an edit is made where the file lives, so one changes into that
+    # directory instead.
+    local base="${BAR_TOPLEVEL:-}" file
+    [[ -n "$base" ]] || return 1
+    base="$(realpath -- "$base" 2>/dev/null)" || return 1
+    file="$(realpath -- "${1:-}" 2>/dev/null)" || return 1
+    [[ "$file" == "$base"/* ]]
+}
+
+# rule_source_blocks <file> <name> <rule|function> - the blocks which define a name
+function rule_source_blocks
+{
+    # A block is the statement (with its '##' documentation and its continuation lines, or the
+    # whole function body) preceded by a '# <file>:<line>' line naming the statement.  Returns 1
+    # when the file defines nothing of that name.
+    awk -v want="$2" -v mode="$3" '
+        function reset_docs() {
+            ndoc = 0
+        }
+
+        function flush_docs(   i) {
+            for (i = 1; i <= ndoc; i++) {
+                print doc[i]
+            }
+            ndoc = 0
+        }
+
+        # the name a "rule" statement defines: only a first word ending in ':' names one,
+        # everything else is a dependency of MAIN
+        function rule_name(line,   rest, token) {
+            rest = line
+            sub(/^rule[ \t]*/, "", rest)
+            while (rest ~ /^--[A-Za-z0-9_-]+([ \t]|$)/) {
+                sub(/^--[A-Za-z0-9_-]+[ \t]*/, "", rest)
+            }
+            token = rest
+            sub(/[ \t].*$/, "", token)
+            if (token !~ /:$/) {
+                return "MAIN"
+            }
+            sub(/:$/, "", token)
+            return ((token == "") ? "MAIN" : token)
+        }
+
+        # the name a "function" or "<name> ()" definition defines
+        function function_name(line,   rest) {
+            rest = line
+            sub(/^function[ \t]+/, "", rest)
+            sub(/[^A-Za-z0-9_].*$/, "", rest)
+            return rest
+        }
+
+        BEGIN {
+            reset_docs()
+            printed = 0
+            cont = 0
+            infunc = 0
+        }
+
+        {
+            if (infunc) {
+                print
+                if ($0 ~ /^}/) {
+                    infunc = 0
+                }
+                next
+            }
+            if (cont) {
+                print
+                cont = ($0 ~ /\\[ \t]*$/)
+                next
+            }
+            if ($0 ~ /^##/ && $0 !~ /^###/) {
+                doc[++ndoc] = $0
+                next
+            }
+
+            matched = 0
+            if (mode == "rule" && $0 ~ /^rule([ \t]|$)/) {
+                matched = (rule_name($0) == want)
+            } else if (mode == "function" && $0 ~ /^function[ \t]+/) {
+                matched = (function_name($0) == want)
+            } else if (mode == "function" && $0 ~ /^[A-Za-z_][A-Za-z0-9_]*[ \t]*\(\)/) {
+                matched = (function_name($0) == want)
+            }
+
+            if (matched) {
+                # the header names the statement, the documentation above it follows: that is the
+                # line an editor is asked to put the cursor on
+                printf "# %s:%d\n", FILENAME, NR
+                flush_docs()
+                print
+                printed++
+                if (mode == "function") {
+                    infunc = (index($0, "}") > 0) ? 0 : 1
+                } else {
+                    cont = ($0 ~ /\\[ \t]*$/)
+                }
+                next
+            }
+            reset_docs()
+        }
+
+        END {
+            exit ((printed > 0) ? 0 : 1)
+        }
+    ' "$1"
+}
+
+# rule_source_first_line <file> <name> <rule|function> - the line a definition starts at
+function rule_source_first_line
+{
+    local blocks
+    blocks="$(rule_source_blocks "$1" "$2" "$3")" || return 1
+    blocks="${blocks%%$'\n'*}"
+    printf '%s\n' "${blocks##*:}"
+}
+
+# A clause which only calls the function of the rules name: 'rule foo: -' and 'rule foo:' both
+# reduce to that body, so the function is where the work is written.
+# rule_clause_calls_function <clause> <rulename> - true when the clause only calls that function
+function rule_clause_calls_function
+{
+    local clause="$1"
+    local name="$2"
+    [[ -n "${BAR_CLAUSE_DEPS[$clause]:-}" ]] && return 1
+    local body="${BAR_CLAUSES[$clause]:-}"
+    body="${body#"${body%%[![:space:]]*}"}"
+    body="${body%"${body##*[![:space:]]}"}"
+    [[ "$body" == "$name \"\${RULE_ARGS[@]}\"" ]]
+}
+
+# rule_show_function <rulename> - prints the function a rule of that name calls
+function rule_show_function
+{
+    local name="$1"
+    local clause
+    local calls=
+    for clause in ${BAR_RULES[$name]:-}; do
+        if rule_clause_calls_function "$clause" "$name"; then
+            calls=true
+            break
+        fi
+    done
+    [[ -n "$calls" ]] || return 0
+
+    local file blocks
+    while IFS= read -r file; do
+        if blocks="$(rule_source_blocks "$file" "$name" function)"; then
+            printf '\n%s\n' "$blocks"
+        fi
+    done < <(rule_source_files)
+}
+
+# 'rule_autoload' dies on a name nothing provides, and a name that is only defined in a lazily
+# loaded module is exactly what 'rule_show' has to answer: load what the name could name, fatal
+# only when the scan below finds no definition either.
+# rule_show_autoload <name> - loads the module a rule name belongs to
+function rule_show_autoload
+{
+    local modname="${1#always_}"
+    modname="${modname#is_}"
+    modname="${modname#has_}"
+    modname="${modname#try_}"
+    modname="${modname%%_*}"
+    require --opt "$modname" "${modname}_lib"
+}
+
+function rule_show
+{
+    # body of the 'rule_show' rule
+    local name="${1:-}"
+    if [[ -z "$name" || "$name" == -* ]]; then
+        case "$name" in
+        -h | --help)
+            require help
+            help_usage rule_show
+            return 0
+            ;;
+        *)
+            require help
+            help_usage_error rule_show "a rule name is required"
+            return 2
+            ;;
+        esac
+    fi
+
+    local file blocks
+    local found=0
+    while IFS= read -r file; do
+        if blocks="$(rule_source_blocks "$file" "$name" rule)"; then
+            [[ "$found" -gt 0 ]] && printf '\n'
+            printf '%s\n' "$blocks"
+            found=$((found + 1))
+        fi
+    done < <(rule_source_files)
+
+    if [[ "$found" -eq 0 ]]; then
+        error "rule_show: no rule '$name' in this projects rule files"
+        return 1
+    fi
+
+    # the clause bodies tell whether the rule just calls a function of its name
+    rule_exists "$name" || rule_show_autoload "$name"
+    rule_show_function "$name"
+}
+
+# rule_file_matches <file> <pattern> - true when the pattern selects that file
+function rule_file_matches
+{
+    # A pattern selects a file as a glob for its path or its basename, or as a plain word
+    # anywhere in the path.
+    local file="$1"
+    local pattern="$2"
+    # shellcheck disable=2053
+    [[ "$file" == $pattern ]] && return 0
+    # shellcheck disable=2053
+    [[ "${file##*/}" == $pattern ]] && return 0
+    [[ "$file" == *"$pattern"* ]]
+}
+
+# rule_editor_open <file> <line> - opens a file in the users editor at that line
+function rule_editor_open
+{
+    local file="$1"
+    local line="$2"
+    local editor="${BAR_EDITOR:-${VISUAL:-${EDITOR:-}}}"
+    if [[ -z "$editor" ]]; then
+        local candidate
+        for candidate in editor vi vim nano; do
+            if command -v -- "$candidate" >/dev/null 2>&1; then
+                editor="$candidate"
+                break
+            fi
+        done
+    fi
+    if [[ -z "$editor" ]]; then
+        error "rule_edit: no editor, set BAR_EDITOR or EDITOR"
+        return 1
+    fi
+
+    local -a cmd=()
+    read -r -a cmd <<<"$editor"
+    case "${cmd[0]##*/}" in
+    code | codium)
+        cmd+=("-g" "${file}:${line}")
+        ;;
+    subl | atom)
+        cmd+=("${file}:${line}")
+        ;;
+    *)
+        cmd+=("+${line}" "$file")
+        ;;
+    esac
+    "${cmd[@]}"
+}
+
+function rule_edit
+{
+    # body of the 'rule_edit' rule
+    local mode="rule"
+    local -a positional=()
+    local arg
+    for arg in "$@"; do
+        case "$arg" in
+        -f | --function)
+            mode="function"
+            ;;
+        -h | --help)
+            require help
+            help_usage rule_edit
+            return 0
+            ;;
+        -*)
+            require help
+            help_usage_error rule_edit "unknown option '$arg'"
+            return 2
+            ;;
+        *)
+            positional+=("$arg")
+            ;;
+        esac
+    done
+
+    local name="${positional[0]:-}"
+    local pattern="${positional[1]:-}"
+    if [[ -z "$name" ]]; then
+        require help
+        help_usage_error rule_edit "a rule name is required"
+        return 2
+    fi
+    if [[ "${#positional[@]}" -gt 2 ]]; then
+        require help
+        help_usage_error rule_edit "unexpected argument '${positional[2]}'"
+        return 2
+    fi
+
+    local file first
+    local -a candidates=() outside=()
+    while IFS= read -r file; do
+        if [[ -n "$pattern" ]] && ! rule_file_matches "$file" "$pattern"; then
+            continue
+        fi
+        if first="$(rule_source_first_line "$file" "$name" "$mode")"; then
+            if rule_source_inside "$file"; then
+                candidates+=("$file:$first")
+            else
+                outside+=("$file:$first")
+            fi
+        fi
+    done < <(rule_source_files)
+
+    if [[ "${#candidates[@]}" -eq 0 ]]; then
+        if [[ "${#outside[@]}" -gt 0 ]]; then
+            error "rule_edit: $mode '$name' is written outside '${BAR_TOPLEVEL:-.}': ${outside[*]}"
+            error "rule_edit: change into that directory to edit it there, 'rule_show $name' answers it from here"
+            return 1
+        fi
+        error "rule_edit: no $mode '$name'${pattern:+ in a file matching '$pattern'}"
+        return 1
+    fi
+
+    local picked=""
+    if [[ "${#candidates[@]}" -eq 1 ]]; then
+        picked="${candidates[0]}"
+    else
+        PS3="rule_edit> "
+        select picked in "${candidates[@]}"; do
+            [[ -n "$picked" ]] && break
+        done
+        if [[ -z "$picked" ]]; then
+            error "rule_edit: nothing chosen"
+            return 1
+        fi
+    fi
+
+    rule_editor_open "${picked%:*}" "${picked##*:}"
+}
+
 # Define --bare rules for read-only rule query functions
 rule --bare rule_exists: -
 rule --bare rule_list: -
+
+## <rulename> - Prints the source of a rule, with the function it calls
+##   - a rule which only calls the function of its name: that function is shown too
+rule --bare rule_show: -
+## <rulename> [-f|--function] [filepattern] - Opens a definition in the users editor
+##   - [-f|--function]: a function definition instead of a rule
+##   - [filepattern]: glob or word narrowing the files, one file opens directly
+##   - only a file below the base directory opens: change into the directory of one written outside it
+rule --bare rule_edit: -
 
 # Define --bare rules for logging functions
 rule --bare error: -
