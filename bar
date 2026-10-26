@@ -935,7 +935,7 @@ function bar_state_volatile ## <name> - True for a variable or function a dump m
     BAR_STATE_BASE_VARS|BAR_STATE_BASE_FUNCS|BAR_STATE_DUMP|BAR_STATE_SETTING|BAR_STATE_PATH|\
     BAR_STATE_VARS|BAR_STATE_FUNCS|BAR_STATE_MAGIC|BAR_REQUIRE_LOADED|\
     BAR_SELF|BAR_CALLED_AS|BAR_PWD|BAR_TOPLEVEL|BAR_PREFIX|BAR_DIR|BARF_FILE|BAR_BARE|BAR_TIMESTAMP|\
-    BAR_VERBOSITY_LEVEL|BARF_PP_AWK|BARF_PP_FILES|BARF_PP_NAME|tty_newline|\
+    BAR_VERBOSITY_LEVEL|BARF_PP_AWK|BARF_PP_FILES|BARF_PP_NAME|BAR_PP_IN|BAR_PP_OUT|BAR_PP_MARK|\
     SHELLOPTS|BASHOPTS|TTYOUT|TTYERR|COLOR|TERM|PWD|OLDPWD|SHLVL|_|RANDOM|SECONDS|LINENO|\
     EPOCHREALTIME|EPOCHSECONDS|\
     BASHPID|PPID|GROUPS|DIRSTACK|PIPESTATUS|FUNCNAME|BASH*)
@@ -999,6 +999,25 @@ function bar_state_dump ## - Writes the state of the loaded modules to the dump 
         files+=("$entry")
         seen["$entry"]=1
     done
+    # What the load *declared* is text in the inputs, and a declaration whose value the environment
+    # already supplied is unchanged by the load -- so it would not be carried, and a later run
+    # without that variable would have no declaration at all: a module default such as
+    # 'BAR_KEEP_GOING=1' would be missing and the run would die on 'set -u'.  The names the inputs
+    # declare are collected for that reason, and a module variable the environment overrode keeps
+    # its value as the default of the next run (set it again, or remove the dump).
+    local -A declared=()
+    while IFS= read -r name; do
+        [[ -n "$name" ]] && declared["$name"]=1
+    done < <(awk -v barf="${BARF_FILE:-}" -v self="$BAR_SELF" '
+        FILENAME != self && match($0, /(declare|typeset|readonly) +-[a-zA-Z]+ +[A-Za-z_][A-Za-z0-9_]*/) {
+            name = substr($0, RSTART, RLENGTH); sub(/.* +/, "", name); print name; next }
+        # the rulefile assigns without a keyword ("NAME := value" is preprocessed into
+        # "NAME=value") while a module declares: anywhere else, an assignment at the start of a
+        # line is one inside a function
+        FILENAME == barf && match($0, /^[ \t]*[A-Za-z_][A-Za-z0-9_]*[ \t]*(\?)?[:=]/) {
+            name = substr($0, RSTART, RLENGTH); sub(/^[ \t]*/, "", name); sub(/[^A-Za-z0-9_].*/, "", name)
+            print name }
+    ' "${files[@]}" 2>/dev/null)
     result="$(bar_state_sums "${files[@]}")" || return 0
     {
         printf '%s\n' "$BAR_STATE_MAGIC"
@@ -1020,7 +1039,13 @@ function bar_state_dump ## - Writes the state of the loaded modules to the dump 
             name="${line%%=*}"
             name="${name##* }"
             bar_state_volatile "$name" && continue
-            [[ "${BAR_STATE_BASE_VARS[$name]-}" == "$line" ]] && continue
+            # unchanged by the load: it came from the environment, and it is only carried when the
+            # inputs declare it themselves (see 'declared' above)
+            changed=''
+            if [[ -n "${BAR_STATE_BASE_VARS[$name]+x}" ]]; then
+                [[ "${BAR_STATE_BASE_VARS[$name]}" == "$line" ]] || changed=1
+                [[ -n "$changed" || -n "${declared[$name]+x}" ]] || continue
+            fi
             # the dump is sourced from inside a function, where a bare 'declare' would make the
             # variable local to it: every declaration is global, or it would be gone on return
             rest="${line#declare }"
@@ -1032,7 +1057,20 @@ function bar_state_dump ## - Writes the state of the loaded modules to the dump 
             # re-declarable, the value is the same
             case "$flags" in
             *r*) printf 'if [[ ! -v %s ]]; then\ndeclare -g%s %s\nfi\n' "$name" "$flags" "$rest" ;;
-            *) printf 'declare -g%s %s\n' "$flags" "$rest" ;;
+            *[aA]*) printf 'declare -g%s %s\n' "$flags" "$rest" ;;
+            *)
+                # a value the load *changed* is carried as the load left it (the module computed it
+                # from the environment, and an init function is the way to keep such a value live).
+                # Everything else is a default the module wrote, and a run without a dump lets the
+                # environment win over it ('${NAME:-default}' is how modules write those): the dump
+                # loses the same way, or 'BAR_AGENT_HEAD=2 bar ...' would be answered with the
+                # default of the run which wrote the dump.
+                if [[ -n "$changed" ]]; then
+                    printf 'declare -g%s %s\n' "$flags" "$rest"
+                else
+                    printf 'if [[ -z "${%s-}" ]]; then\ndeclare -g%s %s\nfi\n' "$name" "$flags" "$rest"
+                fi
+                ;;
             esac
         done <<<"$BAR_STATE_VARS"
         while IFS= read -r line; do
@@ -1053,6 +1091,9 @@ function bar_state_load ## - Sources the dump instead of the modules, when it is
     # Current means: made by this 'bar', from this rulefile, from these inputs, and none of them
     # changed since.
     bar_state_off "$BAR_STATE_SETTING" && return 1
+    # 'BAR_INSTALL_DEPS' is the bootstrap 'bar init_deps' runs: it vendors what the *defining* of a
+    # rule names, so a run which skipped the definitions has nothing to walk
+    [[ -z "${BAR_INSTALL_DEPS:-}" ]] || return 1
     bar_state_path
     local file="$BAR_STATE_PATH" line
     [[ -f "$file" ]] || return 1

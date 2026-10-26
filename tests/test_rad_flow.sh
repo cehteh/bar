@@ -129,6 +129,9 @@ mkclone() {
     git -C "$dir" init -q -b main
     git -C "$dir" config user.name "Bar Test"
     git -C "$dir" config user.email "bar-test@example.com"
+    # what 'bar init' leaves a project: the state dump is written into the checkout, and a test
+    # which asserts the checkout stays clean has to have it ignored like any other project
+    printf '.bar.*\n' >"$dir/.gitignore"
     printf 'one\n' >"$dir/file"
     mkdir -p "$dir/Bar.d"
     local module
@@ -138,7 +141,7 @@ mkclone() {
     cat >"$dir/Barf" <<'BARF'
 rule MAIN: -- true
 BARF
-    git -C "$dir" add file Barf Bar.d
+    git -C "$dir" add .gitignore file Barf Bar.d
     git -C "$dir" commit -qm first
 }
 

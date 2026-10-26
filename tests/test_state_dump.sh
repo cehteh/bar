@@ -22,6 +22,8 @@
 #   AC12 a module a rule body loads is loaded once, as it is without a dump
 #   AC13 the dump carries the modules' state, never the state of the run which wrote it
 #   AC14 'bar init' keeps the dump out of version control
+#   AC15 a run served from the dump has loaded exactly what a run which read the files has, and the
+#        environment still wins over a module default the dump carries
 #
 # usage: tests/test_state_dump.sh
 
@@ -355,6 +357,34 @@ mkdir -p "$P"
         "$BAR" init >/dev/null 2>&1 &&
         git check-ignore -q .bar.dump
 ) && pass "the dump is ignored in a project 'bar init' prepared" || fail "the dump is not ignored"
+echo
+
+echo "AC15 what a run has loaded is the same with and without the dump"
+P="$WORK/ac15"
+mkproj "$P"
+cat >>"$P/Barf" <<'EOS'
+
+# the tables and the functions, without the per-run state of the evaluation which is running now
+# the order 'declare -p' prints an associative array in is the hash table's, not the state's:
+# split it and sort, so the comparison is about the entries
+state: -- 'declare -F | LC_ALL=C sort; declare -p BAR_RULES BAR_RULE_FLAGS BAR_CLAUSE_DEPS BAR_CLAUSE_FLAGS | tr " " "\n" | LC_ALL=C sort'
+EOS
+# the answer itself, without the diagnostics on stderr (which say which path the run took)
+state_of() { ( cd "$P" && BAR_VERBOSITY_LEVEL=0 "$BAR" state 2>/dev/null ); }
+COLD="$(state_of)"
+runin "$P" state
+contains "$OUT" "state: sourced" "the second run sources the dump"
+check "$(state_of)" "$COLD" "the same rules, clauses and functions are loaded"
+# an exported module constant is a knob: the environment wins over the dump, as it does over the
+# '${NAME:-default}' the module writes
+cat >>"$P/Barf" <<'EOS'
+
+knobs: -- 'echo "$BAR_AGENT_HEAD/$BAR_AGENT_TAIL"'
+EOS
+runin "$P" knobs
+contains "$OUT" "8/4" "the module's default without the environment"
+OUT="$( cd "$P" && BAR_AGENT_HEAD=2 BAR_AGENT_TAIL=1 BAR_VERBOSITY_LEVEL=0 "$BAR" knobs 2>/dev/null )" || RC=$?
+check "$OUT" "2/1" "and the environment's value with it, served from a dump"
 echo
 
 if (( failures )); then
