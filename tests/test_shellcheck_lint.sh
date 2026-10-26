@@ -48,13 +48,17 @@ RC=0
 OUT=""
 ERR=""
 # runin <dir> <args..> - run bar in a project, capturing stdout and stderr apart
+#
+# 'SHELLCHECK_LS_FILES' is exported by the module and set by this repository's own 'Barf' (':!tests'),
+# so a run of this test from inside 'bar tests' would inherit it and the plain script below would be
+# excluded -- the test is about the default routing, so it is dropped for the invocations.
 runin() {
     local dir="$1"
     shift
     OUT=""
     ERR=""
     RC=0
-    OUT="$(cd "$dir" && "$BAR" "$@" 2>"$WORK/stderr")" || RC=$?
+    OUT="$(cd "$dir" && env -u SHELLCHECK_LS_FILES "$BAR" "$@" 2>"$WORK/stderr")" || RC=$?
     ERR="$(cat "$WORK/stderr")"
 }
 
