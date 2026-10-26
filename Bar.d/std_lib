@@ -55,6 +55,7 @@ function memofn ## <functionnames..> - rewrites a function into a function that 
 {
     ## This renames the given functions to 'nomemo_<functionname>' and creates a wrapper
     ## function with the original name that memoizes the result.
+    local fn
     for fn in "$@"; do
         # rename the original function as nomemo_*
         eval "nomemo_$(declare -f "$fn")"

@@ -104,10 +104,15 @@ function bar_main ## [rulefile] [--bare] [rule [arguments..]] - Loads a rulefile
     done
     [[ -f "${BARF_FILE:-}" ]] || BARF_FILE=
 
+    # what the environment says about the dump, before a rulefile could have said anything: the
+    # loader has to know where the dump is before it reads the rulefile, so a rulefile can only
+    # turn the mechanism off ('bar_state_dump' then writes none)
+    BAR_STATE_SETTING="$BAR_STATE_DUMP"
+
     # the modules and the rulefile are loaded from the state dump when it is current, and sourced
     # otherwise -- the dump is written from that load, so the next run has one
     if ! bar_state_load; then
-        bar_state_file && bar_state_snapshot
+        bar_state_off "$BAR_STATE_SETTING" || bar_state_snapshot
         # the std_lib and rule_lib are omnipresent other modules don't need to require it
         require std_lib rule_lib
         # load all '*_rules'
@@ -874,42 +879,65 @@ function require ## [--opt] [modules..] - Loads modules.
 # the environment, and a value which belongs to the invocation ('BAR_PWD', the tty binding, the
 # descriptor numbers of the filtered text) is wrong by the time it is read again.  A module whose
 # state is decided at load time from the environment exposes a function and registers it in
-# 'BAR_STATE_INIT_FNS'; the dump runs those again after it is sourced.
+# 'BAR_STATE_INIT_FNS'; the dump runs those again after it was sourced.
 #
-# 'BAR_STATE_DUMP' names the dump file, 'off' disables the mechanism, empty is
-# '<BAR_TOPLEVEL>/.bar.dump'.
+# The dump sits beside the rulefile, because the state of a run includes the rulefile and two
+# projects must never share a dump; 'please' has no project and uses '~/.please.dump', and a run
+# without a rulefile dumps next to the modules it loaded.  'BAR_STATE_DUMP' names another file,
+# 'off' disables the mechanism (a rulefile may set that too), empty is the default path.
 
 declare -gA BAR_STATE_BASE_VARS=()   # variable names and declarations from before the modules
 declare -gA BAR_STATE_BASE_FUNCS=()  # function names from before the modules were loaded
-declare -ga BAR_STATE_INIT_FNS=()    ## functions a module wants re-run after a dump was sourced
+declare -ga BAR_STATE_INIT_FNS=()    ## Functions a module wants re-run after a dump was sourced.
 declare -gx BAR_STATE_DUMP="${BAR_STATE_DUMP:-}" ## Dump file, 'off', or empty for the default path.
-declare -g  BAR_STATE_PATH=""                     # where the dump is, set by 'bar_state_file'
+declare -g  BAR_STATE_SETTING=""     # 'BAR_STATE_DUMP' as the environment had it, before any rulefile
+declare -g  BAR_STATE_PATH=""        # where the dump is, set by 'bar_state_path'
+declare -g  BAR_STATE_VARS=""         # 'declare -p' of a dump write
+declare -g  BAR_STATE_FUNCS=""        # 'declare -F' of a dump write
 # shellcheck disable=2016 # the form is the point: it is the first line of the dump
 declare -gr BAR_STATE_MAGIC="# bar-state 1"      ## First line of a dump: its format and version.
 
-function bar_state_file ## - Sets 'BAR_STATE_PATH' to the dump file, fails when it is disabled.
+function bar_state_off ## [value] - True when the value is one which turns the dump off.
 {
-    case "$BAR_STATE_DUMP" in
-    '')
-        BAR_STATE_PATH="$BAR_TOPLEVEL/.bar.dump"
-        ;;
-    off|no|0|false)
-        return 1
-        ;;
-    *)
-        BAR_STATE_PATH="$BAR_STATE_DUMP"
-        ;;
+    ## <value> - Default: 'BAR_STATE_DUMP'.
+    local value="${1-$BAR_STATE_DUMP}"
+    case "$value" in
+    off|no|0|false) return 0 ;;
     esac
+    return 1
+}
+
+function bar_state_path ## - Sets 'BAR_STATE_PATH' to the dump file of this invocation.
+{
+    ## 'BAR_STATE_DUMP' when the environment set it, else beside the rulefile
+    ## ('~/.please.dump' for 'please'), else next to the modules which were loaded.  The setting is
+    ## the one the environment had: the loader has to know where the dump is before it can read a
+    ## rulefile which might name another.
+    if [[ -n "$BAR_STATE_SETTING" ]]; then
+        BAR_STATE_PATH="$BAR_STATE_SETTING"
+    elif [[ "$BAR_CALLED_AS" = please ]]; then
+        # no project, and the same modules and the same '~/.Pleasef' from any directory
+        BAR_STATE_PATH="$HOME/.please.dump"
+    elif [[ -n "${BARF_FILE:-}" ]]; then
+        BAR_STATE_PATH="${BARF_FILE%/*}/.bar.dump"
+    else
+        # nothing but the modules: they are the project's own 'Bar.d' or the installation's
+        BAR_STATE_PATH="${BAR_DIR%/*}/.bar.dump"
+    fi
 }
 
 function bar_state_volatile ## <name> - True for a variable or function a dump must not carry.
 {
     ## bar's own state, and what belongs to the invocation rather than to the loaded modules.
+    # A shell option is no declaration either: a module which changes one at load time sets it
+    # again from a function registered in 'BAR_STATE_INIT_FNS'.
     case "$1" in
-    BAR_STATE_BASE_VARS|BAR_STATE_BASE_FUNCS|BAR_STATE_DUMP|BAR_STATE_PATH|BAR_STATE_MAGIC|\
-    BAR_SELF|BAR_CALLED_AS|BAR_PWD|BAR_TOPLEVEL|BAR_DIR|BARF_FILE|BAR_BARE|BAR_TIMESTAMP|\
+    BAR_STATE_BASE_VARS|BAR_STATE_BASE_FUNCS|BAR_STATE_DUMP|BAR_STATE_SETTING|BAR_STATE_PATH|\
+    BAR_STATE_VARS|BAR_STATE_FUNCS|BAR_STATE_MAGIC|BAR_REQUIRE_LOADED|\
+    BAR_SELF|BAR_CALLED_AS|BAR_PWD|BAR_TOPLEVEL|BAR_PREFIX|BAR_DIR|BARF_FILE|BAR_BARE|BAR_TIMESTAMP|\
     BAR_VERBOSITY_LEVEL|BARF_PP_AWK|BARF_PP_FILES|BARF_PP_NAME|tty_newline|\
-    TTYOUT|TTYERR|COLOR|TERM|PWD|OLDPWD|SHLVL|_|RANDOM|SECONDS|LINENO|EPOCHREALTIME|EPOCHSECONDS|\
+    SHELLOPTS|BASHOPTS|TTYOUT|TTYERR|COLOR|TERM|PWD|OLDPWD|SHLVL|_|RANDOM|SECONDS|LINENO|\
+    EPOCHREALTIME|EPOCHSECONDS|\
     BASHPID|PPID|GROUPS|DIRSTACK|PIPESTATUS|FUNCNAME|BASH*)
         return 0
         ;;
@@ -937,22 +965,39 @@ function bar_state_snapshot ## - Records the declarations the module loads are a
 
 function bar_state_sums ## <files..> - Prints one checksum over the paths and the file contents.
 {
-    ## The paths are part of it: the checksum then answers for the set of inputs as well as for
-    ## each of them, and a dump made from a different set cannot be mistaken for a current one.
+    ## The paths are part of it, so the checksum answers for the set of inputs as well as for each
+    ## of them.
+    # A timestamp comparison was measured against this: a 'stat' per input plus the 100 ms window
+    # a coarse mtime needs saves 2 of the ~29 ms a run takes here (~7%), which does not pay for
+    # what the checksum covers (a file put back with an older mtime included).
     command -v cksum >/dev/null || return 1
     { printf '%s\n' "$@" && cat -- "$@" 2>/dev/null ; } | cksum
 }
 
 function bar_state_dump ## - Writes the state of the loaded modules to the dump file.
 {
-    local result
-    bar_state_file || return 0
+    bar_state_path
+    # the rulefile may have turned it off during the load just done; the environment's 'off' never
+    # reaches here (nothing was loaded which could have written)
+    bar_state_off && return 0
+    # The declarations are captured before this function declares anything of its own: 'declare
+    # -p' lists the locals of every function on the call path, and those are the writer's state,
+    # not the modules' -- they must never end up in the dump.
+    BAR_STATE_VARS="$(declare -p)"
+    BAR_STATE_FUNCS="$(declare -F)"
     local file="$BAR_STATE_PATH"
     local -a files=("$BAR_SELF")
-    local entry line name flags rest
-    [[ -n "${BARF_FILE:-}" ]] && files+=("$BARF_FILE")
+    local -A seen=(["$BAR_SELF"]=1)
+    local entry line name flags rest result
+    if [[ -n "${BARF_FILE:-}" && -z "${seen[$BARF_FILE]:-}" ]]; then
+        files+=("$BARF_FILE")
+        seen["$BARF_FILE"]=1
+    fi
     for entry in $BARF_PP_FILES; do
-        files+=("${entry#*=}")
+        entry="${entry#*=}"
+        [[ -n "${seen[$entry]:-}" ]] && continue
+        files+=("$entry")
+        seen["$entry"]=1
     done
     result="$(bar_state_sums "${files[@]}")" || return 0
     {
@@ -960,6 +1005,15 @@ function bar_state_dump ## - Writes the state of the loaded modules to the dump 
         printf '# barf=%s\n' "${BARF_FILE:-}"
         for entry in "${files[@]}"; do
             printf '# file=%s\n' "$entry"
+        done
+        # which module names the load settled: 'loaded', or 'missing' for a name a 'require --opt'
+        # probed and did not find.  Both are carried -- without the second, a bare 'require' of a
+        # module the load already found missing would look it up again, and warn about it
+        for name in "${!BAR_REQUIRE_LOADED[@]}"; do
+            case "${BAR_REQUIRE_LOADED[$name]}" in
+            true) printf '# loaded=%s\n' "$name" ;;
+            false) printf '# missing=%s\n' "$name" ;;
+            esac
         done
         printf '# sums=%s\n# end\n' "$result"
         while IFS= read -r line; do
@@ -980,53 +1034,58 @@ function bar_state_dump ## - Writes the state of the loaded modules to the dump 
             *r*) printf 'if [[ ! -v %s ]]; then\ndeclare -g%s %s\nfi\n' "$name" "$flags" "$rest" ;;
             *) printf 'declare -g%s %s\n' "$flags" "$rest" ;;
             esac
-        done < <(declare -p)
+        done <<<"$BAR_STATE_VARS"
         while IFS= read -r line; do
             name="${line##* }"
             bar_state_volatile "$name" && continue
-            [[ -v BAR_STATE_BASE_FUNCS[$name] ]] && continue
+            [[ -n "${BAR_STATE_BASE_FUNCS[$name]+x}" ]] && continue
             declare -f "$name"
-        done < <(declare -F)
-    } >"$file.tmp" 2>/dev/null || { rm -f "$file.tmp"; return 0; }
-    mv -f "$file.tmp" "$file"
+        done <<<"$BAR_STATE_FUNCS"
+    } >"$file.tmp.$$" 2>/dev/null || { rm -f "$file.tmp.$$"; return 0; }
+    mv -f "$file.tmp.$$" "$file" || { rm -f "$file.tmp.$$"; return 0; }
     debug "state: wrote $file"
 }
 
 function bar_state_load ## - Sources the dump instead of the modules, when it is current.
 {
-    ## Succeeds only when a dump exists, was made by this very 'bar' from this very rulefile and
-    ## every input it was made from is unchanged.  Anything else is a miss, and the caller loads
-    ## the files as always.
-    local line
-    bar_state_file || return 1
-    local file="$BAR_STATE_PATH"
+    ## Succeeds only when a dump exists and is current, so that the caller can leave the files
+    ## alone; any other case is a miss and it loads them as always.
+    # Current means: made by this 'bar', from this rulefile, from these inputs, and none of them
+    # changed since.
+    bar_state_off "$BAR_STATE_SETTING" && return 1
+    bar_state_path
+    local file="$BAR_STATE_PATH" line
     [[ -f "$file" ]] || return 1
 
     local -a files=()
+    local -A loaded=()
     local sums='' want_barf='' end=''
     while IFS= read -r line; do
         case "$line" in
         "$BAR_STATE_MAGIC") : ;;
         '# barf='*) want_barf="${line#'# barf='}" ;;
         '# file='*) files+=("${line#'# file='}") ;;
+        '# loaded='*) loaded["${line#'# loaded='}"]=true ;;
+        '# missing='*) loaded["${line#'# missing='}"]=false ;;
         '# sums='*) sums="${line#'# sums='}" ;;
         '# end') end=1 ; break ;;
         *) return 1 ;;
         esac
     done <"$file"
     [[ -n "$end" && -n "$sums" ]] || return 1
+    (( ${#files[@]} )) || return 1
     [[ "$want_barf" == "${BARF_FILE:-}" ]] || return 1
 
     # a module which appeared in 'Bar.d' since the dump was made is in no file list: the startup
     # set itself has to be the recorded one
     local -A dumped=()
-    for line in "${files[@]}"; do
-        dumped["$line"]=1
+    local input mod
+    for input in "${files[@]}"; do
+        dumped["$input"]=1
     done
-    local mod
     for mod in "$BAR_DIR/std_lib" "$BAR_DIR/rule_lib" "$BAR_DIR"/*_rules; do
         [[ -f "$mod" ]] || continue
-        [[ -v dumped[$mod] ]] || return 1
+        [[ -n "${dumped[$mod]:-}" ]] || return 1
     done
     [[ "$(bar_state_sums "${files[@]}")" == "$sums" ]] || return 1
 
@@ -1034,6 +1093,11 @@ function bar_state_load ## - Sources the dump instead of the modules, when it is
     # a dump which cannot be sourced is broken, not stale: the files behind it checked out, so
     # half a state is worse than a message
     source "$file" || die "state dump '$file' could not be sourced, remove it"
+    # the modules this dump was made from are loaded: a later 'require' of one of them is the
+    # no-op it is without a dump, and one which is not in the dump loads as always
+    for line in "${!loaded[@]}"; do
+        BAR_REQUIRE_LOADED["$line"]="${loaded[$line]}"
+    done
     for line in "${BAR_STATE_INIT_FNS[@]}"; do
         "$line"
     done

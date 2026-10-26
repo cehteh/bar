@@ -16,6 +16,12 @@
 #   AC8  state which belongs to the invocation is decided again, not restored: the tty binding
 #        follows 'COLOR', and a rule defined after the dump was written still loads
 #   AC9  a run with a current dump is measurably faster than one which loads the files
+#   AC10 the dump sits beside the rulefile ('~/.please.dump' for 'please'), and a run without a
+#        rulefile dumps next to the modules it loaded
+#   AC11 a rulefile may turn the dump off
+#   AC12 a module a rule body loads is loaded once, as it is without a dump
+#   AC13 the dump carries the modules' state, never the state of the run which wrote it
+#   AC14 'bar init' keeps the dump out of version control
 #
 # usage: tests/test_state_dump.sh
 
@@ -225,6 +231,130 @@ if (( hit < off * 8 / 10 )); then
 else
     fail "a dump run takes ${hit} ms, which is not faster than ${off} ms without it"
 fi
+echo
+
+echo "AC10 the dump sits beside the rulefile, 'please' has one of its own, a rulefile-less run dumps by the modules"
+P="$WORK/ac10"
+mkproj "$P"
+# a rulefile which is not in the directory bar was invoked from: the state of a run includes the
+# rulefile, so the dump follows it and two projects never share one
+Q="$WORK/ac10-other"
+mkdir -p "$Q"
+printf 'greet: -- '\''echo other'\''\n' >"$Q/Otherf"
+runin "$P" "$Q/Otherf" greet
+contains "$OUT" "state: wrote" "a run with a rulefile elsewhere writes a dump"
+[[ -f "$Q/.bar.dump" ]] && pass "the dump is beside that rulefile" || fail "no dump at $Q/.bar.dump"
+[[ ! -f "$P/.bar.dump" ]] && pass "and not in the directory it was run from" || fail "a dump appeared in $P"
+runin "$P" "$Q/Otherf" greet
+contains "$OUT" "state: sourced" "and the next run sources it"
+
+# 'please': no project, the same modules and the same '~/.Pleasef' from any directory
+PH="$WORK/ac10-home"
+mkdir -p "$PH/.config/please" "$WORK/ac10-pbin" "$WORK/ac10-pleasedir"
+cp -Lr "$REPO_ROOT/Bar.d/." "$PH/.config/please/"
+ln -sf "$BAR" "$WORK/ac10-pbin/please"
+printf 'pleased: -- '\''echo pleased'\''\n' >"$WORK/ac10-pleasedir/Pleasef"
+RC=0
+OUT="$( cd "$WORK/ac10-pleasedir" && HOME="$PH" BAR_VERBOSITY_LEVEL=5 "$WORK/ac10-pbin/please" pleased 2>&1 )" || RC=$?
+check "$RC" "0" "'please' answers"
+contains "$OUT" "state: wrote" "and writes a dump"
+[[ -f "$PH/.please.dump" ]] && pass "at '~/.please.dump'" || fail "no dump at $PH/.please.dump"
+[[ ! -f "$WORK/ac10-pleasedir/.bar.dump" ]] && pass "not into the directory it was run from" ||
+    fail "a dump appeared in the invocation directory"
+
+# no rulefile at all: the run depends on the modules alone, and dumps next to them
+PFX="$WORK/ac10-prefix"
+mkdir -p "$PFX/bin" "$PFX/share/bar" "$WORK/ac10-empty"
+cp "$BAR" "$PFX/bin/bar"
+cp -Lr "$REPO_ROOT/Bar.d" "$PFX/share/bar/"
+RC=0
+OUT="$( cd "$WORK/ac10-empty" && PATH="$PFX/bin:$PATH" BAR_VERBOSITY_LEVEL=5 "$PFX/bin/bar" help 2>&1 )" || RC=$?
+check "$RC" "0" "the installed bar answers without a rulefile"
+contains "$OUT" "state: wrote" "and writes a dump"
+[[ -f "$PFX/share/bar/.bar.dump" ]] && pass "next to the modules it loaded (the origin dir)" ||
+    fail "no dump at $PFX/share/bar/.bar.dump"
+[[ ! -f "$WORK/ac10-empty/.bar.dump" ]] && pass "and not into the invocation directory" ||
+    fail "a dump appeared in the invocation directory"
+echo
+
+echo "AC11 a rulefile may turn the dump off"
+P="$WORK/ac11"
+mkproj "$P"
+printf 'BAR_STATE_DUMP=off\n' >>"$P/Barf"
+runin "$P" greet
+check "$RC" "0" "the run answers"
+contains "$OUT" "hello" "with the rule's output"
+[[ ! -f "$P/.bar.dump" ]] && pass "the rulefile's 'off' writes no dump" || fail "a dump was written anyway"
+runin "$P" greet
+[[ ! -f "$P/.bar.dump" ]] && pass "and none after a second run" || fail "a dump appeared"
+absent "$OUT" "state: sourced" "no dump is read either"
+# a dump which is there already is not read again once the rulefile says off, and it is not
+# rewritten: the rulefile it was made from is gone
+P="$WORK/ac11b"
+mkproj "$P"
+runin "$P" greet
+[[ -f "$P/.bar.dump" ]] && pass "a dump was written before the switch" || fail "no dump was written"
+printf 'BAR_STATE_DUMP=off\n' >>"$P/Barf"
+before="$(cksum <"$P/.bar.dump")"
+runin "$P" greet
+absent "$OUT" "state: sourced" "the stale dump is not read once the rulefile says off"
+check "$(cksum <"$P/.bar.dump")" "$before" "and it is not rewritten either"
+echo
+
+echo "AC12 a module a rule body loads is not loaded twice"
+P="$WORK/ac12"
+mkproj "$P"
+# 'json_lib' is loaded during startup; requiring it from a rule body must be the no-op it is
+# without a dump, and a module which startup does not load must still come from its file
+cat >>"$P/Barf" <<'EOS'
+
+late: -- 'require json_lib; require --opt testdir; echo late-done'
+EOS
+runin "$P" late
+COLD="$OUT"
+contains "$COLD" "late-done" "the cold run answers"
+runin "$P" late
+HIT="$OUT"
+contains "$HIT" "state: sourced" "the second run sources the dump"
+absent "$HIT" "loading: $P/Bar.d/json_lib" "a module of the dump is not loaded again"
+contains "$HIT" "late-done" "and the rule still runs"
+# the module the body loads which startup did not: it comes from its file in both runs
+contains "$HIT" "loading: $P/Bar.d/testdir" "a module which is not in the dump loads as always"
+# a module the load probed and did not find is recorded as 'false', not as loaded: the bare
+# 'require' of it in the body has to behave as it does without a dump
+printf 'require --opt absent_lib\nneedy: -- '\''require absent_lib; echo needy-done'\''\n' >>"$P/Barf"
+runin "$P" needy
+check "$RC" "0" "the cold run answers"
+absent "$OUT" "loading: $P/Bar.d/absent_lib" "and does not load the module it probed as absent"
+runin "$P" needy
+contains "$OUT" "state: sourced" "the run after it sources the dump"
+check "$RC" "0" "which answers as well"
+absent "$OUT" "loading: $P/Bar.d/absent_lib" "and still does not load it"
+echo
+
+echo "AC13 the dump carries the modules' state, not the state of the run which wrote it"
+P="$WORK/ac13"
+mkproj "$P"
+runin "$P" greet
+absent "$(cat "$P/.bar.dump")" "declare -g file=" "no local of the writer is carried ('file')"
+absent "$(cat "$P/.bar.dump")" "declare -g result=" "none of its other locals either ('result')"
+absent "$(cat "$P/.bar.dump")" "declare -g BAR_STATE_" "and nothing of the mechanism itself"
+grep -q '^declare -g[a-zA-Z]* BAR_RULES=' "$P/.bar.dump" && pass "the rule table is carried" ||
+    fail "the rule table is missing from the dump"
+# every variable it carries is a module constant: lowercase is a leaked local, not state
+lowercase="$(grep -oP '^declare -g[a-zA-Z]* \K[a-z][A-Za-z0-9_]*' "$P/.bar.dump" | tr '\n' ' ' || true)"
+check "$lowercase" "" "and no lowercase global is carried"
+echo
+
+echo "AC14 'bar init' keeps the dump out of version control"
+P="$WORK/ac14"
+mkdir -p "$P"
+(
+    cd "$P" &&
+        git init -q . &&
+        "$BAR" init >/dev/null 2>&1 &&
+        git check-ignore -q .bar.dump
+) && pass "the dump is ignored in a project 'bar init' prepared" || fail "the dump is not ignored"
 echo
 
 if (( failures )); then

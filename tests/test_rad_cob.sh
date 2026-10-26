@@ -339,8 +339,13 @@ check "$(printf '%s' "$DOC" | jq -r '.comments[0].id')" "$OLD_OP" "ordered by th
 check "$(printf '%s' "$DOC" | jq -r '.comments[0].root')" "true" "the root comment says so"
 check "$(printf '%s' "$DOC" | jq -r '.comments[0].body')" "the edited description" "the body is the current text"
 check "$(printf '%s' "$DOC" | jq -r '.comments[0].edits | length')" 2 "and the edits are kept"
-check "$(printf '%s' "$DOC" | jq -r '.comments[0].date')" "$(date -d @1790000100 --iso-8601=seconds)" \
-    "the date is ISO in the reader's offset"
+# the document carries one offset for all of it ('Bar.d/rad' takes 'date +%z' once), so the check
+# is on the instant, not on the string 'date -d @ts' prints: that one renders the offset which was
+# in effect at the date, and the two differ whenever the run is on the other side of a daylight
+# saving boundary from the fixture's timestamp
+DATE0="$(printf '%s' "$DOC" | jq -r '.comments[0].date')"
+check "$(date -d "$DATE0" +%s)" "1790000100" "the date is the store's instant"
+check "${DATE0: -6}" "$(date +%:z)" "rendered in the reader's offset"
 check "$(printf '%s' "$DOC" | jq -r '.comments[1].redacted')" "true" "a redacted comment is flagged"
 check "$(printf '%s' "$DOC" | jq -r '.comments[1].body')" "" "with an empty body, never null"
 check "$(printf '%s' "$DOC" | jq -c '.comments[2].reactions')" '[{"emoji":"👀","authors":["'"$NID_B"'"]}]' \
