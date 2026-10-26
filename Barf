@@ -12,10 +12,10 @@ SHELLCHECK_LS_FILES=":!tests"
 
 
 # We lint and build the doc here
-rule doc lints
+MAIN: doc lints
 
 # the checks an agent runs in this repository; 'bar check agent' prints the terse contract block
-rule agent: lints tests
+agent: lints tests
 
 require git
 
@@ -27,21 +27,22 @@ function nodbg
     fi
 }
 
-rule lints: 'is_testdir_used?' nodbg
+lints: 'is_testdir_used?' nodbg
 
 # The repertoire guard: every rule of a helper module has to be registered with a
 # '# helper: <name> | <purpose> | <invocation> | <output shape>' declaration above it
 # (see Bar.d/helpers_rules).  A helper which is added without its declaration fails 'lints'.
-rule lints: helpers_check
+lints: helpers_check
 
 # manually testing the staged changes
 test_staged: testdir_enter lints
 
 # maintenance rules
-rule build_docs: -- './bar help >README'
+build_docs:
+	./bar help >README
 
 # called by another name (githook)
-rule pre-commit: MAIN
+pre-commit: (check agent)
 
 # TODO: test Barf.default
 
@@ -128,11 +129,7 @@ SETUP: 'called_as? pre-merge-commit' testdir_enter
 SETUP: 'called_as? prepare-commit-msg' testdir_enter
 SETUP: 'called_as? commit-msg' testdir_enter
 
-activate:
-     'githook_enable~ pre-commit'
-     'githook_enable~ pre-merge-commit'
-     'githook_enable~ prepare-commit-msg'
-     'githook_enable~ commit-msg'
+activate: (githook_enable~ pre-commit) (githook_enable~ pre-merge-commit) (githook_enable~ prepare-commit-msg) (githook_enable~ commit-msg)
 
 #rule watch: --conclusive is_entr_installed? -- 'rule_eval entr_watch "${RULE_ARGS[@]}"'
 
