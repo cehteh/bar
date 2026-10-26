@@ -80,10 +80,6 @@ function bar_main ## [rulefile] [--bare] [rule [arguments..]] - Loads a rulefile
     # shellcheck disable=SC1091
     find_toplevel
     debug "using Bar directory: $BAR_DIR"
-    # the std_lib and rule_lib are omnipresent other modules don't need to require it
-    require std_lib rule_lib
-    # load all '*_rules'
-    require '*_rules'
 
     local maybe_barf=
     local initial_rule=
@@ -103,10 +99,22 @@ function bar_main ## [rulefile] [--bare] [rule [arguments..]] - Loads a rulefile
             debug "using: $BARF_FILE"
             [[ "$BARF_FILE" = "$maybe_barf" ]] && shift
             BARF_FILE="$(realpath "$BARF_FILE")"
-            require "$BARF_FILE"
             break
         fi
     done
+    [[ -f "${BARF_FILE:-}" ]] || BARF_FILE=
+
+    # the modules and the rulefile are loaded from the state dump when it is current, and sourced
+    # otherwise -- the dump is written from that load, so the next run has one
+    if ! bar_state_load; then
+        bar_state_file && bar_state_snapshot
+        # the std_lib and rule_lib are omnipresent other modules don't need to require it
+        require std_lib rule_lib
+        # load all '*_rules'
+        require '*_rules'
+        [[ -n "$BARF_FILE" ]] && require "$BARF_FILE"
+        bar_state_dump
+    fi
 
     if [[ "${1:-}" = '--bare' ]]; then
         shift
@@ -851,6 +859,185 @@ function require ## [--opt] [modules..] - Loads modules.
         done
     done
     return $rc
+}
+
+# STATE DUMP
+#
+# Loading the modules and the rulefile is most of bar's startup: every file is run through the
+# filter (one awk per file) and sourced, and a rule definition costs parameter expansion and
+# arithmetic.  What that produces is a table of declarations -- rules, functions, constants -- and
+# the table depends on nothing but the files.  So it is written to a dump once and sourced instead
+# of the files, for as long as none of them changed.
+#
+# The dump carries what the loads created or changed, never bar's own state: a variable whose
+# declaration is unchanged from the snapshot taken before the first module was sourced came from
+# the environment, and a value which belongs to the invocation ('BAR_PWD', the tty binding, the
+# descriptor numbers of the filtered text) is wrong by the time it is read again.  A module whose
+# state is decided at load time from the environment exposes a function and registers it in
+# 'BAR_STATE_INIT_FNS'; the dump runs those again after it is sourced.
+#
+# 'BAR_STATE_DUMP' names the dump file, 'off' disables the mechanism, empty is
+# '<BAR_TOPLEVEL>/.bar.dump'.
+
+declare -gA BAR_STATE_BASE_VARS=()   # variable names and declarations from before the modules
+declare -gA BAR_STATE_BASE_FUNCS=()  # function names from before the modules were loaded
+declare -ga BAR_STATE_INIT_FNS=()    ## functions a module wants re-run after a dump was sourced
+declare -gx BAR_STATE_DUMP="${BAR_STATE_DUMP:-}" ## Dump file, 'off', or empty for the default path.
+declare -g  BAR_STATE_PATH=""                     # where the dump is, set by 'bar_state_file'
+# shellcheck disable=2016 # the form is the point: it is the first line of the dump
+declare -gr BAR_STATE_MAGIC="# bar-state 1"      ## First line of a dump: its format and version.
+
+function bar_state_file ## - Sets 'BAR_STATE_PATH' to the dump file, fails when it is disabled.
+{
+    case "$BAR_STATE_DUMP" in
+    '')
+        BAR_STATE_PATH="$BAR_TOPLEVEL/.bar.dump"
+        ;;
+    off|no|0|false)
+        return 1
+        ;;
+    *)
+        BAR_STATE_PATH="$BAR_STATE_DUMP"
+        ;;
+    esac
+}
+
+function bar_state_volatile ## <name> - True for a variable or function a dump must not carry.
+{
+    ## bar's own state, and what belongs to the invocation rather than to the loaded modules.
+    case "$1" in
+    BAR_STATE_BASE_VARS|BAR_STATE_BASE_FUNCS|BAR_STATE_DUMP|BAR_STATE_PATH|BAR_STATE_MAGIC|\
+    BAR_SELF|BAR_CALLED_AS|BAR_PWD|BAR_TOPLEVEL|BAR_DIR|BARF_FILE|BAR_BARE|BAR_TIMESTAMP|\
+    BAR_VERBOSITY_LEVEL|BARF_PP_AWK|BARF_PP_FILES|BARF_PP_NAME|tty_newline|\
+    TTYOUT|TTYERR|COLOR|TERM|PWD|OLDPWD|SHLVL|_|RANDOM|SECONDS|LINENO|EPOCHREALTIME|EPOCHSECONDS|\
+    BASHPID|PPID|GROUPS|DIRSTACK|PIPESTATUS|FUNCNAME|BASH*)
+        return 0
+        ;;
+    esac
+    return 1
+}
+
+function bar_state_snapshot ## - Records the declarations the module loads are about to change.
+{
+    ## Taken before the first module is sourced: whatever a module leaves the same came from the
+    ## environment and must not be written into the dump.
+    local line name
+    while IFS= read -r line; do
+        name="${line%%=*}"
+        name="${name##* }"
+        BAR_STATE_BASE_VARS["$name"]="$line"
+    done < <(declare -p)
+    # the names are enough: a module may add functions, and one which *replaces* a function bar
+    # itself defines is not carried (it is not the module's state, and the one case of it here --
+    # 'tty_newline' -- belongs to the invocation, see 'bar_state_volatile')
+    while IFS= read -r line; do
+        BAR_STATE_BASE_FUNCS["${line##* }"]=
+    done < <(declare -F)
+}
+
+function bar_state_sums ## <files..> - Prints one checksum over the paths and the file contents.
+{
+    ## The paths are part of it: the checksum then answers for the set of inputs as well as for
+    ## each of them, and a dump made from a different set cannot be mistaken for a current one.
+    command -v cksum >/dev/null || return 1
+    { printf '%s\n' "$@" && cat -- "$@" 2>/dev/null ; } | cksum
+}
+
+function bar_state_dump ## - Writes the state of the loaded modules to the dump file.
+{
+    local result
+    bar_state_file || return 0
+    local file="$BAR_STATE_PATH"
+    local -a files=("$BAR_SELF")
+    local entry line name flags rest
+    [[ -n "${BARF_FILE:-}" ]] && files+=("$BARF_FILE")
+    for entry in $BARF_PP_FILES; do
+        files+=("${entry#*=}")
+    done
+    result="$(bar_state_sums "${files[@]}")" || return 0
+    {
+        printf '%s\n' "$BAR_STATE_MAGIC"
+        printf '# barf=%s\n' "${BARF_FILE:-}"
+        for entry in "${files[@]}"; do
+            printf '# file=%s\n' "$entry"
+        done
+        printf '# sums=%s\n# end\n' "$result"
+        while IFS= read -r line; do
+            name="${line%%=*}"
+            name="${name##* }"
+            bar_state_volatile "$name" && continue
+            [[ "${BAR_STATE_BASE_VARS[$name]-}" == "$line" ]] && continue
+            # the dump is sourced from inside a function, where a bare 'declare' would make the
+            # variable local to it: every declaration is global, or it would be gone on return
+            rest="${line#declare }"
+            flags="${rest%% *}"
+            rest="${rest#* }"
+            [[ "$flags" == -- ]] && flags=
+            flags="${flags#-}"
+            # a declaration which is readonly already would abort the sourcing run: keep the form
+            # re-declarable, the value is the same
+            case "$flags" in
+            *r*) printf 'if [[ ! -v %s ]]; then\ndeclare -g%s %s\nfi\n' "$name" "$flags" "$rest" ;;
+            *) printf 'declare -g%s %s\n' "$flags" "$rest" ;;
+            esac
+        done < <(declare -p)
+        while IFS= read -r line; do
+            name="${line##* }"
+            bar_state_volatile "$name" && continue
+            [[ -v BAR_STATE_BASE_FUNCS[$name] ]] && continue
+            declare -f "$name"
+        done < <(declare -F)
+    } >"$file.tmp" 2>/dev/null || { rm -f "$file.tmp"; return 0; }
+    mv -f "$file.tmp" "$file"
+    debug "state: wrote $file"
+}
+
+function bar_state_load ## - Sources the dump instead of the modules, when it is current.
+{
+    ## Succeeds only when a dump exists, was made by this very 'bar' from this very rulefile and
+    ## every input it was made from is unchanged.  Anything else is a miss, and the caller loads
+    ## the files as always.
+    local line
+    bar_state_file || return 1
+    local file="$BAR_STATE_PATH"
+    [[ -f "$file" ]] || return 1
+
+    local -a files=()
+    local sums='' want_barf='' end=''
+    while IFS= read -r line; do
+        case "$line" in
+        "$BAR_STATE_MAGIC") : ;;
+        '# barf='*) want_barf="${line#'# barf='}" ;;
+        '# file='*) files+=("${line#'# file='}") ;;
+        '# sums='*) sums="${line#'# sums='}" ;;
+        '# end') end=1 ; break ;;
+        *) return 1 ;;
+        esac
+    done <"$file"
+    [[ -n "$end" && -n "$sums" ]] || return 1
+    [[ "$want_barf" == "${BARF_FILE:-}" ]] || return 1
+
+    # a module which appeared in 'Bar.d' since the dump was made is in no file list: the startup
+    # set itself has to be the recorded one
+    local -A dumped=()
+    for line in "${files[@]}"; do
+        dumped["$line"]=1
+    done
+    local mod
+    for mod in "$BAR_DIR/std_lib" "$BAR_DIR/rule_lib" "$BAR_DIR"/*_rules; do
+        [[ -f "$mod" ]] || continue
+        [[ -v dumped[$mod] ]] || return 1
+    done
+    [[ "$(bar_state_sums "${files[@]}")" == "$sums" ]] || return 1
+
+    # shellcheck disable=SC1090 # the dump is generated
+    # a dump which cannot be sourced is broken, not stale: the files behind it checked out, so
+    # half a state is worse than a message
+    source "$file" || die "state dump '$file' could not be sourced, remove it"
+    for line in "${BAR_STATE_INIT_FNS[@]}"; do
+        "$line"
+    done
+    debug "state: sourced $file"
 }
 
 # placeholder, overwritten by tty_lib when present

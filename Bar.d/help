@@ -645,6 +645,26 @@ RULE FILE PREPROCESSOR
     what it expands to alone, never depending on the files before it.
 
 
+STATE DUMP
+
+  Loading the modules and the rulefile is most of bar's startup.  What that produces -- the rule
+  table, and the functions and constants of the loaded modules -- depends on nothing but the
+  files, so it is written to a dump once and sourced instead of the files, for as long as none of
+  them changed.  The dump is '.bar.dump' in 'BAR_TOPLEVEL', which 'bar init' puts into
+  '.gitignore'.  'BAR_STATE_DUMP' names another file, 'BAR_STATE_DUMP=off' reads and writes none.
+
+  The dump carries the state the modules created, never bar's own: a variable a module leaves
+  unchanged came from the environment, and a value which belongs to the invocation ('BAR_PWD',
+  which stream is a terminal) is decided again on every run.  A module which decides state at
+  load time from the environment exposes that as a function and registers it in
+  'BAR_STATE_INIT_FNS'; the dump runs those again after it was sourced.  A module may not replace
+  a function bar itself defines -- the replacement is not carried by the dump.
+
+  Diagnostics are coarser with a dump: an error inside a function of a module names '.bar.dump'
+  and its line there, not the module and the module's line.  'BAR_STATE_DUMP=off' shows what a
+  run actually looks at.
+
+
 RULE DEFINITION SYNTAX
 
   This is the plain form a rule file is preprocessed into.  A rule file you write is normally

@@ -4072,6 +4072,8 @@ MODULE API/RULES
 
     Functions:
 
+      tty_bind - Binds the stream names and 'tty_newline' for this invocation.
+
       tty_style <name> <sequence>
         Defines a style, or replaces one.
         <sequence> is the escape sequence itself, e.g. $'\e[38;5;33m'; the codes are in the module
@@ -4248,6 +4250,26 @@ RULE FILE PREPROCESSOR
 
   * One filter serves a whole 'bar' invocation and is handed one file at a time: a file expands to
     what it expands to alone, never depending on the files before it.
+
+
+STATE DUMP
+
+  Loading the modules and the rulefile is most of bar's startup.  What that produces -- the rule
+  table, and the functions and constants of the loaded modules -- depends on nothing but the
+  files, so it is written to a dump once and sourced instead of the files, for as long as none of
+  them changed.  The dump is '.bar.dump' in 'BAR_TOPLEVEL', which 'bar init' puts into
+  '.gitignore'.  'BAR_STATE_DUMP' names another file, 'BAR_STATE_DUMP=off' reads and writes none.
+
+  The dump carries the state the modules created, never bar's own: a variable a module leaves
+  unchanged came from the environment, and a value which belongs to the invocation ('BAR_PWD',
+  which stream is a terminal) is decided again on every run.  A module which decides state at
+  load time from the environment exposes that as a function and registers it in
+  'BAR_STATE_INIT_FNS'; the dump runs those again after it was sourced.  A module may not replace
+  a function bar itself defines -- the replacement is not carried by the dump.
+
+  Diagnostics are coarser with a dump: an error inside a function of a module names '.bar.dump'
+  and its line there, not the module and the module's line.  'BAR_STATE_DUMP=off' shows what a
+  run actually looks at.
 
 
 RULE DEFINITION SYNTAX
@@ -4546,6 +4568,20 @@ MAIN API
     Provides only basic functionality for module loading and debugging and starting rule
     evaluation. Loads the 'std_lib' and 'rule_lib' to make them omnipresent.
 
+    Variables:
+
+      BAR_STATE_INIT_FNS (ga)
+        functions a module wants re-run after a dump was sourced
+        Default: ()
+
+      BAR_STATE_DUMP (gx)
+        Dump file, 'off', or empty for the default path.
+        Default: ${BAR_STATE_DUMP:-}
+
+      BAR_STATE_MAGIC (gr)
+        First line of a dump: its format and version.
+        Default: # bar-state 1
+
     Functions:
 
       bar_main [rulefile] [--bare] [rule [arguments..]]
@@ -4594,6 +4630,28 @@ MAIN API
         run from (see :func:`bar_vendor_modules`) and loaded from there.  When there is no origin
         or the module does not exist there either it is missing: with '--opt' that is silent and
         succeeds, without it a warning is emitted and a failure returned.
+
+      bar_state_file - Sets 'BAR_STATE_PATH' to the dump file, fails when it is disabled.
+
+      bar_state_volatile <name>
+        True for a variable or function a dump must not carry.
+        bar's own state, and what belongs to the invocation rather than to the loaded modules.
+
+      bar_state_snapshot - Records the declarations the module loads are about to change.
+        Taken before the first module is sourced: whatever a module leaves the same came from the
+        environment and must not be written into the dump.
+
+      bar_state_sums <files..>
+        Prints one checksum over the paths and the file contents.
+        The paths are part of it: the checksum then answers for the set of inputs as well as for
+        each of them, and a dump made from a different set cannot be mistaken for a current one.
+
+      bar_state_dump - Writes the state of the loaded modules to the dump file.
+
+      bar_state_load - Sources the dump instead of the modules, when it is current.
+        Succeeds only when a dump exists, was made by this very 'bar' from this very rulefile and
+        every input it was made from is unchanged.  Anything else is a miss, and the caller loads
+        the files as always.
         A module is sourced from the text the filter printed, so its frame names '/dev/fd/NN'; the
         descriptor is mapped back to the module.  Line numbers need no such help: the filter prints
         one line per line.

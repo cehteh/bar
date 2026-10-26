@@ -78,6 +78,7 @@ tests: test_report_condense
 tests: test_rule_tools
 tests: test_shellcheck_lint
 tests: test_sourcetree
+tests: test_state_dump
 tests: test_toplevel
 tests: test_tty_lib
 tests: test_usage
@@ -119,6 +120,7 @@ test_report_condense: -- tests/test_report_condense.sh
 test_rule_tools: -- tests/test_rule_tools.sh
 test_shellcheck_lint: -- tests/test_shellcheck_lint.sh
 test_sourcetree: -- tests/test_sourcetree.sh
+test_state_dump: -- tests/test_state_dump.sh
 test_toplevel: -- tests/test_toplevel.sh
 test_tty_lib: -- tests/test_tty_lib.sh
 test_user_requirements: -- tests/test_user_requirements.sh

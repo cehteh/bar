@@ -86,20 +86,44 @@ declare -gxA TTYNIL=(
 )
 
 # Bind the streams: 'TERM=dumb' is no colour whatever COLOR says, else COLOR=always/never decides,
-# and 'auto' looks at the stream the messages go to.
-unset TTYOUT TTYERR
-[[ "${TERM:-dumb}" = dumb ]] && COLOR=never
-case "${COLOR:-auto}" in
-    always) declare -gn TTYOUT=TTYCTL; declare -gn TTYERR=TTYCTL ;;
-    never)  declare -gn TTYOUT=TTYNIL; declare -gn TTYERR=TTYNIL ;;
-    auto|*)
-        # shellcheck disable=2015
-        [[ -t 1 ]] && declare -gn TTYOUT=TTYCTL || declare -gn TTYOUT=TTYNIL
-        # shellcheck disable=2015
-        [[ -t 2 ]] && declare -gn TTYERR=TTYCTL || declare -gn TTYERR=TTYNIL
-        ;;
-esac
-declare -gxrn TTYOUT TTYERR
+# and 'auto' looks at the stream the messages go to.  This is decided per invocation and not once
+# per file: a state dump carries the tables above, not this binding.
+function tty_bind ## - Binds the stream names and 'tty_newline' for this invocation.
+{
+    local color="${COLOR:-auto}"
+    # drop an earlier binding: '-n' takes a nameref itself, a plain 'unset' the array bar declared
+    # before any module was loaded
+    if [[ -R TTYOUT ]]; then unset -n TTYOUT; else unset TTYOUT; fi
+    if [[ -R TTYERR ]]; then unset -n TTYERR; else unset TTYERR; fi
+    if [[ "${TERM:-dumb}" = dumb ]]; then
+        color=never
+        declare -g COLOR=never
+    fi
+    case "$color" in
+        always) declare -gn TTYOUT=TTYCTL; declare -gn TTYERR=TTYCTL ;;
+        never)  declare -gn TTYOUT=TTYNIL; declare -gn TTYERR=TTYNIL ;;
+        auto|*)
+            # shellcheck disable=2015
+            [[ -t 1 ]] && declare -gn TTYOUT=TTYCTL || declare -gn TTYOUT=TTYNIL
+            # shellcheck disable=2015
+            [[ -t 2 ]] && declare -gn TTYERR=TTYCTL || declare -gn TTYERR=TTYNIL
+            ;;
+    esac
+    declare -gxrn TTYOUT TTYERR
+    [[ "${TERM:-dumb}" = "dumb" ]] || function tty_newline ## Outputs a newline when we are not at column 1 and on a tty.
+    {
+        if [[ -t 1 ]]; then
+            local col
+            IFS=';' read -srdR -p $'\033[6n' _ col || true
+            col="${col%R}"
+            [[ "$col" != 1 ]] && echo
+        fi
+        return 0
+    }
+}
+tty_bind
+# what it decided depends on the environment, so a sourced state dump has to run it again
+BAR_STATE_INIT_FNS+=(tty_bind)
 
 function tty_style ## <name> <sequence> - Defines a style, or replaces one.
 {
