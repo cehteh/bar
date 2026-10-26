@@ -4255,16 +4255,17 @@ RULE FILE PREPROCESSOR
 STATE DUMP
 
   Loading the modules and the rulefile is most of bar's startup, and what it produces depends on
-  nothing but the files.  So the cold run writes that state to '.bar.dump' beside the rulefile and
-  later runs source it instead of loading, for as long as none of the inputs changed.  'please'
-  uses '~/.please.dump', a run without a rulefile dumps next to the modules it loaded, and 'bar
-  init' puts the file into '.gitignore'.  'BAR_STATE_DUMP' names another file, 'off' -- in the
-  environment or as a line of the rulefile -- reads and writes none.
+  nothing but the files.  So the cold run writes that state to '.bar.<rulefile>.dump' beside the
+  rulefile -- 'Barf' gives '.bar.Barf.dump', 'please SomeOtherRules' gives '.bar.SomeOtherRules.dump'
+  next to that file -- and later runs source it instead of loading, for as long as none of the
+  inputs changed.  A run without a rulefile keeps no dump, a directory the file may not be written
+  to keeps none either, and 'bar init' puts the file into '.gitignore'.  'BAR_STATE_DUMP' names
+  another file, 'off' -- in the environment or as a line of the rulefile -- reads and writes none.
 
   The dump is transparent: it carries which modules the load loaded, so a 'require' in a rule body
   is the no-op it is without a dump, and the state a module decides at load time from the
   environment is decided again by the function it registers in 'BAR_STATE_INIT_FNS'.  What it
-  costs is diagnostics: an error inside a module's function names '.bar.dump' and a line there,
+  costs is diagnostics: an error inside a module's function names '.bar.Barf.dump' and a line there,
   not the module and the module's line.
 
 
@@ -4632,9 +4633,12 @@ MAIN API
         <value> - Default: 'BAR_STATE_DUMP'.
 
       bar_state_path - Sets 'BAR_STATE_PATH' to the dump file of this invocation.
-        'BAR_STATE_DUMP' when the environment set it, else beside the rulefile
-        ('~/.please.dump' for 'please'), else next to the modules which were loaded.  The setting is
-        the one the environment had: the loader has to know where the dump is before it can read a
+        'BAR_STATE_DUMP' when the environment set it, else '.bar.<rulefile name>.dump' beside the
+        rulefile.  The name carries the rulefile, so two rulefiles in one directory never share a
+        dump and nothing needs to know whether the run is 'bar' or 'please', in a project or next to
+        an installation: the rulefile is what the state of a run depends on, and where it is, is
+        where the dump goes.  Empty when there is no rulefile to name it after.  The setting is the
+        one the environment had: the loader has to know where the dump is before it can read a
         rulefile which might name another.
 
       bar_state_volatile <name>

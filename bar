@@ -881,10 +881,11 @@ function require ## [--opt] [modules..] - Loads modules.
 # state is decided at load time from the environment exposes a function and registers it in
 # 'BAR_STATE_INIT_FNS'; the dump runs those again after it was sourced.
 #
-# The dump sits beside the rulefile, because the state of a run includes the rulefile and two
-# projects must never share a dump; 'please' has no project and uses '~/.please.dump', and a run
-# without a rulefile dumps next to the modules it loaded.  'BAR_STATE_DUMP' names another file,
-# 'off' disables the mechanism (a rulefile may set that too), empty is the default path.
+# The dump sits beside the rulefile and is named after it ('.bar.<rulefile>.dump'): the state of a
+# run includes the rulefile, two rulefiles never share a dump, and a directory may carry one per
+# rulefile -- 'Pleasef' and 'SomeOtherRules' are no different from 'Barf' in this.  'BAR_STATE_DUMP'
+# names another file, 'off' disables the mechanism (a rulefile may set that too), empty is the
+# default path.  A run without a rulefile has nothing to name a dump after and keeps none.
 
 declare -gA BAR_STATE_BASE_VARS=()   # variable names and declarations from before the modules
 declare -gA BAR_STATE_BASE_FUNCS=()  # function names from before the modules were loaded
@@ -909,20 +910,21 @@ function bar_state_off ## [value] - True when the value is one which turns the d
 
 function bar_state_path ## - Sets 'BAR_STATE_PATH' to the dump file of this invocation.
 {
-    ## 'BAR_STATE_DUMP' when the environment set it, else beside the rulefile
-    ## ('~/.please.dump' for 'please'), else next to the modules which were loaded.  The setting is
-    ## the one the environment had: the loader has to know where the dump is before it can read a
+    ## 'BAR_STATE_DUMP' when the environment set it, else '.bar.<rulefile name>.dump' beside the
+    ## rulefile.  The name carries the rulefile, so two rulefiles in one directory never share a
+    ## dump and nothing needs to know whether the run is 'bar' or 'please', in a project or next to
+    ## an installation: the rulefile is what the state of a run depends on, and where it is, is
+    ## where the dump goes.  Empty when there is no rulefile to name it after.  The setting is the
+    ## one the environment had: the loader has to know where the dump is before it can read a
     ## rulefile which might name another.
     if [[ -n "$BAR_STATE_SETTING" ]]; then
         BAR_STATE_PATH="$BAR_STATE_SETTING"
-    elif [[ "$BAR_CALLED_AS" = please ]]; then
-        # no project, and the same modules and the same '~/.Pleasef' from any directory
-        BAR_STATE_PATH="$HOME/.please.dump"
     elif [[ -n "${BARF_FILE:-}" ]]; then
-        BAR_STATE_PATH="${BARF_FILE%/*}/.bar.dump"
+        local dir="${BARF_FILE%/*}"
+        [[ -n "$dir" ]] || dir=.
+        BAR_STATE_PATH="$dir/.bar.${BARF_FILE##*/}.dump"
     else
-        # nothing but the modules: they are the project's own 'Bar.d' or the installation's
-        BAR_STATE_PATH="${BAR_DIR%/*}/.bar.dump"
+        BAR_STATE_PATH=""
     fi
 }
 
@@ -986,6 +988,13 @@ function bar_state_dump ## - Writes the state of the loaded modules to the dump 
     BAR_STATE_VARS="$(declare -p)"
     BAR_STATE_FUNCS="$(declare -F)"
     local file="$BAR_STATE_PATH"
+    # no rulefile, no name: a run which depends on the modules alone keeps no dump
+    [[ -n "$file" ]] || return 0
+    local dir="${file%/*}"
+    [[ -n "$dir" ]] || dir=.
+    # a rulefile directory we may not write to keeps no dump either -- the run is served from the
+    # files as always, and the reason is one line rather than a failure of the run
+    [[ -w "$dir" ]] || { warn "state: '$dir' is not writable, no dump"; return 0; }
     local -a files=("$BAR_SELF")
     local -A seen=(["$BAR_SELF"]=1)
     local entry line name flags rest result
@@ -1096,6 +1105,7 @@ function bar_state_load ## - Sources the dump instead of the modules, when it is
     [[ -z "${BAR_INSTALL_DEPS:-}" ]] || return 1
     bar_state_path
     local file="$BAR_STATE_PATH" line
+    [[ -n "$file" ]] || return 1
     [[ -f "$file" ]] || return 1
 
     local -a files=()

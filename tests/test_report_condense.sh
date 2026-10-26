@@ -71,9 +71,9 @@ rule fatal: -- report_fatal
 BARF
 
 # Number of lines that still carry the report location ('Bar.d/report_rules:<line>:<func>:'), or
-# '.bar.dump:<line>:' for a run served from the state dump -- naming the dump instead of the module
-# is what the dump costs, and a run without it names the module.
-count_locs() { grep -oE '(report_rules|\.bar\.dump):[0-9]+:' <<<"$1" | wc -l; }
+# '.bar.Barf.dump:<line>:' for a run served from the state dump -- naming the dump instead of the
+# module is what the dump costs, and a run without it names the module.
+count_locs() { grep -oE '(report_rules|\.bar\.[^:]*\.dump):[0-9]+:' <<<"$1" | wc -l; }
 
 # ---------------------------------------------------------------------------------------------------
 # 1. The verbose format is the default for redirected output: every line keeps its location, so the
