@@ -21,8 +21,11 @@
 #        '##' description
 #   AC8  a report from a module names the module and the line, never the descriptor the text was
 #        sourced from ('source_info' maps '/dev/fd/NN' back)
-#   AC9  a plain run stays inside the startup budget, and what the filter costs against the trunk's
-#        'bar' is printed rather than hidden (one awk per module, optimised in a later item)
+#   AC9  a plain run stays inside the startup budget
+#   AC10 one preprocessor serves the whole run, not one program per file
+#   AC11 a file expands as if it were alone: the state one file leaves does not reach the next
+#   AC12 a file whose last line carries no newline keeps that line, and no frame glues onto another
+#   AC13 a file the filter cannot read is reported, never expanded to nothing
 #
 # The filter is infallible by design: it never refuses a line, what it does not know is passed
 # through and bar's own parser reports it.  So the tests here assert output and behaviour, never
@@ -299,21 +302,108 @@ bestrun() {
     printf '%s' "$best"
 }
 
-# the trunk's 'bar' as the baseline: the same modules, without the filter
-TRUNK_BAR="$WORK/bar-trunk"
-( cd "$REPO_ROOT" && git show HEAD:bar >"$TRUNK_BAR" )
-chmod +x "$TRUNK_BAR"
-
 T="$WORK/timing"
 mkproj "$T"
-printf 'timing: -- true\n' >"$T/Barf"
+printf 'run: -- true\n' >"$T/Barf"
 best="$(bestrun "$BAR" "$T")"
-trunk="$(bestrun "$TRUNK_BAR" "$T")"
 modules="$(ls "$REPO_ROOT"/Bar.d/std_lib "$REPO_ROOT"/Bar.d/rule_lib "$REPO_ROOT"/Bar.d/*_rules | wc -l)"
 if (( best < 2500 )); then
-    pass "a plain run takes ${best} ms (best of 3, budget 2500 ms; the trunk's bar ${trunk} ms, the filter costs $((best - trunk)) ms for ${modules} modules)"
+    pass "a plain run takes ${best} ms (best of 3, budget 2500 ms, ${modules} modules)"
 else
-    fail "a plain run takes ${best} ms (over the 2500 ms budget; the trunk's bar ${trunk} ms)"
+    fail "a plain run takes ${best} ms (over the 2500 ms budget)"
+fi
+echo
+
+echo "AC10 one preprocessor serves the whole run"
+# a shim in front of the real awk counts the programs a run starts: the filter is started once and
+# handed a file at a time, where one program per file would be one start per module
+SHIM="$WORK/shim"
+mkdir -p "$SHIM"
+REAL_AWK="$(command -v awk)"
+printf '#!/usr/bin/env bash\nprintf "%%s\\n" start >>"${AWK_LOG:?}"\nexec %s "$@"\n' "$REAL_AWK" >"$SHIM/awk"
+chmod +x "$SHIM/awk"
+# awkstarts <dir> <log> - how often a run in <dir> started awk
+awkstarts() {
+    local dir="$1" log="$2" n
+    : >"$log"
+    ( cd "$dir" && AWK_LOG="$log" PATH="$SHIM:$PATH" "$BAR" run >/dev/null 2>&1 ) || true
+    n="$(grep -c '^start$' "$log" 2>/dev/null || true)"
+    printf '%s' "${n:-0}"
+}
+# the same run on the trunk's 'bar' would start one per module, which is what this counts against
+check "$(awkstarts "$T" "$WORK/awk-starts")" "1" "one awk for the run (the trunk's bar: one per module)"
+echo
+
+echo "AC11 a file expands as if it were alone"
+FR="$WORK/frames"
+FOUT="$WORK/frames-out"
+mkdir -p "$FR" "$FOUT"
+# each frame leaves the filter in the middle of something: a quote, a heredoc, an indented body
+printf 'NOTE="half a quote\nh2: dep ; echo swallowed-by-the-quote\n' >"$FR/01-open-quote"
+printf 'h2: dep ; echo second-file\n' >"$FR/02-header-after-open-quote"
+printf ": <<'NEVER'\nstill: heredoc-data\n" >"$FR/03-open-heredoc"
+printf 'blk: dep\n\techo one\n\techo two\n' >"$FR/04-body"
+printf 'tail: dep ; echo lastline' >"$FR/05-no-final-newline"
+printf 'plain: -- echo plain\n' >"$FR/06-plain"
+B="$WORK/batch"
+mkproj "$B"
+cat >"$B/Bar.d/batch" <<'EOS'
+### filters a directory of rule files in one run
+
+rule batch_frames: -- batch_frames_run
+
+function batch_frames_run
+{
+    local f
+    for f in "$FRAMES"/*; do
+        if [[ -f $f ]]; then
+            preprocess "$f" >"$FRAMES_OUT/${f##*/}"
+        fi
+    done
+}
+EOS
+if ( cd "$B" && FRAMES="$FR" FRAMES_OUT="$FOUT" "$BAR" batch_frames ) >/dev/null 2>&1; then
+    pass "the frames are filtered by one run"
+else
+    fail "the batch run failed"
+fi
+for f in "$FR"/*; do
+    name="${f##*/}"
+    check "$(cat "$FOUT/$name" 2>/dev/null)" "$("$BAR" preprocess "$f" 2>/dev/null)" \
+        "$name expands as it does alone"
+done
+echo
+
+echo "AC12 a file without a final newline keeps its last line, and no frame glues"
+printf 'tail: dep ; echo lastline\n' >"$WORK/with-newline"
+"$BAR" preprocess "$FR/05-no-final-newline" >"$WORK/alone-noterm" 2>/dev/null
+"$BAR" preprocess "$WORK/with-newline" >"$WORK/alone-term" 2>/dev/null
+if cmp -s "$WORK/alone-noterm" "$WORK/alone-term"; then
+    pass "a file without a final newline expands like one which has it"
+else
+    fail "a file without a final newline differs from one which has it"
+fi
+absent "$(cat "$WORK/alone-noterm")" "EOF" "the frame marker never reaches the output"
+check "$(head -1 "$FOUT/06-plain")" "rule plain: -- echo plain" \
+    "the frame after it starts on a line of its own"
+echo
+
+echo "AC13 a file the filter cannot read is reported"
+RC=0
+OUT="$("$BAR" preprocess "$WORK/there-is-no-such-rule-file" 2>"$WORK/err13")" || RC=$?
+if (( RC != 0 )); then
+    pass "an unreadable file fails the rule"
+else
+    fail "an unreadable file succeeded"
+fi
+check "$OUT" "" "and prints nothing"
+contains "$(cat "$WORK/err13")" "there-is-no-such-rule-file" "the report names the file"
+RC=0
+OUT="$("$BAR" preprocess "$WORK" 2>"$WORK/err13")" || RC=$?
+if (( RC != 0 )); then
+    pass "a directory is refused the same way"
+else
+    fail "a directory was expanded as if it were a rule file"
 fi
 echo
 

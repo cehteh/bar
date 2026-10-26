@@ -4233,6 +4233,9 @@ RULE FILE PREPROCESSOR
   * Shellcheck checks a module and a rule file through this preprocessor ('bar_lint'), so the
     make/just syntax is not reported as a syntax error and only genuine shell defects are.
 
+  * One filter serves a whole 'bar' invocation and is handed one file at a time: a file expands to
+    what it expands to alone, never depending on the files before it.
+
 
 RULE DEFINITION SYNTAX
 
@@ -4562,9 +4565,9 @@ MAIN API
         Prints the text which 'require' sources for the file: a line written in the syntax close to
         makefiles and justfiles is expanded into the 'rule' syntax and every other line is passed
         through unchanged.  The preprocessor is infallible, it never refuses input -- what it does
-        not understand is reported by bar's own parser, at the line it is on.  'bar preprocess
-        <file>' shows exactly the text which gets sourced.  That syntax is documented under
-        "RULE FILE PREPROCESSOR" in 'bar help'.
+        not understand is reported by bar's own parser, at the line it is on.  A file it cannot read
+        is an error rather than an empty expansion.  'bar preprocess <file>' shows exactly the text
+        which gets sourced.  That syntax is documented under "RULE FILE PREPROCESSOR" in 'bar help'.
         The path itself when it does not name one of our descriptors.
 
       require [--opt] [modules..]

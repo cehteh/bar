@@ -641,6 +641,9 @@ RULE FILE PREPROCESSOR
   * Shellcheck checks a module and a rule file through this preprocessor ('bar_lint'), so the
     make/just syntax is not reported as a syntax error and only genuine shell defects are.
 
+  * One filter serves a whole 'bar' invocation and is handed one file at a time: a file expands to
+    what it expands to alone, never depending on the files before it.
+
 
 RULE DEFINITION SYNTAX
 

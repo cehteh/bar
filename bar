@@ -504,7 +504,9 @@ function depregion(rest,   i, n, c, k, cnt, j, inner, lead, flags, cf, tok, w, o
     return lead flags out
 }
 
-BEGIN {
+# Every state the program carries across lines, back to its start-of-file value: BEGIN runs it, and
+# so does the end of a frame when one awk serves several files (see :func:`barf_pp_start`).
+function framereset() {
     nh = 0
     sq = 0
     dq = 0
@@ -518,8 +520,33 @@ BEGIN {
     nbody = 0
 }
 
+BEGIN {
+    framereset()
+}
+
+# A frame is one file: the program is told its path and reads it itself, so no writer has to run
+# beside the reader and a file without a trailing newline ends where it ends.  What the file left
+# buffered is printed, its state dropped, and the marker closes the frame on the channel.
+function frame(path,   n, line) {
+    while ((getline line < path) > 0)
+        transform(line)
+    close(path)
+    framedrain()
+    framereset()
+    print mark
+    fflush()
+}
+
 {
-    line = $0
+    if (mark != "" && substr($0, 1, 2) == "F ")
+        frame(substr($0, 3))
+    else
+        transform($0)
+}
+
+# One line of input through the whole transform: the program's name for a rule, and the only
+# entry point a frame has -- a line off stdin and a line read out of a file go the same way.
+function transform(line) {
 
     # a here document body is data
     if (nh > 0) {
@@ -534,25 +561,25 @@ BEGIN {
             }
             nh--
         }
-        next
+        return
     }
 
     # the rest of a multi line quoted string is data
     if (sq || dq) {
         print line
         scan(line)
-        next
+        return
     }
 
     # an indented body block
     if (inbody) {
         if (line ~ /^[ \t]*$/) {
             body[++nbody] = ""
-            next
+            return
         }
         if (indentof(line) >= base) {
             body[++nbody] = squote(substr(line, base + 1))
-            next
+            return
         }
         closebody()
     }
@@ -560,13 +587,13 @@ BEGIN {
     # blank lines between a buffered header and its body belong to the body
     if (havehdr && line ~ /^[ \t]*$/) {
         nblank++
-        next
+        return
     }
 
     if (line ~ /^[ \t]*$/) {
         flushattrs()
         print line
-        next
+        return
     }
 
     # an indented line after a buffered header is its body
@@ -580,7 +607,7 @@ BEGIN {
         inbody = 1
         nbody = 0
         body[++nbody] = squote(substr(line, base + 1))
-        next
+        return
     }
 
     # a header which nothing indented follows stays a plain header
@@ -596,7 +623,7 @@ BEGIN {
         sub(/^[ \t]+/, "", value)
         print name "=" value
         scan(line)
-        next
+        return
     }
 
     # 'NAME ?= value' is make's 'NAME ?= value' with the current value kept
@@ -608,7 +635,7 @@ BEGIN {
         sub(/^[ \t]+/, "", value)
         print ": \"${" name ":=" value "}\""
         scan(line)
-        next
+        return
     }
 
     # stacked '[flag]' lines attach to the next header
@@ -620,7 +647,7 @@ BEGIN {
         for (k = 1; k <= cnt; k++)
             attrflags = attrflags " --" tok[k]
         attrline[++nattr] = line
-        next
+        return
     }
 
     # a header: '<name>: ...' at column 0
@@ -639,7 +666,7 @@ BEGIN {
         # waiting for a body block, or the data would overtake it
         if (sq || dq || nh > 0)
             flushheader()
-        next
+        return
     }
 
     # anything else passes through
@@ -648,14 +675,51 @@ BEGIN {
     scan(line)
 }
 
-# an indented body may start with the first indented line after a buffered header
-END {
+# an indented body may start with the first indented line after a buffered header; a body block or a
+# header still buffered when the text ends belongs to the file that buffered it
+function framedrain() {
     if (inbody)
         closebody()
     flushheader()
     flushattrs()
 }
+
+END {
+    framedrain()
+    if (mark != "")
+        fflush()
+}
 AWK
+
+# The preprocessor is started once per run and talked to over two descriptors: the path of a file
+# goes in as 'F <path>', the printed text comes back with BAR_PP_MARK closing the frame.  The
+# marker is also what clears the state the file leaves behind, so a file expands as if it were the
+# only one -- awk's startup is paid once instead of once per module.
+# No regex metacharacter in the marker: the reader matches it with 'sed'.
+declare -g BAR_PP_IN="" BAR_PP_OUT="" BAR_PP_MARK='!!!!!!!!!!!!!!!!!EOF!!!!!!!!!!!!!!!!!'
+
+function barf_pp_start # - starts the preprocessor; sets BAR_PP_IN and BAR_PP_OUT
+{
+    # 'coproc' hands the two ends of the connection out as BARF_PP[0] (read) and BARF_PP[1]
+    # (write), but bash closes a coprocess's own descriptors in every subshell -- and 'preprocess'
+    # runs in one ('<(preprocess f)'), as does the writer of a frame.  They are duplicated onto
+    # ordinary descriptors, which are inherited, and both stay open for the rest of the run: a
+    # closed descriptor is reused by the next 'exec {fd}<' and the module behind it would report
+    # the wrong file.
+    local ppin ppout ppw ppr
+    coproc BARF_PP { LC_ALL=C awk -v mark="$BAR_PP_MARK" "$BARF_PP_AWK"; }
+    ppw="${BARF_PP[1]}" ppr="${BARF_PP[0]}"
+    exec {ppin}>&"$ppw" {ppout}<&"$ppr"
+    exec {ppw}>&- {ppr}<&-
+    BAR_PP_IN="$ppin"
+    BAR_PP_OUT="$ppout"
+}
+
+# Started here, in the shell which sources the modules: 'preprocess' runs in a subshell -- 'require'
+# sources '<(preprocess f)' -- and a descriptor set there does not outlive the module.
+if [[ -n "${BARF_PP_AWK:-}" ]] && command -v awk >/dev/null; then
+    barf_pp_start
+fi
 
 function preprocess ## <file> - Print a rule file with its make/just syntax expanded
 {
@@ -664,9 +728,9 @@ function preprocess ## <file> - Print a rule file with its make/just syntax expa
     ## Prints the text which 'require' sources for the file: a line written in the syntax close to
     ## makefiles and justfiles is expanded into the 'rule' syntax and every other line is passed
     ## through unchanged.  The preprocessor is infallible, it never refuses input -- what it does
-    ## not understand is reported by bar's own parser, at the line it is on.  'bar preprocess
-    ## <file>' shows exactly the text which gets sourced.  That syntax is documented under
-    ## "RULE FILE PREPROCESSOR" in 'bar help'.
+    ## not understand is reported by bar's own parser, at the line it is on.  A file it cannot read
+    ## is an error rather than an empty expansion.  'bar preprocess <file>' shows exactly the text
+    ## which gets sourced.  That syntax is documented under "RULE FILE PREPROCESSOR" in 'bar help'.
     case "${1:-}" in
     -h | --help)
         require --opt help
@@ -683,7 +747,26 @@ function preprocess ## <file> - Print a rule file with its make/just syntax expa
         cat -- "$1"
         return 0
     fi
-    awk "$BARF_PP_AWK" "$1"
+    if [[ ! -r $1 || -d $1 ]]; then
+        error "cannot read '$1'"
+        return 1
+    fi
+    [[ -n "$BAR_PP_IN" ]] || barf_pp_start
+    # the path, not the text: the program opens and reads the file itself, which leaves no writer
+    # to run beside the reader and no last line to glue the marker onto
+    printf 'F %s\n' "$1" >&"$BAR_PP_IN"
+    # The frame is copied by a process, not by a bash loop: 'read' costs about 11us a line (36ms over
+    # this tree's 3387) where a 'sed' started per module copies the frame in one go.  'sed -n' plus
+    # 'q' quits on the marker without printing it, so the leftover after it is nothing.
+    LC_ALL=C sed -n "/^$BAR_PP_MARK\$/q;p" <&"$BAR_PP_OUT"
+    # A reader which quits before the marker leaves the program writing into a closed pipe, and it
+    # dies with the next frame; every later module would then expand to nothing.  Report that
+    # instead of sourcing an empty file -- the preprocessor cannot be restarted from here, a
+    # coprocess started in this subshell would die with it.
+    if ! kill -0 "$BARF_PP_PID" 2>/dev/null; then
+        error "the rule file filter stopped mid run"
+        return 1
+    fi
 }
 
 # 'require' sources the text the filter prints, which means the module's statements are read from
