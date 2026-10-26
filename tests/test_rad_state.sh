@@ -558,7 +558,7 @@ run_bar helpers
 check "$RC" "0" "AC13: the repertoire lists the helper"
 contains "$OUT" "rad_state " "AC13: 'rad_state' is registered"
 contains "$OUT" "rad_patches" "AC13: so is 'rad_patches'"
-contains "$OUT" "(12 helpers)" "AC13: and the twelve helpers of the module are the whole repertoire"
+contains "$OUT" "(13 helpers)" "AC13: and the thirteen helpers of the module are the whole repertoire"
 contains "$OUT" "rad_import" "AC13: including the way in, 'rad_import'"
 contains "$OUT" "rad_comment_metadata" "AC13: and the proposal reader the module grew"
 contains "$OUT" "rad_rm_label" "AC13: and the label removal the write layer grew"

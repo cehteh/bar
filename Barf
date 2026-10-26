@@ -72,6 +72,7 @@ tests: test_rad_flow
 tests: test_rad_merge_accepted_prs
 tests: test_rad_reaction
 tests: test_rad_state
+tests: test_rad_branch_sync
 tests: test_rad_trust_requester
 tests: test_report_condense
 tests: test_rule_tools
@@ -112,6 +113,7 @@ test_rad_flow: -- tests/test_rad_flow.sh
 test_rad_merge_accepted_prs: -- tests/test_rad_merge_accepted_prs.sh
 test_rad_reaction: -- tests/test_rad_reaction.sh
 test_rad_state: -- tests/test_rad_state.sh
+test_rad_branch_sync: -- tests/test_rad_branch_sync.sh
 test_rad_trust_requester: -- tests/test_rad_trust_requester.sh
 test_report_condense: -- tests/test_report_condense.sh
 test_rule_tools: -- tests/test_rule_tools.sh

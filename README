@@ -1766,6 +1766,9 @@ MODULE API/RULES
       bar rad_rebase_ask [--after <patch>] [--branch <branch>] [--onto <sha>] [--dry-run]
                                                              ask the pending patches of a branch to
                                                              re-cut themselves after a merge landed
+      bar rad_branch_sync [--branch <branch>] [--dry-run] [--json]
+                                                             fast-forward a branch to its remote tip,
+                                                             or write nothing
     
     Every helper answers '-h' or '--help' with the builtin help of its rule on stdout and exit 0
     ('bar usage <name>'), and a refused argument with what was wrong on stderr and exit 2.
@@ -1779,8 +1782,9 @@ MODULE API/RULES
     Nothing there goes to the network: 'rad patch/issue list' answer from the local node storage and
     the divergence is measured against 'rad/main' as the last 'git fetch rad' left it, which the
     'head' line names.  Syncing is the caller's business ('rad sync', 'git fetch rad'): this helper
-    reports what is there and says how old it is.  'rad_topic' is the one exception -- it fetches the
-    radicle remote (else 'origin') to *know* how the base relates to upstream, see below.
+    reports what is there and says how old it is.  'rad_topic' and 'rad_branch_sync' are the two
+    exceptions: 'rad_topic' fetches the radicle remote (else 'origin') to *know* how the base relates
+    to upstream, 'rad_branch_sync' fetches it to move the base itself forward -- see below.
     'rad_merge_accepted_prs' is the other exception to the "nothing there goes to the network"
     reading: it fetches 'rad' first, because the branch a patch has to be merged into has to be
     the current one.  It is also the one helper which writes to a canonical branch -- the one of
@@ -2890,6 +2894,12 @@ MODULE API/RULES
         The one thing that may not be guessed at: a write under a short id is refused,
         and the refusal reads like a repository refusing us rather than a wrong id form.
 
+      rad_branch_checkout <tree> <branch>
+        the checkout which has <branch> checked out, empty when none
+
+      rad_branch_sync [--branch <branch>] [--dry-run] [--json]
+        fast-forward a local branch to its remote tip, and write nothing when that would not be clean
+
     Rules:
 
       rad_import
@@ -2976,6 +2986,9 @@ MODULE API/RULES
         its head already contains the tip, and when a live '*trigger:rebase' already stands -- a consumed
         one is redacted in the chain and does not count.  Exit 0 nothing failed, 1 a refusal or a failed
         write, 2 usage, 3 no data.
+
+      rad_branch_sync
+        The step 'rad_topic' refuses without and nothing else runs: a branch which is behind its remote tip is moved forward here, and nothing but the fast-forward happens -- '--dry-run' answers what it would do and moves no ref, a branch carrying commits the remote does not have is reported 'ahead' and left alone, a divergent one 'diverged', and a tree holding uncommitted work refuses the update instead of working around it.  The branch is the canonical one the node's storage names ('--branch' names another), the remote is 'rad' when the clone has one else 'origin', and the tip is asked of the remote rather than read off a tracking ref.  Exit 0 updated, current, ahead or a dry run, 1 refused or could not write, 2 usage, 3 no data.
 
       rad_rm_label
         The removal half of the write layer's label effect: the labels the item carries are read fresh

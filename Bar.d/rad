@@ -38,6 +38,9 @@
 ###   bar rad_rebase_ask [--after <patch>] [--branch <branch>] [--onto <sha>] [--dry-run]
 ###                                                          ask the pending patches of a branch to
 ###                                                          re-cut themselves after a merge landed
+###   bar rad_branch_sync [--branch <branch>] [--dry-run] [--json]
+###                                                          fast-forward a branch to its remote tip,
+###                                                          or write nothing
 ###
 ### Every helper answers '-h' or '--help' with the builtin help of its rule on stdout and exit 0
 ### ('bar usage <name>'), and a refused argument with what was wrong on stderr and exit 2.
@@ -51,8 +54,9 @@
 ### Nothing there goes to the network: 'rad patch/issue list' answer from the local node storage and
 ### the divergence is measured against 'rad/main' as the last 'git fetch rad' left it, which the
 ### 'head' line names.  Syncing is the caller's business ('rad sync', 'git fetch rad'): this helper
-### reports what is there and says how old it is.  'rad_topic' is the one exception -- it fetches the
-### radicle remote (else 'origin') to *know* how the base relates to upstream, see below.
+### reports what is there and says how old it is.  'rad_topic' and 'rad_branch_sync' are the two
+### exceptions: 'rad_topic' fetches the radicle remote (else 'origin') to *know* how the base relates
+### to upstream, 'rad_branch_sync' fetches it to move the base itself forward -- see below.
 ### 'rad_merge_accepted_prs' is the other exception to the "nothing there goes to the network"
 ### reading: it fetches 'rad' first, because the branch a patch has to be merged into has to be
 ### the current one.  It is also the one helper which writes to a canonical branch -- the one of
@@ -459,6 +463,11 @@ rule rad_merge_accepted_prs: -
 ## one is redacted in the chain and does not count.  Exit 0 nothing failed, 1 a refusal or a failed
 ## write, 2 usage, 3 no data.
 rule rad_rebase_ask: -
+
+# helper: rad_branch_sync | bring a local branch up to its remote tip, fast-forward only, and write nothing when that would not be clean | rad_branch_sync [--branch <branch>] [--dry-run] [--json] | one '<state> branch=<branch> <facts>' line, <state> one of updated, would-update, current, ahead, diverged, uncommitted, fetch-failed, merge-failed, update-failed; '--json' the same as one object
+## The step 'rad_topic' refuses without and nothing else runs: a branch which is behind its remote tip is moved forward here, and nothing but the fast-forward happens -- '--dry-run' answers what it would do and moves no ref, a branch carrying commits the remote does not have is reported 'ahead' and left alone, a divergent one 'diverged', and a tree holding uncommitted work refuses the update instead of working around it.  The branch is the canonical one the node's storage names ('--branch' names another), the remote is 'rad' when the clone has one else 'origin', and the tip is asked of the remote rather than read off a tracking ref.  Exit 0 updated, current, ahead or a dry run, 1 refused or could not write, 2 usage, 3 no data.
+rule rad_branch_sync: -
+
 # helper: rad_rm_label | remove every stored label of an item which matches one of the globs, in one write | rad_rm_label <item> <glob>.. [--repo <rid,path>] | one 'removed label item=<issue,patch>:<id> delete=<label>..' line, or 'no label item=…' when no stored label matches
 ## The removal half of the write layer's label effect: the labels the item carries are read fresh
 ## ('rad <type> list', the mutation target, never remembered) and every one matching a glob goes out
@@ -5836,4 +5845,207 @@ function rad_rebase_ask ## [--after <patch>] [--branch <branch>] [--onto <sha>] 
         return 1
     fi
     return 0
+}
+
+# --- a branch: rad_branch_sync ------------------------------------------------------------------
+
+function rad_branch_checkout ## <tree> <branch> - the checkout which has <branch> checked out, empty when none
+{
+    # 'git worktree list' is shared by every tree of the clone, so the clone's own checkout and a
+    # topic tree answer alike.  The branch is compared as the whole ref -- the listing prints
+    # 'branch refs/heads/<name>' under its 'worktree <path>' line, and a detached tree prints
+    # 'detached' instead -- so a branch no tree holds answers with nothing.
+    local tree="$1" want="refs/heads/$2" line="" path=""
+    while IFS= read -r line; do
+        case "$line" in
+        'worktree '*) path="${line#worktree }" ;;
+        "branch $want") printf '%s' "$path"; return 0 ;;
+        esac
+    done < <(git -C "$tree" worktree list --porcelain 2>/dev/null)
+    return 1
+}
+
+function rad_branch_sync ## [--branch <branch>] [--dry-run] [--json] - fast-forward a local branch to its remote tip, and write nothing when that would not be clean
+{
+    local -a args=( ${RULE_ARGS[@]+"${RULE_ARGS[@]}"} )
+    local raw value branch="" dry="" json=""
+    local -i i=0
+    local tree="" rid="" radpath="" storage="" remote="" local_sha="" upstream=""
+    local state="" where="" ahead="" out="" updated=false
+
+    while (( i < ${#args[@]} )); do
+        raw="${args[i]}"
+        case "$raw" in
+        -h | --help)
+            help_usage rad_branch_sync
+            return 0
+            ;;
+        --dry-run) dry=1 ;;
+        --json) json=1 ;;
+        --branch)
+            i=$(( i + 1 ))
+            value="${args[i]:-}"
+            if [[ -z "$value" ]]; then
+                help_usage_error rad_branch_sync "'--branch' needs a branch name"
+                return 2
+            fi
+            branch="$value"
+            ;;
+        --branch=*) branch="${raw#--branch=}" ;;
+        *)
+            help_usage_error rad_branch_sync "unknown argument '$raw'"
+            return 2
+            ;;
+        esac
+        i=$(( i + 1 ))
+    done
+    [[ -n "${BAR_AGENT_JSON:-}" ]] && json=1
+
+    is_command_installed "$RAD_BIN" || {
+        error "'$RAD_BIN' is not installed"
+        return 1
+    }
+    if ! tree="$(git rev-parse --show-toplevel 2>/dev/null)"; then
+        error "not a git repository: 'rad_branch_sync' moves a branch of the checkout it runs in"
+        return 3
+    fi
+    rid="$(cd "$tree" && rad_run inspect --rid)" || return $?
+    rid="${rid##*$'\n'}"
+    radpath="$(rad_path)" || radpath=""
+    storage="$radpath/storage/${rid#rad:}"
+    if [[ -z "$radpath" || ! -d "$storage" ]]; then
+        error "the node holds no storage for '$rid': '${RAD_BIN} path' says '${radpath:--}'"
+        return 3
+    fi
+
+    # The remote: 'rad' whenever the clone has one, else 'origin'.  A clone with neither has no
+    # branch of record to sync against.
+    if git -C "$tree" remote | grep -qx rad; then
+        remote=rad
+    elif git -C "$tree" remote | grep -qx origin; then
+        remote=origin
+    else
+        error "this clone has neither a 'rad' nor an 'origin' remote"
+        return 3
+    fi
+
+    # The branch: the node's storage has the canonical branch checked out, and a delegate may make
+    # any branch the default, so the name decides nothing and the storage is asked.
+    # '--branch' names one outright; the clone's own HEAD is the fallback when the storage names
+    # none (a clone whose radicle remote is a plain git remote).
+    if [[ -z "$branch" ]]; then
+        branch="$(git --git-dir="$storage" symbolic-ref --quiet --short HEAD 2>/dev/null)" || branch=""
+    fi
+    if [[ -z "$branch" ]]; then
+        branch="$(git -C "$tree" symbolic-ref --quiet --short HEAD 2>/dev/null)" || branch=""
+    fi
+    branch="${branch#refs/heads/}"
+    if [[ -z "$branch" ]]; then
+        error "no branch to sync: the storage names none and this checkout is detached"
+        return 3
+    fi
+
+    local_sha="$(git -C "$tree" rev-parse --verify --quiet "refs/heads/$branch^{commit}" 2>/dev/null)" || local_sha=""
+    if [[ -z "$local_sha" ]]; then
+        error "this clone has no branch '$branch' ('refs/heads/$branch' is missing): a sync moves a branch, it never creates one"
+        return 3
+    fi
+
+    # The tip is asked of the remote, never read off a tracking ref: a radicle clone maps only tags
+    # into 'refs/remotes/rad/*', so there is no 'rad/<branch>' to read there, and where one exists
+    # it is only as fresh as the last fetch.  'ls-remote' reads the node's store and writes nothing.
+    out="$(git -C "$tree" ls-remote "$remote" "refs/heads/$branch" 2>/dev/null)" || out=""
+    upstream="${out%%$'\t'*}"
+    upstream="${upstream//[[:space:]]/}"
+    if [[ -z "$upstream" ]]; then
+        error "'$remote' names no branch '$branch': there is nothing to sync against"
+        return 3
+    fi
+
+    # The objects are delivered *before* the relation is asked: an ancestry test against a commit
+    # the clone has never seen cannot answer, and a 'diverged' read into that would refuse a branch
+    # which is merely behind.  Objects only -- '--refmap=' clears the clone's refspec, so two syncs
+    # cannot collide on 'refs/remotes/*' (measured in the loop: 7 of 8 parallel fetches failed with
+    # "cannot lock ref") -- which is also why a dry run may fetch and still move nothing.
+    if ! git -C "$tree" cat-file -e "${upstream}^{commit}" 2>/dev/null; then
+        git -C "$tree" fetch --quiet --no-write-fetch-head --refmap= "$remote" "refs/heads/$branch" >/dev/null 2>&1 || true
+    fi
+
+    if ! git -C "$tree" cat-file -e "${upstream}^{commit}" 2>/dev/null; then
+        state="fetch-failed"
+    elif [[ "$local_sha" == "$upstream" ]]; then
+        state="current"
+    elif git -C "$tree" merge-base --is-ancestor "$upstream" "$local_sha" 2>/dev/null; then
+        # The branch carries commits the remote does not have: a sync never rebases and never resets
+        # one, so this is reported and left exactly as it is.
+        state="ahead"
+        ahead="$(git -C "$tree" rev-list --count "$upstream..$local_sha" 2>/dev/null)" || ahead=""
+    elif git -C "$tree" merge-base --is-ancestor "$local_sha" "$upstream" 2>/dev/null; then
+        state="behind"
+    else
+        state="diverged"
+    fi
+
+    if [[ "$state" == behind ]]; then
+        where="$(rad_branch_checkout "$tree" "$branch")" || where=""
+        if [[ -n "$where" && -n "$(git -C "$where" status --porcelain --untracked-files=no 2>/dev/null)" ]]; then
+            # The one thing a sync may not work around: the tree which holds the branch carries
+            # uncommitted work, so the fast-forward is not clean.  Nothing is written, and the next
+            # arrival tries again -- the update is infallible, so it needs no state to retry from.
+            state="uncommitted"
+        elif [[ -n "$dry" ]]; then
+            state="would-update"
+        else
+            if [[ -n "$where" ]]; then
+                if git -C "$where" merge --quiet --ff-only "$upstream" >/dev/null 2>&1; then
+                    state="updated"
+                else
+                    state="merge-failed"
+                fi
+            elif git -C "$tree" update-ref "refs/heads/$branch" "$upstream" "$local_sha" 2>/dev/null; then
+                # A branch no tree holds is moved as a ref, with the old value as the guard: no tree
+                # is switched, so a checkout somebody works in stays exactly where it is.
+                state="updated"
+            else
+                state="update-failed"
+            fi
+            if [[ "$state" == updated ]]; then
+                # A tracking ref the clone carries is part of "the base is in good shape" -- the
+                # merge helpers read it in preference to the local branch.  Refreshed only where it
+                # already exists: creating it in a tags-only clone would mint a ref no fetch of that
+                # clone ever updates again.
+                if git -C "$tree" rev-parse --verify --quiet "refs/remotes/$remote/$branch" >/dev/null 2>&1; then
+                    git -C "$tree" update-ref "refs/remotes/$remote/$branch" "$upstream" 2>/dev/null || true
+                fi
+            fi
+        fi
+    fi
+
+    if [[ "$state" == updated ]]; then
+        updated=true
+    fi
+
+    if [[ -n "$json" ]]; then
+        jq -cn --arg repo "$rid" --arg branch "$branch" --arg remote "$remote" --arg state "$state" \
+            --arg local "$local_sha" --arg upstream "$upstream" --arg tree "$where" --arg ahead "$ahead" \
+            --argjson updated "$updated" \
+            '{bar_rad: 1, action: "branch_sync", repo: $repo, branch: $branch, remote: $remote,
+              state: $state, local: $local, upstream: $upstream, updated: $updated,
+              tree: $tree, ahead: $ahead}'
+    else
+        case "$state" in
+        updated) printf 'updated branch=%s from=%s to=%s\n' "$branch" "${local_sha:0:7}" "${upstream:0:7}" ;;
+        would-update) printf 'would-update branch=%s from=%s to=%s\n' "$branch" "${local_sha:0:7}" "${upstream:0:7}" ;;
+        current) printf 'current branch=%s at=%s\n' "$branch" "${local_sha:0:7}" ;;
+        ahead) printf 'ahead branch=%s at=%s by=%s\n' "$branch" "${local_sha:0:7}" "${ahead:-?}" ;;
+        diverged) printf 'diverged branch=%s local=%s upstream=%s\n' "$branch" "${local_sha:0:7}" "${upstream:0:7}" ;;
+        uncommitted) printf 'uncommitted branch=%s at=%s tree=%s\n' "$branch" "${local_sha:0:7}" "$where" ;;
+        *) printf '%s branch=%s local=%s upstream=%s\n' "$state" "$branch" "${local_sha:0:7}" "${upstream:0:7}" ;;
+        esac
+    fi
+
+    case "$state" in
+    current | updated | ahead | would-update) return 0 ;;
+    *) return 1 ;;
+    esac
 }
