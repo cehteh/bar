@@ -58,6 +58,7 @@ tests: test_extcomp
 tests: test_function_completion
 tests: test_helpers
 tests: test_git_hook_env
+tests: test_git_search
 tests: test_hermes_logs
 tests: test_hermes_handoff
 tests: test_hermeskanban
@@ -113,6 +114,7 @@ test_preprocess: -- tests/test_preprocess.sh
 test_public_mode: -- tests/test_public_mode.sh
 test_rad_cob: -- tests/test_rad_cob.sh
 test_git_hook_env: -- tests/test_git_hook_env.sh
+test_git_search: -- tests/test_git_search.sh
 test_rad_cob_state: -- tests/test_rad_cob_state.sh
 test_rad_comment_metadata: -- tests/test_rad_comment_metadata.sh
 test_rad_identity: -- tests/test_rad_identity.sh

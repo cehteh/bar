@@ -648,6 +648,25 @@ MODULE API/RULES
         - branches: associative array storing 'directory:branch'
         - heads:    associative array storing 'directory:head'
 
+      git_search <file> [[directory] branch] [--options..]
+        Lists the commits whose tree holds a file with the object id of <file>.
+        <file> is hashed in the caller's directory, before any directory is entered.  Its path -- the
+        prefix of the project which contains it, plus its own name -- is the path the destination
+        filters compare; a <file> outside any project has no prefix and stands by its name alone.
+        <directory> (default '.') is the project whose history is read, <branch> (default: the branch
+        checked out there) the line which is walked, newest commit first.
+        --exact|--name|--dir|--match <glob> - only commits holding the blob at that path, at any path
+        of that name, in that directory, or at a path matching <glob>.
+        --added - only the commits which start a run of presence.
+        --last - only the commits which end one: the last commit in which it was still present.
+        --removed - only the commits right after a run: where it disappeared.
+        --absent - only the commits right before a run: the absent side of an add.
+        --head <N>|--tail <N> - the first N, the last N of the walk; both: the last <tail> of the first <head>.
+        --filter <rx> - only commits whose message header matches the extended regex <rx>.
+        --format <format> - print git's own --format; '%H ' is prepended internally and cut off again.
+        --json - a JSON array of commit, date, committer and subject.
+        --check - print nothing, succeed only while a commit is left.
+
   git_rules - Standard rules for git support
 
     Rules:

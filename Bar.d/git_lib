@@ -137,6 +137,242 @@ function git_parse_worktrees ## [main [dirs [branches [heads]]]] - Parses git wo
     done < <(git worktree list --porcelain)
 }
 
+## <file> [[directory] branch] [--options..] - Lists the commits whose tree holds a file with the object id of <file>.
+function git_search
+{
+    ## <file> is hashed in the caller's directory, before any directory is entered.  Its path -- the
+    ## prefix of the project which contains it, plus its own name -- is the path the destination
+    ## filters compare; a <file> outside any project has no prefix and stands by its name alone.
+    ## <directory> (default '.') is the project whose history is read, <branch> (default: the branch
+    ## checked out there) the line which is walked, newest commit first.
+    ## --exact|--name|--dir|--match <glob> - only commits holding the blob at that path, at any path
+    ## of that name, in that directory, or at a path matching <glob>.
+    ## --added - only the commits which start a run of presence.
+    ## --last - only the commits which end one: the last commit in which it was still present.
+    ## --removed - only the commits right after a run: where it disappeared.
+    ## --absent - only the commits right before a run: the absent side of an add.
+    ## --head <N>|--tail <N> - the first N, the last N of the walk; both: the last <tail> of the first <head>.
+    ## --filter <rx> - only commits whose message header matches the extended regex <rx>.
+    ## --format <format> - print git's own --format; '%H ' is prepended internally and cut off again.
+    ## --json - a JSON array of commit, date, committer and subject.
+    ## --check - print nothing, succeed only while a commit is left.
+    local file='' dir='.' branch='' fmt='' rx='' head_n='' tail_n='' glob=''
+    local dest='' state='' want_json='' want_check=''
+    local -a pos=()
+
+    while (( $# )); do
+        case $1 in
+            --head|--tail|--match|--filter|--format)
+                if (( $# < 2 )) || [[ -z $2 ]]; then
+                    help_usage_error git_search "$1 needs a value"
+                    return 2
+                fi
+                case $1 in
+                    --head) head_n=$2 ;;
+                    --tail) tail_n=$2 ;;
+                    --match) dest=match glob=$2 ;;
+                    --filter) rx=$2 ;;
+                    --format) fmt=$2 ;;
+                esac
+                shift 2
+                ;;
+            --exact|--name|--dir) dest=${1#--}; shift ;;
+            --added|--last|--removed|--absent) state=${1#--}; shift ;;
+            --json) want_json=true; shift ;;
+            --check) want_check=true; shift ;;
+            --) shift; pos+=("$@"); break ;;
+            -*) help_usage_error git_search "no such option: $1"; return 2 ;;
+            *) pos+=("$1"); shift ;;
+        esac
+    done
+
+    if (( ${#pos[@]} < 1 )); then
+        help_usage_error git_search "a file is required"
+        return 2
+    fi
+    if (( ${#pos[@]} > 3 )); then
+        help_usage_error git_search "only a directory and a branch follow the file"
+        return 2
+    fi
+    local n
+    for n in "$head_n" "$tail_n"; do
+        if [[ -n $n && ! $n =~ ^[0-9]+$ ]]; then
+            help_usage_error git_search "--head and --tail take a count"
+            return 2
+        fi
+    done
+
+    file=${pos[0]}
+    if [[ -d ${pos[1]:-} ]]; then
+        dir=${pos[1]}
+        branch=${pos[2]:-}
+    elif [[ -n ${pos[2]:-} ]]; then
+        help_usage_error git_search "not a directory: ${pos[1]}"
+        return 2
+    else
+        branch=${pos[1]:-}
+    fi
+
+    # the caller side: the object id is the identity, the repository is only where the history is
+    local oid='' repo='' path='' prefix=''
+    if ! oid="$(git hash-object -- "$file" 2>/dev/null)"; then
+        [[ -n $want_check ]] && return 1
+        help_usage_error git_search "cannot hash '$file'"
+        return 2
+    fi
+    if ! repo="$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null)"; then
+        help_usage_error git_search "'$dir' is not inside a git project"
+        return 2
+    fi
+    if [[ -z $branch ]]; then
+        branch="$(git -C "$repo" rev-parse --abbrev-ref HEAD 2>/dev/null)"
+        # shellcheck disable=SC2015
+        [[ -n $branch ]] && : || branch=HEAD
+    fi
+    if ! git -C "$repo" rev-parse --verify --quiet "$branch^{commit}" >/dev/null; then
+        help_usage_error git_search "no such branch in $repo: $branch"
+        return 2
+    fi
+    if ! git -C "$repo" cat-file -e "$oid" 2>/dev/null; then
+        [[ -n $want_check ]] && return 1
+        error "no blob $oid in the object store of $repo"
+        return 1
+    fi
+    # shellcheck disable=SC2015
+    prefix="$(git -C "$(dirname -- "$file")" rev-parse --show-prefix 2>/dev/null)" && : || prefix=''
+    path="$prefix$(basename -- "$file")"
+
+    local -a commits=() trees=() present=()
+    local line sha
+    while IFS= read -r line; do
+        commits+=("${line%% *}")
+        trees+=("${line#* }")
+    done < <(git -C "$repo" rev-list --no-commit-header --format='%H %T' "$branch")
+
+    local -A seen=()
+    local i=0 hit=0 hits=0 meta='' p='' pdir=''
+    [[ $path == */* ]] && pdir="${path%/*}"
+
+    if [[ $dest == exact ]]; then
+        # one process for the whole walk: '<commit>:<path>' answers the blob there, or 'missing'
+        local -a answers=()
+        while IFS= read -r line; do
+            answers+=("$line")
+        done < <(
+            for sha in "${commits[@]}"; do
+                printf '%s:%s\n' "$sha" "$path"
+            done | git -C "$repo" cat-file --batch-check
+        )
+        # a hit answers '<oid> blob <size>', a miss echoes the name back: the first field decides
+        for (( i=0; i<${#commits[@]}; i++ )); do
+            [[ ${answers[i]} == "$oid "* ]] && present+=(1) || present+=(0)
+        done
+    else
+        for (( i=0; i<${#commits[@]}; i++ )); do
+            if [[ -n ${seen[${trees[i]}]:-} ]]; then
+                present+=("${seen[${trees[i]}]}")
+                continue
+            fi
+            hit=0
+            while IFS=$'\t' read -r meta p; do
+                [[ ${meta##* } == "$oid" ]] || continue
+                # --match takes a glob: the right-hand side is a pattern on purpose
+                # shellcheck disable=2053
+                case $dest in
+                    '') hit=1 ;;
+                    name) [[ ${p##*/} == "${path##*/}" ]] && hit=1 ;;
+                    dir)
+                        if [[ $p == */* ]]; then
+                            [[ ${p%/*} == "$pdir" ]] && hit=1
+                        else
+                            [[ -z $pdir ]] && hit=1
+                        fi
+                        ;;
+                    match) [[ $p == $glob ]] && hit=1 ;;
+                esac
+                (( hit )) && break
+            done < <(git -C "$repo" ls-tree -r --full-tree "${commits[i]}")
+            seen[${trees[i]}]=$hit
+            present+=("$hit")
+            (( hits += hit ))
+            # a default walk answers in walk order: the first N of it need not read the rest
+            if [[ -z $state && -z $tail_n && -z $rx && -n $head_n ]] && (( hits >= head_n )); then
+                break
+            fi
+        done
+    fi
+
+    local -a sel=()
+    local older=0 newer=0
+    n=${#present[@]}
+    for (( i=0; i<n; i++ )); do
+        p=${present[i]}
+        older=$(( i+1 < n ? present[i+1] : 0 ))
+        newer=$(( i > 0 ? present[i-1] : 0 ))
+        case $state in
+            '') (( p )) && sel+=("${commits[i]}") ;;
+            added) (( p && ! older )) && sel+=("${commits[i]}") ;;
+            last) (( p && ! newer )) && sel+=("${commits[i]}") ;;
+            removed) (( ! p && older )) && sel+=("${commits[i]}") ;;
+            absent) (( ! p && newer )) && sel+=("${commits[i]}") ;;
+        esac
+    done
+
+    if [[ -n $rx ]]; then
+        local -a kept=()
+        local subject=''
+        for sha in "${sel[@]}"; do
+            subject="$(git -C "$repo" log -1 --format=%s "$sha")"
+            [[ $subject =~ $rx ]] && kept+=("$sha")
+        done
+        sel=("${kept[@]}")
+    fi
+    if [[ -n $head_n ]] && (( ${#sel[@]} > head_n )); then
+        sel=("${sel[@]:0:head_n}")
+    fi
+    if [[ -n $tail_n ]]; then
+        if (( tail_n == 0 )); then
+            sel=()
+        elif (( ${#sel[@]} > tail_n )); then
+            sel=("${sel[@]: -tail_n}")
+        fi
+    fi
+
+    if [[ -n $want_check ]]; then
+        (( ${#sel[@]} )) && return 0
+        return 1
+    fi
+    (( ${#sel[@]} )) || return 0
+
+    local out=''
+    if [[ -n $fmt ]]; then
+        for sha in "${sel[@]}"; do
+            out="$(git -C "$repo" log -1 --format="format:%H $fmt" "$sha")" || return 1
+            printf '%s\n' "${out#* }"
+        done
+        return 0
+    fi
+
+    if [[ -n $want_json ]]; then
+        require json_lib
+        local h='' date='' committer='' subject='' jc='' js='' sep=''
+        printf '['
+        while IFS=$'\t' read -r h date committer subject; do
+            [[ -n $h ]] || continue
+            json_set_string jc "$committer"
+            json_set_string js "$subject"
+            printf '%s{"commit":"%s","date":"%s","committer":%s,"subject":%s}' \
+                "$sep" "$h" "$date" "$jc" "$js"
+            sep=,
+        done < <(git -C "$repo" log --no-walk=unsorted \
+                    --format='%H%x09%ci%x09%cn%x09%s' "${sel[@]}")
+        printf ']\n'
+        return 0
+    fi
+
+    git -C "$repo" log --no-walk=unsorted --format='%H %ci %cn' "${sel[@]}"
+}
+
 # Define --bare rules for read-only git query functions
 rule --bare git_toplevel: -
 rule --bare git_bar: -
@@ -147,5 +383,6 @@ rule --bare git_branch_find: -
 rule --bare git_branch_find_one: -
 rule --bare git_is_ancestor: -
 rule --bare git_tree_hash: -
+rule --bare git_search: -
 
 
