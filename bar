@@ -32,9 +32,7 @@
 ### Provides only basic functionality for module loading and debugging and starting rule
 ### evaluation. Loads the 'std_lib' and 'rule_lib' to make them omnipresent.
 
-# PLANNED: Autoinstall rules from global dir to local Barf.d
 # PLANNED: parallel dependencies dep+
-# PLANNED: load make style rules from a file?
 
 function bar_main ## [rulefile] [--bare] [rule [arguments..]] - Loads a rulefile and executes rule with optional arguments
 {
