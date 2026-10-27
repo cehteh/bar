@@ -152,9 +152,9 @@ function git_search
     ## --removed - only the commits right after a run: where it disappeared.
     ## --absent - only the commits right before a run: the absent side of an add.
     ## --head <N>|--tail <N> - the first N, the last N of the walk; both: the last <tail> of the first <head>.
-    ## --filter <rx> - only commits whose message header matches the extended regex <rx>.
+    ## --filter <rx> - only commits whose message header matches the extended regex <rx>; a malformed one is a usage error.
     ## --format <format> - print git's own --format; '%H ' is prepended internally and cut off again.
-    ## --json - a JSON array of commit, date, committer and subject.
+    ## --json - a JSON array of commit, date, committer and subject; an empty selection is '[]'.
     ## --check - print nothing, succeed only while a commit is left.
     local file='' dir='.' branch='' fmt='' rx='' head_n='' tail_n='' glob=''
     local dest='' state='' want_json='' want_check=''
@@ -162,8 +162,14 @@ function git_search
 
     while (( $# )); do
         case $1 in
+            -h|--help)
+                require help
+                help_usage git_search
+                return 0
+                ;;
             --head|--tail|--match|--filter|--format)
                 if (( $# < 2 )) || [[ -z $2 ]]; then
+                    require help
                     help_usage_error git_search "$1 needs a value"
                     return 2
                 fi
@@ -181,32 +187,48 @@ function git_search
             --json) want_json=true; shift ;;
             --check) want_check=true; shift ;;
             --) shift; pos+=("$@"); break ;;
-            -*) help_usage_error git_search "no such option: $1"; return 2 ;;
+            -*) require help; help_usage_error git_search "no such option: $1"; return 2 ;;
             *) pos+=("$1"); shift ;;
         esac
     done
 
     if (( ${#pos[@]} < 1 )); then
+        require help
         help_usage_error git_search "a file is required"
         return 2
     fi
     if (( ${#pos[@]} > 3 )); then
+        require help
         help_usage_error git_search "only a directory and a branch follow the file"
         return 2
     fi
     local n
     for n in "$head_n" "$tail_n"; do
         if [[ -n $n && ! $n =~ ^[0-9]+$ ]]; then
+            require help
             help_usage_error git_search "--head and --tail take a count"
             return 2
         fi
     done
+    # '=~' answers 2 for a malformed pattern, which would otherwise read as 'no match' -- a filter
+    # nothing satisfies, answered as if it were an answer
+    if [[ -n $rx ]]; then
+        local re_rc=0
+        [[ '' =~ $rx ]]
+        re_rc=$?
+        if (( re_rc == 2 )); then
+            require help
+            help_usage_error git_search "invalid --filter regex: $rx"
+            return 2
+        fi
+    fi
 
     file=${pos[0]}
     if [[ -d ${pos[1]:-} ]]; then
         dir=${pos[1]}
         branch=${pos[2]:-}
     elif [[ -n ${pos[2]:-} ]]; then
+        require help
         help_usage_error git_search "not a directory: ${pos[1]}"
         return 2
     else
@@ -217,10 +239,12 @@ function git_search
     local oid='' repo='' path='' prefix=''
     if ! oid="$(git hash-object -- "$file" 2>/dev/null)"; then
         [[ -n $want_check ]] && return 1
+        require help
         help_usage_error git_search "cannot hash '$file'"
         return 2
     fi
     if ! repo="$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null)"; then
+        require help
         help_usage_error git_search "'$dir' is not inside a git project"
         return 2
     fi
@@ -230,6 +254,7 @@ function git_search
         [[ -n $branch ]] && : || branch=HEAD
     fi
     if ! git -C "$repo" rev-parse --verify --quiet "$branch^{commit}" >/dev/null; then
+        require help
         help_usage_error git_search "no such branch in $repo: $branch"
         return 2
     fi
@@ -342,7 +367,11 @@ function git_search
         (( ${#sel[@]} )) && return 0
         return 1
     fi
-    (( ${#sel[@]} )) || return 0
+    if (( ${#sel[@]} == 0 )); then
+        # the mode which has an empty form answers it: a JSON reader gets its array
+        [[ -n $want_json ]] && printf '[]\n'
+        return 0
+    fi
 
     local out=''
     if [[ -n $fmt ]]; then

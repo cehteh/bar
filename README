@@ -662,9 +662,9 @@ MODULE API/RULES
         --removed - only the commits right after a run: where it disappeared.
         --absent - only the commits right before a run: the absent side of an add.
         --head <N>|--tail <N> - the first N, the last N of the walk; both: the last <tail> of the first <head>.
-        --filter <rx> - only commits whose message header matches the extended regex <rx>.
+        --filter <rx> - only commits whose message header matches the extended regex <rx>; a malformed one is a usage error.
         --format <format> - print git's own --format; '%H ' is prepended internally and cut off again.
-        --json - a JSON array of commit, date, committer and subject.
+        --json - a JSON array of commit, date, committer and subject; an empty selection is '[]'.
         --check - print nothing, succeed only while a commit is left.
 
   git_rules - Standard rules for git support

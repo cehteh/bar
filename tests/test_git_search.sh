@@ -166,22 +166,59 @@ check "$OUT" "" "and still prints nothing"
 echo
 
 echo "AC7 bad arguments and a blob outside the store"
+# a usage error is a message, not only a status: 'git_search: <why>' and the way to the help
+usage() { contains "$(cat "$WORKDIR/err")" "git_search: $1" "$2"; contains "$(cat "$WORKDIR/err")" "usage git_search" "$2, and points at it"; }
+
 run "$FIX" "$NEEDLE" --exact --nonsense
 check "$RC" 2 "an unknown option is a usage error"
+usage "no such option: --nonsense" "and names the option"
 run "$FIX" "$NEEDLE" --head
 check "$RC" 2 "a missing option value is a usage error"
+usage "--head needs a value" "and names the option"
+run "$FIX" "$NEEDLE" --head two
+check "$RC" 2 "a count which is not a number is a usage error"
+run "$FIX" "$NEEDLE" --filter '('
+check "$RC" 2 "a malformed --filter regex is a usage error"
+usage "invalid --filter regex: (" "and quotes the regex"
+run "$FIX"
+check "$RC" 2 "no file at all is a usage error"
+usage "a file is required" "and says a file is required"
 run "$FIX" "$WORKDIR/nope.txt"
 check "$RC" 2 "a file which cannot be hashed is a usage error"
 run "$FIX" "$NEEDLE" "$WORKDIR"
 check "$RC" 2 "a directory which is not a project is a usage error"
+contains "$(cat "$WORKDIR/err")" "git_search: '$WORKDIR' is not inside a git project" "and names the directory"
+contains "$(cat "$WORKDIR/err")" "usage git_search" "and points at the usage"
 run "$FIX" "$NEEDLE" nomain
 check "$RC" 2 "an unknown branch is a usage error"
+usage "no such branch" "and names the branch"
 printf 'a blob this repository never held\n' > "$WORKDIR/stranger.txt"
 run "$FIX" "$WORKDIR/stranger.txt"
 check "$RC" 1 "a blob outside the object store is an error"
 contains "$(cat "$WORKDIR/err")" "object store" "and says so"
 run "$FIX" "$WORKDIR/stranger.txt" --check
 check "$RC" 1 "'--check' answers the same, silently"
+echo
+
+echo "AC8 -h and --help answer the usage block, they are not a usage error"
+run "$FIX" -h
+check "$RC" 0 "'-h' succeeds"
+contains "$OUT" '<file> [[directory] branch] [--options..]' "and prints the prototype"
+run "$FIX" --help
+check "$RC" 0 "'--help' succeeds"
+contains "$OUT" 'Lists the commits whose tree holds a file' "and its summary"
+absent "$(cat "$WORKDIR/err")" "usage error" "neither is a usage error"
+echo
+
+echo "AC9 an empty answer is still the output mode's own"
+run "$FIX" "$NEEDLE" --json --filter 'no such commit'
+check "$RC" 0 "'--json' with nothing to say succeeds"
+check "$OUT" "[]" "and answers one empty JSON array"
+run "$FIX" "$NEEDLE" --format '%s' --filter 'no such commit'
+check "$OUT" "" "'--format' with nothing to say prints nothing"
+run "$FIX" "$NEEDLE" --filter 'no such commit'
+check "$RC" 0 "the default with nothing to say succeeds"
+check "$OUT" "" "and prints nothing"
 echo
 
 echo "=== $( (( failures == 0 )) && echo "all git_search checks passed" || echo "$failures check(s) failed") ==="
