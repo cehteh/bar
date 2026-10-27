@@ -20,6 +20,9 @@ ABOUT
     a form to define rules that always evaluate.
   * We have a module that can memorize commands persistently and schedule evaluation to the
     background. A later instance can pick up the results from this background evaluation.
+  * Deliberately implemented in bash, bar is meant to be vendored into any project using it,
+    it has very modest dependencies and should run anywhere you have a unix like userland with
+    bash and a few common tools available.
 
   When you read this because you have seen 'bar' or '.bar' used in a repository then you may
   look at INITIAL INSTALLATION below.
@@ -4918,6 +4921,34 @@ BASH COMPLETION
       or with shebang pointing to bar/please)
   2.  Complete available bash functions and rules from default rule file and Bar.d/ modules
   3.  Provide context-aware argument completion based on parameter types
+
+
+RELEASES
+
+  There will be no versioned releases, we only maintain a rolling 'main' branch (and plenty
+  feature and development branches). This is not a problem since we promote bar to be vendored
+  into projects using it. Thus you can freely update/edit/replace any part of it.  The
+  'git_search' function helps to track the history of files.
+
+
+CONTRIBUTIONS
+
+  bar uses radicle (https://radicle.dev/). Issues and patches are maintained on radicle. Its
+  rid is rad:z3WhBdHt1VVNyeQ61zpY66pNzuSrP. There is a mirror on github that is lazily
+  updated. PR's and Issues opened on github may be ignored or handled with a delay.
+
+
+SUPPORT AND CONTACT
+
+  Radicle Explorer (readonly):
+  https://seed.pipapo.org/nodes/seed.pipapo.org/rad:z3WhBdHt1VVNyeQ61zpY66pNzuSrP
+
+  Public channels:
+  Mastodon: @cehteh@social.tchncs.de use the #BAshRulez hashtag
+  IRC: ping cehteh on irc.libera.chat or irc.oftc.net
+
+  Email for contracted work, payed support:
+  ct.bar@pipapo.org
 
 
 LICENSE
