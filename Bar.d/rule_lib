@@ -276,37 +276,48 @@ function rule_rename ## <oldname> <newname> - renames a rule
     unset "BAR_RULE_FLAGS[$oldname]"
 }
 
-function clause_local ## [var[=value]..] - Makes scalar variables local to a clause.
+function clause_local ## [var[=value]|=var..] - Makes scalar variables local to a clause.
 {
-    local var
-    local value
-    for var in "$@"; do
-        value="${var#*=}"
-        var="${var%%=*}"
-        if [[ -v "$var" ]]; then
-            is_scalar "$var" || die "only scalar variables can be clause_local"
-            CLAUSE_LOCAL[$var]="${!var}"
+    # the locals carry a prefix: the variables this assigns are named by the caller, and a local
+    # called 'var' or 'value' would take the assignment instead of the clause's variable
+    local _cl_var
+    local _cl_name
+    local _cl_value
+    local _cl_assign
+    for _cl_var in "$@"; do
+        _cl_name="${_cl_var%%=*}"
+        _cl_value=""
+        _cl_assign=0
+        if [[ "$_cl_var" == *=* ]]; then
+            _cl_assign=1
+            _cl_value="${_cl_var#*=}"
+        fi
+        if [[ -v "$_cl_name" ]]; then
+            is_scalar "$_cl_name" || die "only scalar variables can be clause_local"
+            CLAUSE_LOCAL[$_cl_name]="${!_cl_name}"
         else
             # using some magic here
-            CLAUSE_LOCAL[$var]="<<unset_clause_local_variable>>"
+            CLAUSE_LOCAL[$_cl_name]="<<unset_clause_local_variable>>"
         fi
-        if [[ -n "$value" ]]; then
-            eval "$var='$value'"
+        if (( _cl_assign )); then
+            eval "$_cl_name='$_cl_value'"
         fi
     done
 }
 
 function clause_local_restore
 {
-    local key
-    for key in "${!CLAUSE_LOCAL[@]}"; do
-        declare -n var="$key"
-        local value="${CLAUSE_LOCAL[$key]}"
-        if [[ "${value}" = "<<unset_clause_local_variable>>" ]]; then
-            unset "$key"
+    local _cl_key
+    local _cl_value
+    for _cl_key in "${!CLAUSE_LOCAL[@]}"; do
+        declare -n _cl_ref="$_cl_key"
+        _cl_value="${CLAUSE_LOCAL[$_cl_key]}"
+        if [[ "${_cl_value}" = "<<unset_clause_local_variable>>" ]]; then
+            unset "$_cl_key"
         else
-            var="$value"
+            _cl_ref="$_cl_value"
         fi
+        unset -n _cl_ref
     done
     unset CLAUSE_LOCAL
 }

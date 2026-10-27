@@ -51,6 +51,7 @@ tests: test_cache
 tests: test_agent_rules
 tests: test_cargo_completers
 tests: test_cargo_variable_expansion
+tests: test_clause_local
 tests: test_completion
 tests: test_ext_completers
 tests: test_extcomp
@@ -92,6 +93,7 @@ test_cache: -- tests/test_cache.sh
 test_agent_rules: -- tests/test_agent_rules.sh
 test_cargo_completers: -- tests/test_cargo_completers.sh
 test_cargo_variable_expansion: -- tests/test_cargo_variable_expansion.sh
+test_clause_local: -- tests/test_clause_local.sh
 test_completion: -- tests/test_completion.sh
 test_ext_completers: -- tests/test_ext_completers.sh
 test_extcomp: -- tests/test_extcomp.sh

@@ -484,8 +484,19 @@ function parens(tok,   i, n, c, q, depth, op, cl, pre, inner, post, len, first, 
     return "\047" squote(pre first post (more == "" ? "" : " " more)) "\047"
 }
 
+# the 'clause_local' argument a dependency word stands for, empty when it defines no variable:
+# 'var=value' and 'var=' are locals assigned in the clause, '=var' is a local initialized from the
+# outer scope
+function vardef(tok) {
+    if (tok ~ /^=[A-Za-z_][A-Za-z0-9_]*$/)
+        return substr(tok, 2)
+    if (tok ~ /^[A-Za-z_][A-Za-z0-9_]*=/)
+        return tok
+    return ""
+}
+
 # the text after 'name:' -- clause flags, dependencies, an inline body
-function depregion(rest,   i, n, c, k, cnt, j, inner, lead, flags, cf, tok, w, out) {
+function depregion(rest,   i, n, c, k, cnt, j, inner, lead, flags, cf, tok, w, out, ws, run, inrun, vd, body) {
     n = length(rest)
     i = 1
     while (i <= n && substr(rest, i, 1) ~ /[ \t]/)
@@ -513,17 +524,26 @@ function depregion(rest,   i, n, c, k, cnt, j, inner, lead, flags, cf, tok, w, o
     }
 
     out = ""
+    ws = ""
+    run = ""
+    inrun = 0
+    body = 0
     i = 1
     n = length(rest)
     while (i <= n) {
         c = substr(rest, i, 1)
         if (c == " " || c == "\t") {
-            out = out c
+            ws = ws c
             i++
             continue
         }
         if (c == ";") {
-            sub(/[ \t]+$/, "", out)
+            if (inrun) {
+                out = out squote(run) "\047"
+                inrun = 0
+                run = ""
+            }
+            ws = ""
             w = substr(rest, i + 1)
             sub(/^[ \t]+/, "", w)
             out = out " -- " w
@@ -533,9 +553,32 @@ function depregion(rest,   i, n, c, k, cnt, j, inner, lead, flags, cf, tok, w, o
         tok = substr(rest, i, w)
         if (index(tok, "("))
             tok = parens(tok)
-        out = out tok
+        # '--' starts the body: what follows is commands, never a variable definition
+        if (tok == "--")
+            body = 1
+        vd = (body ? "" : vardef(tok))
+        if (vd == "") {
+            if (inrun) {
+                out = out squote(run) "\047"
+                inrun = 0
+                run = ""
+            }
+            out = out ws tok
+        } else {
+            # one 'clause_local' per run: consecutive definitions are its arguments, a word of
+            # another kind ends the run, and the order they are written in is kept
+            if (!inrun) {
+                out = out ws "\047clause_local"
+                inrun = 1
+                run = ""
+            }
+            run = run " " vd
+        }
+        ws = ""
         i += w
     }
+    if (inrun)
+        out = out squote(run) "\047"
     return lead flags out
 }
 

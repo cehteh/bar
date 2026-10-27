@@ -26,6 +26,8 @@
 #   AC11 a file expands as if it were alone: the state one file leaves does not reach the next
 #   AC12 a file whose last line carries no newline keeps that line, and no frame glues onto another
 #   AC13 a file the filter cannot read is reported, never expanded to nothing
+#   AC14 a run of '[=]var[=value]' words in a header becomes one 'clause_local' dependency, and
+#        the three forms mean what they say (see tests/test_clause_local.sh)
 #
 # The filter is infallible by design: it never refuses a line, what it does not know is passed
 # through and bar's own parser reports it.  So the tests here assert output and behaviour, never
@@ -405,6 +407,57 @@ if (( RC != 0 )); then
 else
     fail "a directory was expanded as if it were a rule file"
 fi
+echo
+
+echo "AC14 runs of variable definitions in a header become one 'clause_local'"
+# the example of the item which asked for it: a run becomes one dependency, 'var=' is a local which
+# is empty, '=var' one which starts at the value of the outer scope, and the order is kept
+printf 'test: var=value var2= =var3 something else var4="another value"\n' >"$WORK/vardef-header"
+check "$("$BAR" preprocess "$WORK/vardef-header" 2>/dev/null)" \
+    "rule test: 'clause_local var=value var2= var3' something else 'clause_local var4=\"another value\"'" \
+    "one 'clause_local' per run, in the order they are written"
+# a run ends where a dependency of another kind starts: two runs are never coalesced
+printf 'split: a=1 b=2 noop c=3\n' >"$WORK/vardef-split"
+check "$("$BAR" preprocess "$WORK/vardef-split" 2>/dev/null)" \
+    "rule split: 'clause_local a=1 b=2' noop 'clause_local c=3'" \
+    "a dependency between two runs keeps them apart"
+# what follows '--' is a body, so it is commands and not definitions
+printf 'body: -- var=1\n' >"$WORK/vardef-body"
+check "$("$BAR" preprocess "$WORK/vardef-body" 2>/dev/null)" "rule body: -- var=1" \
+    "a word of the body is not a definition"
+"$BAR" preprocess "$WORK/vardef-header" >"$WORK/vardef-1" 2>/dev/null
+"$BAR" preprocess "$WORK/vardef-1" >"$WORK/vardef-2" 2>/dev/null
+if cmp -s "$WORK/vardef-1" "$WORK/vardef-2"; then
+    pass "the expansion is a fixed point"
+else
+    fail "a second pass changed the expansion"
+fi
+# and it answers like its hand expanded twin, which is what gives the three forms their meaning.
+# The value carries no space: a dependency's arguments are split on IFS ('read -r -a depargs' in
+# rule_lib), so 'var=x y' reaches 'clause_local' as two words however it is quoted -- a limit of
+# dependency arguments, older than this spelling and not one it can lift.
+VA="$WORK/vardefs-sugar"
+VB="$WORK/vardefs-expanded"
+mkproj "$VA"
+mkproj "$VB"
+cat >"$VA/Barf" <<'EOS'
+outerword=OUT
+noop: -- true
+cl_vardef: var=value var2= =outerword noop var4=another ; 'echo "[$var][$var2][$outerword][$var4]"'
+EOS
+cat >"$VB/Barf" <<'EOS'
+outerword=OUT
+rule noop: -- true
+rule cl_vardef: 'clause_local var=value var2= outerword' noop 'clause_local var4=another' \
+    -- 'echo "[$var][$var2][$outerword][$var4]"'
+EOS
+runin "$VA" cl_vardef
+rc_sugar="$RC"
+out_sugar="$OUT"
+runin "$VB" cl_vardef
+check "$out_sugar" "$OUT" "the sugar answers like its hand expanded twin"
+check "$rc_sugar" "$RC" "with the same exit status"
+check "$out_sugar" '[value][][OUT][another]' "and the three forms mean what they say"
 echo
 
 if (( failures )); then

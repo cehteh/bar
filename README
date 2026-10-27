@@ -3380,7 +3380,7 @@ MODULE API/RULES
         renames a rule
         Can only be used when the rule was not evaluated yet.
 
-      clause_local [var[=value]..]
+      clause_local [var[=value]|=var..]
         Makes scalar variables local to a clause.
 
       rule_eval <name> [args..]
@@ -4231,6 +4231,7 @@ RULE FILE PREPROCESSOR
    <name>: <deps>.. ; <body>           rule <name>: <deps>.. -- <body>
    <name>:                             an indented block below is the body
    <name>: (<dep> <arg>..)             one dependency, quoted, arguments included
+   <name>: <deps>.. <var>[=<value>]..  rule <name>: <deps>.. 'clause_local <var>[=<value>]..' ..
    <NAME> := <value>                   <NAME>=<value>
    <NAME> ?= <value>                   : "${<NAME>:=<value>}"
 
@@ -4250,6 +4251,11 @@ RULE FILE PREPROCESSOR
   * The body of an indented block is the block's text: the indentation of its first line is
     stripped from all its lines, blank lines belong to it, and it ends at the first non blank
     line indented less.
+
+  * A run of variable definitions among the dependencies is one dependency 'clause_local' which
+    carries the run: '<var>=<value>' makes the variable local to the clause with that value,
+    '<var>=' with the empty one, and '=<var>' with the value the outer scope has. Two runs are
+    never coalesced, the order is kept, and a run ends at the first word which is no definition.
 
   * '(<dep> <arg>..)' is one dependency which carries arguments. Modifiers written outside the
     parentheses are lifted onto it, '!(dep arg)' is the dependency '!dep arg'. Parentheses may
@@ -4544,9 +4550,10 @@ STANDARD RULES
   'SETUP', 'PREPROCESS', 'MAIN', 'POSTPROCESS' and 'CLEANUP' are special rule names called
   approbiately.
 
-  The 'clause_local [var[=value]]' is for defining variables that are local to a clause.  Only
-  scalars can be clause local. Ideally this should be used as dependency and setting a a
-  variable to a value. It can be used in a function as well esp when creating other metarules.
+  The 'clause_local [var[=value]|=var..]' is for defining variables that are local to a clause.
+  Only scalars can be clause local.  '<var>=<value>' sets the variable to that value, '<var>=' sets
+  it to the empty string, and '=<var>' keeps the value the outer scope had.  The clause ends with
+  the outer value back in place.
 
 
 HELPER REPERTOIRE
