@@ -2804,6 +2804,15 @@ MODULE API/RULES
       rad_cob_ids <rid> <typename>
         the ids the store holds of one type, one per line
 
+      rad_cob_cob_rows <rid> <storage> <typename>..
+        '<type>\t<id>\t<tip>\t<copy>' per COB the store lists
+        The join 'list' and 'tips' both publish, so the two cannot disagree about a copy.  The id set
+        is the store's ('rad cob list', one call per type): a COB this node created carries no ref and
+        'for-each-ref' shows nothing for it, which is why the listing is asked at all.  The tips are
+        one 'for-each-ref' over every type at once ('rad_cob_state_tips'), first wins per COB after
+        its newest-by-date sort, and a COB no ref names keeps an empty tip -- printed, never dropped.
+        Exit 0 answered, 4 no type the store could answer, 5 the storage cannot be listed.
+
       rad_cob_tip <ops-json>
         the id of the newest op rad printed, empty when there is none
 
@@ -2816,11 +2825,23 @@ MODULE API/RULES
         different tip the answer is behind it, and that is a loud line, not a note.
 
       rad_cob_list see the module header
+        One 'rad cob list' per type and one 'for-each-ref' for all of them: the copy is read off the
+        same join 'tips' publishes, never off a read per COB.
+
+      rad_cob_tips see the module header
+        The heads alone: every COB the store lists with the newest op of its newest copy, so a
+        consumer holding an anchor per COB learns which ones moved without reading a chain.  One
+        'rad cob list' per type asked plus one 'for-each-ref', whatever the number of COBs.
+        'tip' is always a string: "" says the store lists the COB and no ref of this storage names
+        it -- a consumer reads that as "nothing to read yet", never as "gone", and never as an
+        object it may act on.
 
       rad_cob_ops see the module header
-        The store's own listing decides 'not found' from 'absent': an id it lists whose chain does
-        not materialise is absent, an id it does not list does not exist.  Without the listing the
-        two are the same message, and a consumer would act on 'gone' for both.
+        The store's own listing decides 'not found' from 'absent': an id it lists whose chain
+        does not materialise is absent, an id it does not list does not exist.  That listing
+        is asked only here, on the failing path: a copy under some namespace proves the store
+        carries the object, and only an object no ref names -- one this node just created --
+        needs the listing itself.
         'rad cob log' prints newest first; a chain is read oldest first.  '--from' and '--until'
         narrow the same chain and both bounds are inclusive (measured on rad 1.10.3), so the window
         is reversed rather than re-derived.
@@ -2848,7 +2869,7 @@ MODULE API/RULES
         An empty answer is no line at all, never a blank one: a consumer reads zero records as
         "nothing moved".
 
-      rad_cob list [--repo <rid|path>] [--type <type>].. | ops|document --repo <rid|path> --type <type> --object <cob> [--from <op>] [--until <op>] [--bodies] | state [--repo <rid|path>] [--type <type>].. [--since <cob>:<op>]..
+      rad_cob list|tips [--repo <rid|path>] [--type <type>].. | ops|document --repo <rid|path> --type <type> --object <cob> [--from <op>] [--until <op>] [--bodies] | state [--repo <rid|path>] [--type <type>].. [--since <cob>:<op>]..
         the COB store as one interface, one verb per question
         Every verb's answer is a JSON object -- including the one that names a failure -- so jq is a
         dependency of the family, checked once, before a verb spends a call on the store.

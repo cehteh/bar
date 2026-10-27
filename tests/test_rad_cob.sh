@@ -24,8 +24,12 @@
 #   AC10 'document --type id' answers the repository document at the head revision -- 'kind' is
 #        'id', the payload's fields and the delegates/threshold are there, and the patch shape is
 #        not (the id COB keeps revisions in the store too; reading the shape tells the two apart)
-#   AC11 every line 'document' and 'list' put on stdout is JSON, with bar's own warning path
+#   AC11 every line 'document', 'list' and 'tips' put on stdout is JSON, with bar's own warning path
 #        exercised (no Bar.d above the working directory)
+#   AC12 'tips' answers {"kind","cob","tip","copy"} per COB: the tip of the newest copy, "" for a COB
+#        no ref names (and that COB is printed, never omitted), 'copy' exactly what 'list' says
+#   AC13 the reads cost one call per type, never one per COB: 'tips' and 'list' ask no 'cob log',
+#        and 'ops' asks no 'cob list' when the chain answers
 #
 # usage: tests/test_rad_cob.sh
 
@@ -248,7 +252,7 @@ run() { # <args..> - 'bar rad_cob', stdout/stderr split, exit code in RC
 echo "AC1 '-h' answers the usage on stdout, exit 0"
 run -h
 check "$RC" 0 "'-h' exits 0"
-contains "$OUT" "rad_cob list [--repo <rid|path>]" "the builtin help goes to stdout"
+contains "$OUT" "rad_cob list|tips [--repo <rid|path>]" "the builtin help goes to stdout"
 absent "$ERR" "usage:" "and nothing goes to stderr"
 run --help
 check "$RC" 0 "'--help' exits 0 too"
@@ -277,6 +281,10 @@ check "$RC" 2 "an unknown flag is a usage error"
 run list --format xml
 check "$RC" 2 "'--format xml' is refused (json is the only answer)"
 contains "$ERR" "json only" "and says what it prints"
+run tips --type changelog
+check "$RC" 2 "a type 'tips' cannot carry is a usage error"
+run tips --repo
+check "$RC" 2 "and '--repo' without a value is one too"
 echo
 
 echo "AC3 'list' answers every COB with the copy a read lands on"
@@ -469,6 +477,71 @@ plain_run document --repo "$RID" --type patch --object "$PATCH_OK"
 if json_only "$OUT"; then pass "so is the patch document"; else fail "the patch document carries a non-JSON line"; fi
 plain_run list --repo "$RID"
 if json_only "$OUT"; then pass "and so is every line 'list' prints"; else fail "'list' carries a non-JSON line"; fi
+plain_run tips --repo "$RID"
+if json_only "$OUT"; then pass "and every line 'tips' prints"; else fail "'tips' carries a non-JSON line"; fi
+echo
+
+echo "AC12 'tips' answers the heads alone, never a chain"
+run tips --repo "$RID"
+check "$RC" 0 "'tips' answers"
+TIPS="$OUT"
+check "$(printf '%s\n' "$TIPS" | wc -l)" 7 "one line per COB the store holds"
+check "$(printf '%s\n' "$TIPS" | jq -r 'select(.cob=="'"$ISSUE_NEW"'") | .tip')" "$NEW_OP" \
+    "the tip is the newest copy's tip, not the one a read would land on"
+check "$(printf '%s\n' "$TIPS" | jq -r 'select(.cob=="'"$ISSUE_BEHIND"'") | .tip')" "$NEWEST_OP" \
+    "and it is the same for a COB whose two copies disagree"
+check "$(printf '%s\n' "$TIPS" | jq -r 'select(.cob=="'"$PATCH_OK"'") | .tip')" "$NEW_OP" \
+    "a single copy answers its own tip"
+check "$(printf '%s\n' "$TIPS" | jq -r 'select(.cob=="'"$ISSUE_NOSTORE"'") | .tip')" "" \
+    "a COB no ref names has an empty tip"
+check "$(printf '%s\n' "$TIPS" | jq -r 'select(.cob=="'"$ISSUE_NOSTORE"'") | .cob')" "$ISSUE_NOSTORE" \
+    "and is printed, never omitted"
+check "$(printf '%s\n' "$TIPS" | jq -rs '[.[] | select(.tip=="") | .cob] | sort | join(",")')" \
+    "$(printf '%s\n%s\n%s\n' "$ISSUE_NOSTORE" "$PATCH_ABSENT" "$PATCH_REFUSED" | sort | paste -sd,)" \
+    "an empty tip is exactly the COBs whose refs this storage does not carry"
+run list --repo "$RID"
+check "$(printf '%s\n' "$TIPS" | jq -cs 'sort_by(.cob) | map({cob, copy})')" \
+    "$(printf '%s\n' "$OUT" | jq -cs 'sort_by(.cob) | map({cob, copy})')" \
+    "the copy is exactly the one 'list' names (one join, one rule)"
+run tips --repo "$RID" --type issue
+check "$(printf '%s\n' "$OUT" | wc -l)" 3 "'--type' narrows the answer"
+check "$(printf '%s\n' "$OUT" | jq -r '.kind' | sort -u)" "issue" "to the type asked for"
+check "$(printf '%s\n' "$OUT" | jq -r 'select(.cob=="'"$ID_COB"'") | .cob')" "" \
+    "and leaves the other types out"
+run tips --repo "$RID" --format json
+check "$RC" 0 "'--format json' is the same answer"
+echo
+
+echo "AC13 a read costs one call per type, never one per COB"
+: >"$CALLS"
+run tips --repo "$RID"
+check "$(grep -c '^cob list' "$CALLS" || true)" 3 "one 'rad cob list' per type asked"
+check "$(grep -c '^cob log' "$CALLS" || true)" 0 "and no chain is read"
+: >"$CALLS"
+run list --repo "$RID"
+check "$(grep -c '^cob list' "$CALLS" || true)" 3 "'list' asks the store once per type too"
+check "$(grep -c '^cob log' "$CALLS" || true)" 0 "and reads no chain"
+: >"$CALLS"
+run ops --repo "$RID" --type issue --object "$ISSUE_NEW"
+check "$RC" 0 "'ops' answers"
+check "$(grep -c '^cob list' "$CALLS" || true)" 0 "a chain which answers costs no listing"
+: >"$CALLS"
+run ops --repo "$RID" --type patch --object "$PATCH_ABSENT"
+check "$RC" 4 "the failing path is still decided ('absent')"
+check "$(grep -c '^cob list' "$CALLS" || true)" 1 \
+    "an object no ref names still costs one listing, and only that one"
+mkdir -p "$WORKDIR/badhome/storage/${RID#rad:}"
+RC=0
+OUT="$(RAD_BIN="$FIXTURES/bin/rad" RADHOME="$WORKDIR/badhome" FIXTURES="$FIXTURES" CALLS="$CALLS" \
+    RIDFIX="$RID" "$BAR" rad_cob tips --repo "$RID" 2>"$WORKDIR/err")" || RC=$?
+check "$RC" 5 "a storage which cannot be listed is 'unreadable'"
+check "$(printf '%s' "$OUT" | jq -r .error)" "unreadable" "and says so on stdout"
+check "$(printf '%s\n' "$OUT" | wc -l)" 1 "printing no COB line at all"
+RC=0
+OUT="$(FAIL_LIST=1 RAD_BIN="$FIXTURES/bin/rad" RADHOME="$RADHOME" FIXTURES="$FIXTURES" \
+    CALLS="$CALLS" RIDFIX="$RID" "$BAR" rad_cob tips --repo "$RID" 2>"$WORKDIR/err")" || RC=$?
+check "$RC" 5 "a store which answers no type is 'unreadable' too, never an empty answer"
+check "$(printf '%s' "$OUT" | jq -r .error)" "unreadable" "and says so"
 echo
 
 if (( failures )); then

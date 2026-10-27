@@ -417,7 +417,7 @@ rule rad_topic: -
 ## 3 the node holds no such repository, item or revision.
 rule rad_reaction: -
 
-# helper: rad_cob | the COB store as one interface: which COBs a repository carries, one COB's op chain, the document the store reduces it to, and the state a reactive consumer derives from every chain, with the failure cases a consumer has to tell apart | rad_cob list [--repo <rid,path>] [--type <issue,patch,id>].. [--json] or rad_cob ops --repo <rid,path> --type <type> --object <cob> [--from <op>] [--until <op>] [--json] or rad_cob document --repo <rid,path> --type <type> --object <cob> [--bodies] [--json] or rad_cob state [--repo <rid,path>] [--type <issue,patch,all>].. [--since <cob>:<op>].. [--json] | one JSON object per line on stdout: '{"kind","cob","copy"}' per COB, one store op per line oldest first, the document ('{"kind","cob","copy","timeline","comments"}' for an issue, the same plus 'revisions' with their 'reviews' and 'comments' for a patch, and '{"kind","cob","copy","current","name","description","defaultBranch","delegates","threshold"}' for an identity COB), or '{"cob","kind","head","copy","markers","comments","revisions"}' per COB whose head moved; a failure is '{"error","kind","cob","detail"}'
+# helper: rad_cob | the COB store as one interface: which COBs a repository carries, their heads alone, one COB's op chain, the document the store reduces it to, and the state a reactive consumer derives from every chain, with the failure cases a consumer has to tell apart | rad_cob list [--repo <rid,path>] [--type <issue,patch,id>].. [--json] or rad_cob tips [--repo <rid,path>] [--type <issue,patch,id>].. [--json] or rad_cob ops --repo <rid,path> --type <type> --object <cob> [--from <op>] [--until <op>] [--json] or rad_cob document --repo <rid,path> --type <type> --object <cob> [--bodies] [--json] or rad_cob state [--repo <rid,path>] [--type <issue,patch,all>].. [--since <cob>:<op>].. [--json] | one JSON object per line on stdout: '{"kind","cob","copy"}' per COB, '{"kind","cob","tip","copy"}' per COB for 'tips' ('tip' empty where no ref names a COB), one store op per line oldest first, the document ('{"kind","cob","copy","timeline","comments"}' for an issue, the same plus 'revisions' with their 'reviews' and 'comments' for a patch, and '{"kind","cob","copy","current","name","description","defaultBranch","delegates","threshold"}' for an identity COB), or '{"cob","kind","head","copy","markers","comments","revisions"}' per COB whose head moved; a failure is '{"error","kind","cob","detail"}'
 ## One verb per question, and one shape per verb: 'list' is what the store carries, 'ops' is the
 ## store's own op objects ('rad cob log --format json', verbatim, oldest first), 'document' is the
 ## reduction normalized -- one kind of comment object, ISO dates in the reader's local offset,
@@ -427,6 +427,11 @@ rule rad_reaction: -
 ## No consumer derives a namespace ref: a COB sits in every namespace that replicated it, so 'list'
 ## names the copy whose tip is the newest ('copy'), 'document' names the one the read landed on, and
 ## a read whose tip is not the newest is named as behind on stderr -- never passed as complete.
+##
+## 'tips' is the heads alone, for the consumer which holds an anchor per COB: the id set comes from
+## the store (a COB this node created carries no ref), the heads from one 'for-each-ref' -- so a
+## pass over a repository costs one call per type asked and never one per COB, and "did this COB
+## move?" is a string compare against 'tip'.  It reads no chain: 'ops' is the delta, not this.
 ##
 ## 'state' is what a consumer acts on: the live markers with the op, author and date which made each
 ## one live, the comments to address and the revisions, reduced under 'rad_reaction's rule -- one
@@ -4677,6 +4682,55 @@ function rad_cob_ids ## <rid> <typename> - the ids the store holds of one type, 
     printf '%s\n' "$out" | LC_ALL=C grep -E '^[0-9a-f]{40}$' || true
 }
 
+function rad_cob_cob_rows ## <rid> <storage> <typename>.. - '<type>\t<id>\t<tip>\t<copy>' per COB the store lists
+{
+    ## The join 'list' and 'tips' both publish, so the two cannot disagree about a copy.  The id set
+    ## is the store's ('rad cob list', one call per type): a COB this node created carries no ref and
+    ## 'for-each-ref' shows nothing for it, which is why the listing is asked at all.  The tips are
+    ## one 'for-each-ref' over every type at once ('rad_cob_state_tips'), first wins per COB after
+    ## its newest-by-date sort, and a COB no ref names keeps an empty tip -- printed, never dropped.
+    ## Exit 0 answered, 4 no type the store could answer, 5 the storage cannot be listed.
+    local rid="$1" storage="$2"
+    local -a typenames=("${@:3}") ids=() missed=()
+    local typename id out tip_lines=""
+    local -i listed=0
+    for typename in "${typenames[@]}"; do
+        if ! out="$(rad_cob_ids "$rid" "$typename")"; then
+            missed+=("${typename#xyz.radicle.}")
+            continue
+        fi
+        listed=$(( listed + 1 ))
+        while IFS= read -r id; do
+            [[ -n "$id" ]] || continue
+            ids+=("$(printf '%s\t%s' "$typename" "$id")")
+        done <<<"$out"
+    done
+    for typename in ${missed[@]+"${missed[@]}"}; do
+        error "the store did not answer for '$typename': the answer carries the other types only"
+    done
+    (( listed )) || return 4
+    if ! tip_lines="$(rad_cob_state_tips "$storage" "${typenames[@]}")"; then
+        return 5
+    fi
+    (( ${#ids[@]} )) || return 0
+    printf '%s\n' "${ids[@]}" | LC_ALL=C awk -F'\t' -v OFS='\t' -v tips="$tip_lines" '
+        BEGIN {
+            n = split(tips, line, "\n")
+            for (i = 1; i <= n; i++) {
+                if (line[i] == "") continue
+                split(line[i], field, "\t")
+                key = field[1] " " field[2]
+                if (key in tip) continue
+                tip[key] = field[3]
+                copy[key] = field[4]
+            }
+        }
+        {
+            key = $1 " " $2
+            print $1, $2, (key in tip ? tip[key] : ""), (key in copy ? copy[key] : "")
+        }'
+}
+
 function rad_cob_tip ## <ops-json> - the id of the newest op rad printed, empty when there is none
 {
     local line
@@ -4722,9 +4776,9 @@ function rad_cob_copy_note ## <storage> <type> <id> <op_id> - name the copy a re
 
 function rad_cob_list ## see the module header
 {
-    local -a args=() types=() rows=() missed=() parts=()
-    local arg value repo="" type="" typename="" out="" id="" newest="" copy=""
-    local -i i=0 count=0 listed=0
+    local -a args=() types=() typenames=() parts=()
+    local arg value repo="" type="" joined=""
+    local -i i=0 count=0 row_rc=0
 
     for arg in "$@"; do
         if [[ "$arg" == --*=* ]]; then
@@ -4794,33 +4848,130 @@ function rad_cob_list ## see the module header
 
     rad_cob_repo list "$repo" || return $?
     for type in "${types[@]}"; do
-        typename="$(rad_cob_typename "$type")"
-        if ! out="$(rad_cob_ids "$RAD_COB_RID" "$typename")"; then
-            missed+=("${typename#xyz.radicle.}")
-            continue
-        fi
-        listed=$(( listed + 1 ))
-        while IFS= read -r id; do
-            [[ -n "$id" ]] || continue
-            newest="$(rad_cob_newest "$RAD_COB_STORAGE" "$typename" "$id")"
-            copy=""
-            if [[ -n "$newest" ]]; then
-                copy="${newest##* }"
-            fi
-            rows+=("$(printf '%s%s%s%s%s' "${typename#xyz.radicle.}" "$RAD_US" "$id" "$RAD_US" "$copy")")
-        done <<<"$out"
+        typenames+=("$(rad_cob_typename "$type")")
     done
-    if (( listed == 0 )); then
-        error "the store answered no type of '$RAD_COB_RID': ${missed[*]}"
-        rad_cob_fail unreadable "" "" "the store cannot be read: 'rad cob list' failed for ${missed[*]}"
+    ## One 'rad cob list' per type and one 'for-each-ref' for all of them: the copy is read off the
+    ## same join 'tips' publishes, never off a read per COB.
+    joined="$(rad_cob_cob_rows "$RAD_COB_RID" "$RAD_COB_STORAGE" "${typenames[@]}")" || row_rc=$?
+    if (( row_rc == 5 )); then
+        error "the storage of '$RAD_COB_RID' cannot be listed"
+        rad_cob_fail unreadable "" "" "the node storage cannot be read: 'git for-each-ref' failed"
         return 5
     fi
-    for type in ${missed[@]+"${missed[@]}"}; do
-        error "the store did not answer for '$type': the answer carries the other types only"
-    done
-    (( ${#rows[@]} )) || return 0
-    printf '%s\n' "${rows[@]}" | jq -Rc 'split("\u001f")
+    if (( row_rc )); then
+        error "the store answered no COB type of '$RAD_COB_RID'"
+        rad_cob_fail unreadable "" "" "the store cannot be read: 'rad cob list' failed for every type asked"
+        return 5
+    fi
+    [[ -n "$joined" ]] || return 0
+    printf '%s\n' "$joined" | LC_ALL=C awk -F'\t' -v OFS="$RAD_US" '
+        { sub(/^xyz\.radicle\./, "", $1); print $1, $2, $4 }' |
+        jq -Rc 'split("\u001f")
         | {kind: .[0], cob: .[1], copy: (if (.[2] // "") == "" then null else .[2] end)}'
+    return 0
+}
+
+function rad_cob_tips ## see the module header
+{
+    ## The heads alone: every COB the store lists with the newest op of its newest copy, so a
+    ## consumer holding an anchor per COB learns which ones moved without reading a chain.  One
+    ## 'rad cob list' per type asked plus one 'for-each-ref', whatever the number of COBs.
+    local -a args=() types=() typenames=() parts=()
+    local arg value repo="" type="" joined="" kind id tip copy
+    local -i i=0 count=0 row_rc=0
+
+    for arg in "$@"; do
+        if [[ "$arg" == --*=* ]]; then
+            args+=("${arg%%=*}" "${arg#*=}")
+        else
+            args+=("$arg")
+        fi
+    done
+    count=${#args[@]}
+    while (( i < count )); do
+        arg="${args[i]}"
+        i=$(( i + 1 ))
+        case "$arg" in
+        -h | --help)
+            help_usage rad_cob
+            return 0
+            ;;
+        --json) : ;;
+        --format)
+            if (( i >= count )) || [[ -z "${args[i]}" ]]; then
+                help_usage_error rad_cob "'--format' needs a value"
+                return 2
+            fi
+            value="${args[i]}"
+            i=$(( i + 1 ))
+            if [[ "$value" != json ]]; then
+                help_usage_error rad_cob "'--format $value' is not an answer this helper prints (json only)"
+                return 2
+            fi
+            ;;
+        --repo | --type)
+            if (( i >= count )) || [[ -z "${args[i]}" ]]; then
+                help_usage_error rad_cob "'$arg' needs a non-empty value"
+                return 2
+            fi
+            value="${args[i]}"
+            i=$(( i + 1 ))
+            case "$arg" in
+            --repo) repo="$value" ;;
+            --type)
+                IFS=',' read -r -a parts <<<"$value"
+                for type in ${parts[@]+"${parts[@]}"}; do
+                    if [[ -n "$type" ]]; then
+                        types+=("$type")
+                    fi
+                done
+                ;;
+            esac
+            ;;
+        -*)
+            help_usage_error rad_cob "unknown argument '$arg'"
+            return 2
+            ;;
+        *)
+            help_usage_error rad_cob "unexpected argument '$arg'"
+            return 2
+            ;;
+        esac
+    done
+    (( ${#types[@]} )) || types=(issue patch id)
+    for type in "${types[@]}"; do
+        if ! rad_cob_typename "$type" >/dev/null; then
+            help_usage_error rad_cob "'$type' is not a COB type this store carries (issue, patch, id)"
+            return 2
+        fi
+        typenames+=("$(rad_cob_typename "$type")")
+    done
+
+    rad_cob_repo tips "$repo" || return $?
+    joined="$(rad_cob_cob_rows "$RAD_COB_RID" "$RAD_COB_STORAGE" "${typenames[@]}")" || row_rc=$?
+    if (( row_rc == 5 )); then
+        error "the storage of '$RAD_COB_RID' cannot be listed"
+        rad_cob_fail unreadable "" "" "the node storage cannot be read: 'git for-each-ref' failed"
+        return 5
+    fi
+    if (( row_rc )); then
+        error "the store answered no COB type of '$RAD_COB_RID'"
+        rad_cob_fail unreadable "" "" "the store cannot be read: 'rad cob list' failed for every type asked"
+        return 5
+    fi
+    [[ -n "$joined" ]] || return 0
+    while IFS=$'\t' read -r kind id tip copy; do
+        [[ -n "$id" ]] || continue
+        kind="${kind#xyz.radicle.}"
+        ## 'tip' is always a string: "" says the store lists the COB and no ref of this storage names
+        ## it -- a consumer reads that as "nothing to read yet", never as "gone", and never as an
+        ## object it may act on.
+        if [[ -n "$copy" ]]; then
+            printf '{"kind":"%s","cob":"%s","tip":"%s","copy":"%s"}\n' "$kind" "$id" "$tip" "$copy"
+        else
+            printf '{"kind":"%s","cob":"%s","tip":"%s","copy":null}\n' "$kind" "$id" "$tip"
+        fi
+    done <<<"$joined"
     return 0
 }
 
@@ -4894,19 +5045,6 @@ function rad_cob_ops ## see the module header
     }
 
     rad_cob_repo ops "$repo" || return $?
-    ## The store's own listing decides 'not found' from 'absent': an id it lists whose chain does
-    ## not materialise is absent, an id it does not list does not exist.  Without the listing the
-    ## two are the same message, and a consumer would act on 'gone' for both.
-    if ! known="$(rad_cob_ids "$RAD_COB_RID" "$typename")"; then
-        error "the store did not answer for '$typename'"
-        rad_cob_fail unreadable "$typename" "$object" "the store cannot be read: 'rad cob list' failed"
-        return 5
-    fi
-    while IFS= read -r value; do
-        if [[ -n "$value" && "$value" == "$object"* ]]; then
-            match=$(( match + 1 ))
-        fi
-    done <<<"$known"
 
     call=(cob log -r "$RAD_COB_RID" -t "$typename" -o "$object" --format json)
     if [[ -n "$from" ]]; then
@@ -4918,6 +5056,25 @@ function rad_cob_ops ## see the module header
     if ! out="$(rad_cob_call "${call[@]}")"; then
         detail="$(rad_cob_first_line "$out")"
         if [[ "$detail" == *"not found"* ]]; then
+            ## The store's own listing decides 'not found' from 'absent': an id it lists whose chain
+            ## does not materialise is absent, an id it does not list does not exist.  That listing
+            ## is asked only here, on the failing path: a copy under some namespace proves the store
+            ## carries the object, and only an object no ref names -- one this node just created --
+            ## needs the listing itself.
+            if [[ -n "$(rad_cob_copies "$RAD_COB_STORAGE" "$typename" "$object")" ]]; then
+                match=1
+            else
+                if ! known="$(rad_cob_ids "$RAD_COB_RID" "$typename")"; then
+                    error "the store did not answer for '$typename'"
+                    rad_cob_fail unreadable "$typename" "$object" "the store cannot be read: 'rad cob list' failed"
+                    return 5
+                fi
+                while IFS= read -r value; do
+                    if [[ -n "$value" && "$value" == "$object"* ]]; then
+                        match=1
+                    fi
+                done <<<"$known"
+            fi
             if (( match )); then
                 rad_cob_fail absent "$typename" "$object" "$detail"
                 return 4
@@ -5292,9 +5449,9 @@ function rad_cob_state_tips ## <storage> <typename>.. - '<type>\t<id>\t<tip>\t<c
 {
     ## One listing for every type asked for; the copy named is the one whose tip is newest.
     # A COB sits in every namespace which replicated it, so the copy to read is the newest tip --
-    # the rule 'rad_cob list' publishes ('rad_cob_newest'), applied to every COB at once because the
-    # tip is where the reduction starts.  A storage which cannot be read is not an empty repository,
-    # so the caller still has to tell those apart.
+    # the rule 'rad_cob list' and 'rad_cob tips' publish it ('rad_cob_cob_rows'), applied to every
+    # COB at once because the tip is where the reduction starts.  A storage which cannot be read is
+    # not an empty repository, so the caller still has to tell those apart.
     local storage="$1"
     local -a refs=()
     local typename out=""
@@ -5552,7 +5709,7 @@ function rad_cob_state ## see the module header
     return 0
 }
 
-function rad_cob ## list [--repo <rid|path>] [--type <type>].. | ops|document --repo <rid|path> --type <type> --object <cob> [--from <op>] [--until <op>] [--bodies] | state [--repo <rid|path>] [--type <type>].. [--since <cob>:<op>].. - the COB store as one interface, one verb per question
+function rad_cob ## list|tips [--repo <rid|path>] [--type <type>].. | ops|document --repo <rid|path> --type <type> --object <cob> [--from <op>] [--until <op>] [--bodies] | state [--repo <rid|path>] [--type <type>].. [--since <cob>:<op>].. - the COB store as one interface, one verb per question
 {
     local -a args=( ${RULE_ARGS[@]+"${RULE_ARGS[@]}"} )
     local verb="${args[0]:-}"
@@ -5561,9 +5718,9 @@ function rad_cob ## list [--repo <rid|path>] [--type <type>].. | ops|document --
         help_usage rad_cob
         return 0
         ;;
-    list | ops | document | state) ;;
+    list | tips | ops | document | state) ;;
     "")
-        help_usage_error rad_cob "a verb is required: list, ops, document or state"
+        help_usage_error rad_cob "a verb is required: list, tips, ops, document or state"
         return 2
         ;;
     *)
