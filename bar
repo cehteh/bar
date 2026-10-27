@@ -48,7 +48,7 @@ function bar_main ## [rulefile] [--bare] [rule [arguments..]] - Loads a rulefile
     # shell sanity options
     set -euo pipefail
     # shellcheck disable=SC2155
-    export LC_ALL=$(locale -a 2>/dev/null | grep -i 'C.utf.*8' || echo C)
+    export LC_ALL=$(locale -a 2>/dev/null | grep -i -m1 -x 'C\.utf-\?8' || echo C)
 
     # Bar is routinely installed as a githook ('pre-commit -> ../../bar'), and git hands its hooks
     # the repository context it is working in: 'GIT_DIR', an 'GIT_INDEX_FILE' which is relative to
