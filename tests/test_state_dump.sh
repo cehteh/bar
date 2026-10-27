@@ -25,6 +25,8 @@
 #   AC15 a run served from the dump has loaded exactly what a run which read the files has, and the
 #        environment still wins over a module default the dump carries
 #   AC16 a rulefile directory which is not writable keeps no dump, and the run still answers
+#   AC17 a run served from the dump starts neither awk nor sed, and a rule which needs the filter
+#        still gets it
 #
 # usage: tests/test_state_dump.sh
 
@@ -414,6 +416,68 @@ contains "$OUT" "hello" "with the rule's output"
 absent "$OUT" "Permission denied" "and no shell error escapes the dropped write"
 absent "$OUT" "state: wrote" "no dump was written"
 [[ ! -f "$P/.bar.Barf.dump" ]] && pass "and none is left behind" || fail "a dump appeared anyway"
+echo
+
+echo "AC17 a run served from the dump starts neither awk nor sed"
+P="$WORK/ac17"
+mkproj "$P"
+# a wrapper first in PATH which logs its name and then runs the real tool: the only way to see a
+# process which does its work and leaves no trace in the answer
+BIN="$WORK/ac17-bin"
+LOG="$WORK/ac17-log"
+mkdir -p "$BIN"
+for tool in awk sed; do
+    real="$(command -v "$tool")"
+    cat >"$BIN/$tool" <<EOS
+#!/usr/bin/env bash
+printf '%s\\n' "$tool" >>"\$BAR_PP_LOG"
+exec "$real" "\$@"
+EOS
+    chmod +x "$BIN/$tool"
+done
+# the loading run: this is where the filter runs, and this is what proves the wrapper is seen
+: >"$LOG"
+RC=0
+OUT="$( cd "$P" && PATH="$BIN:$PATH" BAR_PP_LOG="$LOG" BAR_VERBOSITY_LEVEL=5 "$BAR" greet 2>&1 )" || RC=$?
+check "$RC" "0" "the loading run answers"
+contains "$OUT" "state: wrote" "and writes the dump"
+contains "$OUT" "hello" "with the rule's output"
+grep -q '^awk$' "$LOG" && pass "the loading run starts awk (the filter)" ||
+    fail "the loading run starts no awk: the harness does not see it"
+grep -q '^sed$' "$LOG" && pass "and sed, one per frame it copies" ||
+    fail "the loading run starts no sed"
+# the run served from the dump: no file is loaded, so nothing is filtered
+: >"$LOG"
+RC=0
+OUT="$( cd "$P" && PATH="$BIN:$PATH" BAR_PP_LOG="$LOG" BAR_VERBOSITY_LEVEL=5 "$BAR" greet 2>&1 )" || RC=$?
+check "$RC" "0" "the run served from the dump answers"
+contains "$OUT" "state: sourced" "from the dump"
+contains "$OUT" "hello" "with the rule's output"
+check "$(cat "$LOG")" "" "and starts neither awk nor sed"
+# the fallback: a rule body which does need the filter gets it, started when it is used
+: >"$LOG"
+RC=0
+OUT="$( cd "$P" && PATH="$BIN:$PATH" BAR_PP_LOG="$LOG" "$BAR" preprocess Barf 2>/dev/null )" || RC=$?
+check "$RC" "0" "'bar preprocess' on a warm run answers"
+contains "$OUT" "rule greet" "with the expanded text"
+grep -q '^awk$' "$LOG" && pass "and the filter it needs is started for it" ||
+    fail "'bar preprocess' expanded nothing: the filter never started"
+NO_DUMP="$( cd "$P" && BAR_STATE_DUMP=off "$BAR" preprocess Barf 2>/dev/null )"
+check "$OUT" "$NO_DUMP" "the same text a run which loads the files expands"
+# a rule body which loads modules shares one filter between them, as it does when the run started
+# one for its own load: a start per file would be a cost the dump hit never pays
+cat >>"$P/Barf" <<'EOS'
+
+latepair: -- 'require --opt testdir; require --opt git_lib; echo late-pair'
+EOS
+runin "$P" latepair                                  # the edit invalidates the dump: this run loads
+: >"$LOG"
+RC=0
+OUT="$( cd "$P" && PATH="$BIN:$PATH" BAR_PP_LOG="$LOG" "$BAR" latepair 2>&1 )" || RC=$?
+check "$RC" "0" "a warm run loads the modules its rule body asks for"
+contains "$OUT" "late-pair" "and runs the rule"
+check "$(grep -c '^awk$' "$LOG")" "1" "with one filter for both modules"
+check "$(grep -c '^sed$' "$LOG")" "2" "and a frame each"
 echo
 
 if (( failures )); then

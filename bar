@@ -112,6 +112,12 @@ function bar_main ## [rulefile] [--bare] [rule [arguments..]] - Loads a rulefile
     # the modules and the rulefile are loaded from the state dump when it is current, and sourced
     # otherwise -- the dump is written from that load, so the next run has one
     if ! bar_state_load; then
+        # The preprocessor is started here, and only on this path: a run served from the dump loads
+        # no file and never hands the filter one, so a coprocess started for it would idle until the
+        # run ends.  It runs before 'bar_state_snapshot', so its descriptors belong to the shell's
+        # own state rather than to a module, and before the first 'require': that sources
+        # '<(preprocess f)' in a subshell, and a descriptor set there does not outlive the module.
+        barf_pp_ensure
         bar_state_off "$BAR_STATE_SETTING" || bar_state_snapshot
         # the std_lib and rule_lib are omnipresent other modules don't need to require it
         require std_lib rule_lib
@@ -704,10 +710,10 @@ END {
 }
 AWK
 
-# The preprocessor is started once per run and talked to over two descriptors: the path of a file
-# goes in as 'F <path>', the printed text comes back with BAR_PP_MARK closing the frame.  The
-# marker is also what clears the state the file leaves behind, so a file expands as if it were the
-# only one -- awk's startup is paid once instead of once per module.
+# The preprocessor is started once per run which loads a file, and talked to over two descriptors:
+# the path of a file goes in as 'F <path>', the printed text comes back with BAR_PP_MARK closing the
+# frame.  The marker is also what clears the state the file leaves behind, so a file expands as if
+# it were the only one -- awk's startup is paid once instead of once per module.
 # No regex metacharacter in the marker: the reader matches it with 'sed'.
 declare -g BAR_PP_IN="" BAR_PP_OUT="" BAR_PP_MARK='!!!!!!!!!!!!!!!!!EOF!!!!!!!!!!!!!!!!!'
 
@@ -728,11 +734,23 @@ function barf_pp_start # - starts the preprocessor; sets BAR_PP_IN and BAR_PP_OU
     BAR_PP_OUT="$ppout"
 }
 
-# Started here, in the shell which sources the modules: 'preprocess' runs in a subshell -- 'require'
-# sources '<(preprocess f)' -- and a descriptor set there does not outlive the module.
-if [[ -n "${BARF_PP_AWK:-}" ]] && command -v awk >/dev/null; then
-    barf_pp_start
-fi
+function barf_pp_ensure # - starts the preprocessor unless one is running or there is no filter
+{
+    # Called by whoever is about to source a file, never from inside 'preprocess': that runs in a
+    # subshell ('<(preprocess f)'), where a descriptor set does not outlive the one frame it prints,
+    # so a start there would cost one awk per file.  'require' calls it instead, in the shell whose
+    # descriptors every module of that load inherits.
+    [[ -n "$BAR_PP_IN" ]] && return 0
+    if [[ -n "${BARF_PP_AWK:-}" ]] && command -v awk >/dev/null; then
+        barf_pp_start
+    fi
+    return 0
+}
+
+# Started where the modules are loaded (:func:`bar_main`), in the shell which sources them, and by
+# 'require' for the loads which happen after it (a rule body's require, an autoloaded module).  A run
+# served from the state dump starts none of that load, so the first file it does source -- a rule
+# body's 'require', 'bar preprocess <file>' -- starts the filter when it is used.
 
 function preprocess ## <file> - Print a rule file with its make/just syntax expanded
 {
@@ -764,7 +782,8 @@ function preprocess ## <file> - Print a rule file with its make/just syntax expa
         error "cannot read '$1'"
         return 1
     fi
-    [[ -n "$BAR_PP_IN" ]] || barf_pp_start
+    # this call is the only one which reaches here without 'require' having started the filter
+    barf_pp_ensure
     # the path, not the text: the program opens and reads the file itself, which leaves no writer
     # to run beside the reader and no last line to glue the marker onto
     printf 'F %s\n' "$1" >&"$BAR_PP_IN"
@@ -847,6 +866,9 @@ function require ## [--opt] [modules..] - Loads modules.
                     debug "loading: $mod_file"
                     BAR_REQUIRE_LOADED["$modname"]=pending
                     local pp_fd
+                    # started here, in the shell whose descriptors the frames inherit: all modules of
+                    # this load share one filter, wherever the load happens
+                    barf_pp_ensure
                     exec {pp_fd}< <(preprocess "$mod_file")
                     BARF_PP_FILES+=" ${pp_fd}=${mod_file}"
                     # shellcheck disable=SC1090 # dynamic source
