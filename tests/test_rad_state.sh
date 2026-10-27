@@ -620,6 +620,24 @@ check "$RC" "0" "AC15: running it again answers"
 check "$(grep -cxF '.worktrees/' "$REPO/.git/info/exclude")" "1" \
     "AC15: and writes the line exactly once"
 
+# from a topic tree: the exclusion belongs to the *clone*, whose status shows the trees.  A linked
+# worktree has a private git directory of its own, so a line written there would leave the checkout
+# exactly as untidy as before.
+TOPIC="$WORK/topic"
+git -C "$REPO" worktree add -q "$TOPIC" -b topic-tree
+mkproject "$TOPIC"
+rm -f "$REPO/.git/info/exclude"
+run_command "$TOPIC" "$FAKERAD" "$FIX" activate
+check "$RC" "0" "AC15: 'activate' answers from a topic tree"
+check "$(grep -cxF '.worktrees/' "$REPO/.git/info/exclude" 2>/dev/null || printf 0)" "1" \
+    "AC15: the clone keeps '.worktrees/' in its exclude"
+if [[ -f "$REPO/.git/worktrees/topic-tree/info/exclude" ]] &&
+    grep -qxF '.worktrees/' "$REPO/.git/worktrees/topic-tree/info/exclude"; then
+    fail "AC15: the topic tree's own git directory gets no line"
+else
+    pass "AC15: the topic tree's own git directory gets no line"
+fi
+
 echo
 if (( failures )); then
     echo "==== $failures FAILURE(S) ===="

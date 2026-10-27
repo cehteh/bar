@@ -4057,9 +4057,7 @@ function rad_topic ## <class> <description> [--root <clone>] [--base <ref>] [--n
         help_usage_error rad_topic "not inside a git repository, pass --root <clone>"
         return 2
     fi
-    main_tree="$(git -C "$tree" worktree list --porcelain 2>/dev/null |
-        LC_ALL=C awk '/^worktree / { print $2; exit }')"
-    [[ -n "$main_tree" ]] || main_tree="$tree"
+    main_tree="$(rad_main_checkout "$tree")"
 
     ## The base: the clone's trunk -- upstream *plus* the local work, so branching off the remote
     ## tip would drop everything this host has not published yet.  The remote is fetched first to

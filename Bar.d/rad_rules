@@ -51,8 +51,10 @@ rule is_rad_toplevel: 'require git_lib' -- '[[ "$(git_toplevel)" = "$PWD" ]]'
 
 ## Maintain a radicle checkout for bar: keep '.worktrees/' -- where 'rad_topic' puts the topic trees
 ## -- out of 'git status', through '.git/info/exclude'.  Setup, not a question: it writes the line
-## once and is silent when it is already there.
-rule rad_activate: is_rad_repository? 'require radicle_lib' -- 'rad_exclude_worktrees "$(git rev-parse --show-toplevel)"'
+## once and is silent when it is already there.  The target is the *clone* ('rad_main_checkout'), not
+## the tree bar was called from: a topic worktree has a private git directory, and an exclusion
+## written there leaves the checkout's own status untouched.
+rule rad_activate: is_rad_repository? 'require radicle_lib' -- 'rad_exclude_worktrees "$(rad_main_checkout)"'
 
 # 'activate' is documented as "maintainer curated githooks and other setup to use bar in a checked
 # out repository"; keeping a radicle checkout workable for bar is that other setup.
