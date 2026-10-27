@@ -50,6 +50,22 @@ function bar_main ## [rulefile] [--bare] [rule [arguments..]] - Loads a rulefile
     # shellcheck disable=SC2155
     export LC_ALL=$(locale -a 2>/dev/null | grep -i 'C.utf.*8' || echo C)
 
+    # Bar is routinely installed as a githook ('pre-commit -> ../../bar'), and git hands its hooks
+    # the repository context it is working in: 'GIT_DIR', an 'GIT_INDEX_FILE' which is relative to
+    # *git's* working directory, 'GIT_PREFIX' for a commit made in a subdirectory.  That context
+    # describes git's own invocation, not the tree bar was started in: bar's context is the
+    # directory its rulefile is found in, and every path a rule body resolves is relative to that.
+    # Left in place it is inherited by everything bar launches -- a rule body which runs git in
+    # another repository (a test fixture, a testdir, a 'rad_topic') resolves the relative index
+    # against the wrong tree.  Measured: under a hook's 'GIT_DIR', 'git init <dir>' re-initialises
+    # that 'GIT_DIR' instead of '<dir>' and sets 'core.bare' on the repository the hook belongs to,
+    # so every later commit in that checkout fails; and 'git -C <fixture> commit' lands in the
+    # checkout instead of the fixture.  The derived context is dropped here, before the first rule
+    # runs; git discovers the repository from the directory it is run in.
+    unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX GIT_COMMON_DIR GIT_OBJECT_DIRECTORY \
+          GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_NAMESPACE GIT_QUARANTINE_PATH GIT_SHALLOW_FILE \
+          GIT_REPLACE_REF_BASE GIT_CEILING_DIRECTORIES
+
     export TMPDIR="${TMPDIR:-/tmp}"
 
     # shellcheck disable=SC2155

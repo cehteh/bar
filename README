@@ -3049,7 +3049,9 @@ MODULE API/RULES
       rad_activate
         Maintain a radicle checkout for bar: keep '.worktrees/' -- where 'rad_topic' puts the topic trees
         -- out of 'git status', through '.git/info/exclude'.  Setup, not a question: it writes the line
-        once and is silent when it is already there.
+        once and is silent when it is already there.  The target is the *clone* ('rad_main_checkout'), not
+        the tree bar was called from: a topic worktree has a private git directory, and an exclusion
+        written there leaves the checkout's own status untouched.
 
   radicle_lib - Shared radicle plumbing: run 'rad', read what it prints, and emit the JSON literals.
     
@@ -3068,6 +3070,7 @@ MODULE API/RULES
       rad_line/rad_columns/rad_table
                              cut the padded, boxed tables 'rad' prints by the names of their
                              columns
+      rad_main_checkout      the main checkout of the clone a (linked worktree) path is in
       rad_exclude_worktrees  keep '<clone>/.worktrees/' out of 'git status'
     
     The JSON literals of the '--json' forms are not rad's business: every module of bar which emits
@@ -3165,6 +3168,16 @@ MODULE API/RULES
         itself contain two spaces (a truncated author reads '<author>  (you)'), which splitting on
         whitespace would tear apart.  Every requested name has to exist in the table, otherwise
         this returns 1 and the caller reports that rad's output could not be understood.
+
+      rad_main_checkout [tree]
+        the path of the main checkout of the clone '<tree>' is in
+        The first entry of 'git worktree list' is the clone itself, every further one is a topic tree
+        below it.  A caller which writes into the clone's own '.git/' -- 'rad_topic' creates the
+        trees there, 'rad_activate' keeps them out of its status -- must name the *clone*, never the
+        toplevel it happens to be called from: a linked worktree has a private git directory of its
+        own ('<clone>/.git/worktrees/<name>'), so an exclusion written for it does nothing for the
+        checkout whose 'git status' shows the trees.  A path which is no repository answers itself,
+        the caller's own check is what reports that.
 
       rad_exclude_worktrees <clone>
         keep '<clone>/.worktrees/' out of 'git status'

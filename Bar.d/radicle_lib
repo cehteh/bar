@@ -19,6 +19,7 @@
 ###   rad_line/rad_columns/rad_table
 ###                          cut the padded, boxed tables 'rad' prints by the names of their
 ###                          columns
+###   rad_main_checkout      the main checkout of the clone a (linked worktree) path is in
 ###   rad_exclude_worktrees  keep '<clone>/.worktrees/' out of 'git status'
 ###
 ### The JSON literals of the '--json' forms are not rad's business: every module of bar which emits
@@ -293,6 +294,21 @@ function rad_table ## <table> <column>.. - the named cells of every row of a 'ra
 }
 
 # --- the worktree exclusion ----------------------------------------------------------------------
+
+function rad_main_checkout ## [tree] - the path of the main checkout of the clone '<tree>' is in
+{
+    ## The first entry of 'git worktree list' is the clone itself, every further one is a topic tree
+    ## below it.  A caller which writes into the clone's own '.git/' -- 'rad_topic' creates the
+    ## trees there, 'rad_activate' keeps them out of its status -- must name the *clone*, never the
+    ## toplevel it happens to be called from: a linked worktree has a private git directory of its
+    ## own ('<clone>/.git/worktrees/<name>'), so an exclusion written for it does nothing for the
+    ## checkout whose 'git status' shows the trees.  A path which is no repository answers itself,
+    ## the caller's own check is what reports that.
+    local tree="${1:-$PWD}" main_tree
+    main_tree="$(git -C "$tree" worktree list --porcelain 2>/dev/null |
+        LC_ALL=C awk '/^worktree / { print $2; exit }')"
+    printf '%s\n' "${main_tree:-$tree}"
+}
 
 function rad_exclude_worktrees ## <clone> - keep '<clone>/.worktrees/' out of 'git status'
 {
