@@ -17,6 +17,8 @@
 #   AC9  the run ends: a 'wait' in CLEANUP does not sit on the filter, and no filter is left
 #   AC10 '~' is not a barrier: '+dep~' is a job and a run continues through it
 #   AC11 'rule --parallel' is inherited by its clauses, '--conclusive' and '--default' opt out
+#   AC12 a job's own jobs spend from one budget for the whole tree
+#   AC13 a rule two jobs both need is evaluated once, and its verdict is theirs
 #
 # usage: tests/test_parallel.sh
 
@@ -48,6 +50,8 @@ P="$WORK/proj"
 mkproj "$P"
 P_LOG="$WORK/log"
 export P_LOG
+P_NESTED="$WORK/nested"
+export P_NESTED
 
 cat >"$P/Barf" <<'EOF'
 p_a:
@@ -120,6 +124,42 @@ j_b:
 j_main: +j_a +j_b
 	require git_lib
 	echo "p:$(type -t git_ls_files >/dev/null && echo ok || echo none)" >>"$P_LOG"
+
+n_leaf:
+	_ns=$(date +%s%N) ; sleep 0.3 ; printf '%s %s\n' "$_ns" "$(date +%s%N)" >>"$P_NESTED"
+
+n_arm1: "+n_leaf 1" "+n_leaf 2"
+	:
+
+n_arm2: "+n_leaf 3" "+n_leaf 4"
+	:
+
+n_main: +n_arm1 +n_arm2
+	:
+
+d_shared:
+	sleep 0.3 ; echo shared >>"$P_LOG"
+
+d_shared_bad:
+	sleep 0.3 ; echo shared >>"$P_LOG" ; false
+
+d_arm1: d_shared
+	:
+
+d_arm2: d_shared
+	:
+
+d_main: +d_arm1 +d_arm2
+	:
+
+d_arm1_bad: d_shared_bad
+	:
+
+d_arm2_bad: d_shared_bad
+	:
+
+d_main_bad: +d_arm1_bad +d_arm2_bad
+	:
 
 w_main:
 	echo body >>"$P_LOG"
@@ -311,6 +351,63 @@ if (( ELAPSED + 400 > serial_ms )); then
 else
     fail "'--default' inherited the rule flag (${ELAPSED}ms against ${serial_ms}ms serially)"
 fi
+echo
+
+echo "AC12 a job's own jobs spend from the budget of the tree"
+# four leaves, two arms, each arm a job: a budget per shell would start all four at once
+: >"$P_NESTED"
+timed 2 n_main
+check "$RC" "0" "BAR_PARALLEL=2: the nested rule succeeds"
+check "$(wc -l <"$P_NESTED" | tr -d ' ')" "4" "all four leaves ran, each once"
+overlap="$(awk '{print $1"\t1"; print $2"\t-1"}' "$P_NESTED" | sort -n -k1,1 -k2,2 | awk '{c+=$2; if (c>m) m=c} END{print m+0}')"
+if (( overlap <= 2 )); then
+    pass "at most two leaves ran at once ($overlap): the arms spend from the same budget"
+else
+    fail "$overlap leaves ran at once at BAR_PARALLEL=2: the arms started a budget of their own"
+fi
+: >"$P_NESTED"
+timed 4 n_main
+check "$RC" "0" "BAR_PARALLEL=4: the nested rule succeeds"
+check "$(wc -l <"$P_NESTED" | tr -d ' ')" "4" "all four leaves ran, each once, at 4 too"
+overlap="$(awk '{print $1"\t1"; print $2"\t-1"}' "$P_NESTED" | sort -n -k1,1 -k2,2 | awk '{c+=$2; if (c>m) m=c} END{print m+0}')"
+if (( overlap > 2 && overlap <= 4 )); then
+    pass "a larger budget reaches the leaves below the arms ($overlap at 4)"
+else
+    fail "the budget did not reach the leaves below the arms ($overlap at 4)"
+fi
+: >"$P_NESTED"
+timed 1 n_main
+check "$RC" "0" "BAR_PARALLEL=1: the nested rule succeeds"
+check "$(wc -l <"$P_NESTED" | tr -d ' ')" "4" "all four leaves ran serially"
+overlap="$(awk '{print $1"\t1"; print $2"\t-1"}' "$P_NESTED" | sort -n -k1,1 -k2,2 | awk '{c+=$2; if (c>m) m=c} END{print m+0}')"
+check "$overlap" "1" "nothing overlapped at 1, in the tree as in one shell"
+# the server and the store are the run's: a run which had them leaves none behind, CLEANUP included
+jobtmp="$WORK/jobtmp"
+mkdir -p "$jobtmp"
+RC=0
+( cd "$P" && TMPDIR="$jobtmp" BAR_PARALLEL=2 "$BAR" n_main ) >"$WORK/out" 2>"$WORK/err" || RC=$?
+check "$RC" "0" "the rule succeeds with a TMPDIR of its own"
+check "$(ls -A "$jobtmp" | wc -l | tr -d ' ')" "0" "the run took its job directory with it"
+echo
+
+echo "AC13 a rule two jobs both need is evaluated once"
+# the diamond: two arms as jobs, one rule they share -- without a store each arm evaluates it
+: >"$P_LOG"
+timed 2 d_main
+check "$RC" "0" "the rule succeeds"
+check "$(grep -c shared "$P_LOG" || true)" "1" "the shared rule ran once, though both arms needed it"
+if (( ELAPSED + 400 < 900 )); then
+    pass "the second arm took the stored verdict instead of evaluating again (${ELAPSED}ms)"
+else
+    fail "the second arm evaluated the shared rule again (${ELAPSED}ms for one 300ms rule)"
+fi
+: >"$P_LOG"
+timed 2 d_main_bad
+check "$RC" "1" "the shared failure is the verdict of the diamond"
+check "$(grep -c shared "$P_LOG" || true)" "1" "and it was still evaluated once"
+: >"$P_LOG"
+timed 2 d_main
+check "$(grep -c shared "$P_LOG" || true)" "1" "a later run evaluates again: the store lives with its run"
 echo
 
 if (( failures > 0 )); then

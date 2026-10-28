@@ -883,9 +883,14 @@ RULE FUNCTION
     Dependencies prefixed with '+' and clauses or rules marked '--parallel' may be started before
     their turn, so a run of them evaluates at the same time.  A rule flag '--parallel' is the
     per-clause flag on every clause of that rule but the '--conclusive' and '--default' ones, which
-    stay barriers.  BAR_PARALLEL caps how many jobs run at once in one shell; unset, empty or 1
-    (the default) starts nothing early and bar evaluates exactly as it does serially.  The cap is a
-    best-effort one across the whole process tree: a job starts its own budget.
+    stay barriers.  BAR_PARALLEL caps how many jobs run at once in the whole run: a job which starts
+    jobs of its own spends from the same budget, and a shell which has to wait for a slot gives its
+    own back first, so nothing waits on a token it is holding.  Unset, empty or 1 (the default)
+    starts nothing early and bar evaluates exactly as it does serially.
+
+    A verdict is shared.  A rule which two jobs both need is evaluated once and each of them takes
+    that result, so a diamond costs its arms one evaluation of what they share; the results live in
+    a store of this run, which ends with it, and a rule marked '--always' is never stored.
 
     Every verdict is still taken in declared order, so a conclusive or checking dependency and
     the clause body see the same results, in the same order, at any BAR_PARALLEL.  A job's own

@@ -333,6 +333,13 @@ function clause_local_restore
 declare -g  BAR_PARALLEL="${BAR_PARALLEL:-1}"  ## How many dependency jobs may run at once. 1 (the default) starts nothing early and is the serial evaluation.
 declare -gi BAR_INFLIGHT=0                     # jobs started and not yet collected in this shell
 declare -ga BAR_JOB_PIDS=()                    # what the run still owes, for the exit path
+declare -g  BAR_JOB_DIR=""                     # the run's job directory: the server FIFO and the shared results
+declare -gi BAR_JOB_SERVER=-1                  # the server's descriptor, inherited by every job; -1 when there is none
+declare -gi BAR_JOB_TOKEN=0                    # 1 while this shell holds a slot of its own
+declare -gi BAR_JOB_OWED=0                     # 1 while this shell is owed its own slot back
+declare -gi BAR_JOB_CLOSED=0                   # 1 once the run is tearing down: no server is started again
+declare -ga BAR_JOB_CLAIMS=()                  # the rule claims this shell holds, for its exit path
+declare -g  BAR_STORE_RC=""                    # what rule_result_get read out of the shared store
 
 # rule_parallel_budget - validates BAR_PARALLEL, setting it to 1 when it is unset or not a number
 function rule_parallel_budget
@@ -340,6 +347,186 @@ function rule_parallel_budget
     if [[ ! "${BAR_PARALLEL:-}" =~ ^[0-9]+$ ]] || (( BAR_PARALLEL < 1 )); then
         BAR_PARALLEL=1
     fi
+    return 0
+}
+
+# The job server -- one budget for the whole process tree
+#
+# The server is a FIFO holding BAR_PARALLEL tokens, opened read-write: a descriptor opened that way
+# never sees EOF and serves both the take and the give, and a job inherits it by fork.  A shell
+# takes a token for the job it is about to start and the job returns it on its way out, so the cap
+# belongs to the tree and a job which starts jobs of its own spends from the same budget.  A shell
+# which has to wait for a token hands its own back first and collects what it already started, so a
+# blocked shell holds no token -- which is what keeps a tree at the cap from waiting on itself
+# (make's jobserver rule).
+
+function rule_job_server_start # - starts the run's job server and result store unless one is running
+{
+    [[ -z "$BAR_JOB_DIR" ]] || return 0
+    (( BAR_PARALLEL > 1 && ! BAR_JOB_CLOSED )) || return 0
+    local dir fd
+    if ! dir="$(mktemp -d "${TMPDIR:-/tmp}/bar-jobs.XXXXXXXXXX")"; then
+        BAR_PARALLEL=1
+        return 0
+    fi
+    if ! mkdir "$dir/results" "$dir/claims" || ! mkfifo "$dir/server"; then
+        rm -rf "$dir"
+        BAR_PARALLEL=1
+        return 0
+    fi
+    if ! exec {fd}<>"$dir/server"; then
+        rm -rf "$dir"
+        BAR_PARALLEL=1
+        return 0
+    fi
+    BAR_JOB_DIR="$dir"
+    BAR_JOB_SERVER=$fd
+    local -i token
+    for ((token = 1; token <= BAR_PARALLEL; token++)); do
+        printf 't\n' >&"$BAR_JOB_SERVER"
+    done
+    return 0
+}
+
+# rule_job_slot_take <pids> <rcs> - takes the slot a job is started with, giving its own slot back while it waits
+function rule_job_slot_take
+{
+    local -n _sl_pids="$1" _sl_rcs="$2"
+    (( BAR_JOB_SERVER >= 0 )) || return 0
+    local tok
+    # A shell which must wait hands its own slot back first: a shell which blocks holds no token,
+    # and a token is therefore always held by something which is running.  That is what keeps a
+    # tree whose budget is spent from waiting on itself (make's jobserver rule).  The own slot is
+    # taken back only once the job holds this one -- 'rule_job_slot_restore', after the fork.
+    local -i own=0
+    if (( BAR_JOB_TOKEN )); then
+        own=1
+        rule_job_token_give
+    fi
+    while :; do
+        # a probe which consumes nothing: 'read -t 0' succeeds only when a token is waiting
+        if IFS= read -r -t 0 -u "$BAR_JOB_SERVER" tok; then
+            IFS= read -r -u "$BAR_JOB_SERVER" tok && break
+            continue
+        fi
+        # the budget is spent: collect what this shell started before waiting
+        if (( BAR_INFLIGHT > 0 )); then
+            rule_jobs_reap_one "$1" "$2"
+            continue
+        fi
+        IFS= read -r -u "$BAR_JOB_SERVER" tok && break
+    done
+    BAR_JOB_OWED=$own
+    return 0
+}
+
+# rule_job_slot_restore - takes this shell's own slot again once its job holds the one taken for it
+function rule_job_slot_restore
+{
+    (( BAR_JOB_SERVER >= 0 && BAR_JOB_OWED )) || return 0
+    BAR_JOB_OWED=0
+    local tok
+    # the token itself is not a value: taking it is what holds the slot
+    # shellcheck disable=SC2034
+    IFS= read -r -u "$BAR_JOB_SERVER" tok
+    BAR_JOB_TOKEN=1
+    return 0
+}
+
+# rule_job_token_give - returns a job slot to the server
+function rule_job_token_give
+{
+    (( BAR_JOB_SERVER >= 0 )) || return 0
+    printf 't\n' >&"$BAR_JOB_SERVER"
+    return 0
+}
+
+# The shared result store -- one table for the whole run
+#
+# A job's own results die with the fork, so without a store a diamond whose two arms are jobs
+# evaluates the rule they share twice.  Every verdict is also written to the run's store, keyed the
+# way the memory table keys it, and a shell which does not find one in its own table reads it from
+# there.  A claim directory is what stops two jobs evaluating the same rule at the same time: the
+# shell which created it evaluates and the other takes its verdict.  Only a parallel run has a
+# store; a serial run never looks, so it pays nothing.
+
+function rule_result_get # <rule_id> - reads a verdict out of the run's store into BAR_STORE_RC
+{
+    [[ -n "${BAR_JOB_DIR:-}" && -f "$BAR_JOB_DIR/results/$1" ]] || return 1
+    BAR_STORE_RC=""
+    IFS= read -r BAR_STORE_RC <"$BAR_JOB_DIR/results/$1" || return 1
+    [[ -n "$BAR_STORE_RC" ]] || return 1
+    return 0
+}
+
+function rule_result_put # <rule_id> <rc> - writes a verdict to the run's store
+{
+    [[ -n "${BAR_JOB_DIR:-}" ]] || return 0
+    local file="$BAR_JOB_DIR/results/$1"
+    # written aside and renamed: a reader never sees half a verdict
+    printf '%s\n' "$2" >"$file.$BASHPID" 2>/dev/null || return 0
+    mv -f "$file.$BASHPID" "$file" 2>/dev/null || rm -f "$file.$BASHPID"
+    return 0
+}
+
+# rule_result_claim <rule_id> - claims a rule in the run's store; 1 when another shell's verdict is there instead
+function rule_result_claim
+{
+    [[ -n "${BAR_JOB_DIR:-}" ]] || return 0
+    local dir="$BAR_JOB_DIR/claims/$1"
+    local owner
+    local -i waited=0
+    while ! mkdir "$dir" 2>/dev/null; do
+        # another shell is evaluating it: its verdict is what this one wants, and a claim whose
+        # owner is gone is stale (it died between the claim and the write)
+        [[ -f "$BAR_JOB_DIR/results/$1" ]] && return 1
+        owner=""
+        IFS= read -r owner <"$dir/owner" 2>/dev/null || owner=""
+        if [[ -n "$owner" ]] && ! kill -0 "$owner" 2>/dev/null; then
+            rm -rf "$dir"
+            continue
+        fi
+        (( waited < 500 )) || { rm -rf "$dir"; continue; }
+        waited=$((waited + 1))
+        sleep 0.02
+    done
+    # the verdict may have landed between the check above and this claim: it is then still the
+    # other shell's, and this one takes its result rather than evaluating a second time
+    if [[ -f "$BAR_JOB_DIR/results/$1" ]]; then
+        rm -rf "$dir"
+        return 1
+    fi
+    printf '%s\n' "$BASHPID" >"$dir/owner"
+    BAR_JOB_CLAIMS+=("$dir")
+    return 0
+}
+
+# rule_result_drop_claims - gives back every claim this shell still holds, for its exit path
+function rule_result_drop_claims
+{
+    local dir
+    for dir in ${BAR_JOB_CLAIMS[@]+"${BAR_JOB_CLAIMS[@]}"}; do
+        rm -rf "$dir"
+    done
+    BAR_JOB_CLAIMS=()
+    return 0
+}
+
+# rule_result_release <rule_id> - gives the claim on one rule back
+function rule_result_release
+{
+    [[ -n "${BAR_JOB_DIR:-}" ]] || return 0
+    rm -rf "${BAR_JOB_DIR:?}/claims/$1"
+    return 0
+}
+
+# rule_result_record <rule_id> <rc> - records a verdict in this shell and in the run's store
+function rule_result_record
+{
+    BAR_RULES_RESULT["#$1"]="$2"
+    [[ -n "${BAR_JOB_DIR:-}" ]] || return 0
+    rule_result_put "$1" "$2"
+    rule_result_release "$1"
     return 0
 }
 
@@ -384,23 +571,34 @@ function rule_job_spawn
     local -n _sp_pids="$1" _sp_rcs="$2"
     local -i _sp_index="$3"
     shift 3
-    # The job gets the parent's function and arrays by fork, but not its filter channel and not its
-    # budget: 'barf_pp_fork' drops the channel so the job starts its own if it needs one, and the
-    # counter starts fresh because a fork's count is not the tree's.  Both are the best-effort
-    # limits agreed for this feature.
+    # The job gets the parent's function and arrays by fork, and the run's job server: the budget it
+    # spends from is the tree's, so a job which starts jobs of its own is bounded by what the whole
+    # run may do at once.  Its filter channel is its own -- 'barf_pp_fork' drops the parent's, and
+    # 'barf_pp_ensure' starts one in the shell whose descriptor the job's load inherits -- and its
+    # own bookkeeping starts empty.
     (
-        # the job's own budget starts empty: a fork's count is not the tree's, and a best-effort
-        # limit across processes is what was agreed for this feature
-        # shellcheck disable=SC2030
+        # the slot the parent took for this job is held here and returned on the way out, which is
+        # what makes the budget the tree's rather than one per shell
+        # shellcheck disable=SC2030,SC2031
         BAR_INFLIGHT=0
+        # shellcheck disable=SC2030
+        BAR_JOB_PIDS=()
+        # shellcheck disable=SC2030
+        BAR_JOB_CLAIMS=()
+        BAR_JOB_TOKEN=1
         if command -v barf_pp_fork >/dev/null; then barf_pp_fork; fi
+        trap 'rule_job_token_give; rule_result_drop_claims' EXIT
         rule_eval "$@"
     ) &
     _sp_pids[_sp_index]="$!"
     _sp_rcs[_sp_index]="pending"
+    # shellcheck disable=SC2031
     BAR_JOB_PIDS+=("$!")
     # shellcheck disable=SC2031
     BAR_INFLIGHT=$((BAR_INFLIGHT + 1))
+    # the own slot again: the job holds the one taken for it now, so this one waits on a job which
+    # is running rather than on a token sitting in its own hand
+    rule_job_slot_restore
     return 0
 }
 
@@ -470,6 +668,18 @@ function rule_jobs_drain
     done
     BAR_JOB_PIDS=()
     BAR_INFLIGHT=0
+    # the run's job directory goes with the run: the server FIFO, the claims and the results.  The
+    # CLEANUP rule runs after this in the exit path, and a rule there must not start a server the
+    # run would then leave behind.
+    BAR_JOB_CLOSED=1
+    if (( BAR_JOB_SERVER >= 0 )); then
+        exec {BAR_JOB_SERVER}>&-
+        BAR_JOB_SERVER=-1
+    fi
+    if [[ -n "${BAR_JOB_DIR:-}" ]]; then
+        rm -rf "${BAR_JOB_DIR:?}"
+        BAR_JOB_DIR=""
+    fi
     return 0
 }
 
@@ -492,6 +702,13 @@ function rule_eval ## <name> [args..] - Evaluates a rule
     local RULE_ARGS=("$@")
     rule_exists "$RULE_NAME" || rule_autoload "$RULE_NAME"
 
+    local evaluate_always=
+    [[ "${BAR_RULE_FLAGS[$RULE_NAME]:-}" == *a* ]] && evaluate_always=true
+
+    # a parallel run is the only one which needs the tree's budget and the shared store
+    rule_parallel_budget
+    rule_job_server_start
+
     [[ -v BAR_RULES_RESULT["#$rule_id"] ]] && {
         rc="${BAR_RULES_RESULT[#$rule_id]}"
         if [[ "$rc" == pending ]]; then
@@ -501,10 +718,27 @@ function rule_eval ## <name> [args..] - Evaluates a rule
         fi
     }
 
-    local evaluate_always=
+    # a verdict another job left in the run's store is this shell's verdict too
+    if [[ -z "$evaluate_always" ]] && rule_result_get "$rule_id"; then
+        rc="$BAR_STORE_RC"
+        BAR_RULES_RESULT["#$rule_id"]="$rc"
+        BAR_RULES_RESULT["$RULE_NAME"]+="$rule_id "
+        return "$rc"
+    fi
+
+    # two jobs may reach the same rule at once (a diamond): the shell which claims it evaluates it,
+    # the other takes that verdict instead of evaluating it a second time
+    if [[ -z "$evaluate_always" ]] && ! rule_result_claim "$rule_id"; then
+        if rule_result_get "$rule_id"; then
+            rc="$BAR_STORE_RC"
+            BAR_RULES_RESULT["#$rule_id"]="$rc"
+            BAR_RULES_RESULT["$RULE_NAME"]+="$rule_id "
+            return "$rc"
+        fi
+    fi
+
     BAR_RULES_RESULT["#$rule_id"]="pending"
     BAR_RULES_RESULT["$RULE_NAME"]+="$rule_id "
-    [[ "${BAR_RULE_FLAGS[$RULE_NAME]:-}" == *a* ]] && evaluate_always=true
 
     local clauses="${BAR_RULES[$RULE_NAME]:-}"
 
@@ -544,7 +778,6 @@ function rule_eval ## <name> [args..] - Evaluates a rule
         # Jobs started for this clause, indexed like 'deps': the pid while one runs, its status once
         # collected.  '--conclusive' needs nothing of its own -- every job is collected before the
         # body runs, so a clause which stops the rule stops it after the work it started.
-        rule_parallel_budget
         local -a job_pid=()
         local -a job_rc=()
         local can_parallel=
@@ -598,6 +831,10 @@ function rule_eval ## <name> [args..] - Evaluates a rule
                 # shellcheck disable=2155
                 local dep_id="$(hash_args "$PWD $depname ${depargs[*]}")"
                 local dep_rc="${BAR_RULES_RESULT[$dep_id]:-}"
+                # another job may have decided it already; the run's store is where that verdict is
+                if [[ -z "$dep_rc" ]] && rule_result_get "$dep_id"; then
+                    dep_rc="$BAR_STORE_RC"
+                fi
 
                 # Start the run of '+' dependencies this one belongs to: every following dependency
                 # which is a plain '+' one starts here too, up to the budget, so the run overlaps
@@ -612,9 +849,7 @@ function rule_eval ## <name> [args..] - Evaluates a rule
                         [[ -n "$DEP_PARALLEL" || -n "$clause_parallel" ]] || break
                         [[ -z "$DEP_IFEXISTS" && "$DEP_CHECK" != check && "$DEP_CHECK" != negated ]] || break
                         [[ "${BAR_RULE_FLAGS[$DEP_NAME]-a}" = *a* ]] && break
-                        while (( BAR_INFLIGHT >= BAR_PARALLEL )); do
-                            rule_jobs_reap_one job_pid job_rc
-                        done
+                        rule_job_slot_take job_pid job_rc
                         rule_job_spawn job_pid job_rc "$ahead" "$DEP_NAME" "${DEP_ARGS[@]}"
                     done
                     rule_dep_parse "$dep"
@@ -624,9 +859,11 @@ function rule_eval ## <name> [args..] - Evaluates a rule
                     # the job ran early, but the verdict is taken where the dependency is declared
                     rule_job_collect job_pid job_rc "$dep_index"
                     dep_rc="${job_rc[dep_index]}"
-                    # a fork's table dies with it: this is how the next dependency sees the result
+                    # a fork's table dies with it: this is how the next dependency sees the result,
+                    # and the run's store is how a job which has not seen it yet does
                     if [[ "${BAR_RULE_FLAGS[$depname]-a}" != *a* ]]; then
                         BAR_RULES_RESULT[$dep_id]="$dep_rc"
+                        rule_result_put "$dep_id" "$dep_rc"
                     fi
                 elif [[ "${BAR_RULE_FLAGS[$depname]-a}" = *a* || -z "$dep_rc" ]]; then
                     dep_rc=0
@@ -662,7 +899,7 @@ function rule_eval ## <name> [args..] - Evaluates a rule
                     if [[ -n "$evaluate_always" ]]; then
                         unset "BAR_RULES_RESULT[#$rule_id]"
                     else
-                        BAR_RULES_RESULT["#$rule_id"]="$dep_rc"
+                        rule_result_record "$rule_id" "$dep_rc"
                     fi
                     [[ "${BAR_RULE_FLAGS[$RULE_NAME]}" != *m* ]] && clause_local_restore
                     return "$dep_rc"
@@ -702,7 +939,7 @@ function rule_eval ## <name> [args..] - Evaluates a rule
                                 if [[ -n "$evaluate_always" ]]; then
                                     unset "BAR_RULES_RESULT[#$rule_id]"
                                 else
-                                    BAR_RULES_RESULT["#$rule_id"]="$rc"
+                                    rule_result_record "$rule_id" "$rc"
                                 fi
                                 [[ "${BAR_RULE_FLAGS[$RULE_NAME]}" != *m* ]] && clause_local_restore
                                 return "$rc"
@@ -719,7 +956,7 @@ function rule_eval ## <name> [args..] - Evaluates a rule
                         if [[ -n "$evaluate_always" ]]; then
                             unset "BAR_RULES_RESULT[#$rule_id]"
                         else
-                            BAR_RULES_RESULT["#$rule_id"]="$rc"
+                            rule_result_record "$rule_id" "$rc"
                         fi
                         [[ "${BAR_RULE_FLAGS[$RULE_NAME]}" != *m* ]] && clause_local_restore
                         return "$rc"
@@ -729,7 +966,7 @@ function rule_eval ## <name> [args..] - Evaluates a rule
                     if [[ -n "$evaluate_always" ]]; then
                         unset "BAR_RULES_RESULT[#$rule_id]"
                     else
-                        BAR_RULES_RESULT["#$rule_id"]="$rc"
+                        rule_result_record "$rule_id" "$rc"
                     fi
                     [[ "${BAR_RULE_FLAGS[$RULE_NAME]}" != *m* ]] && clause_local_restore
                     return "$rc"
@@ -744,7 +981,7 @@ function rule_eval ## <name> [args..] - Evaluates a rule
         if [[ -n "$evaluate_always" ]]; then
             unset "BAR_RULES_RESULT[#$rule_id]"
         else
-            BAR_RULES_RESULT["#$rule_id"]="$rule_failure_rc"
+            rule_result_record "$rule_id" "$rule_failure_rc"
         fi
         return "$rule_failure_rc"
     fi
@@ -752,7 +989,7 @@ function rule_eval ## <name> [args..] - Evaluates a rule
     if [[ -n "$evaluate_always" ]]; then
         unset "BAR_RULES_RESULT[#$rule_id]"
     else
-        BAR_RULES_RESULT["#$rule_id"]="$rc"
+        rule_result_record "$rule_id" "$rc"
     fi
     return "$rc"
 }
