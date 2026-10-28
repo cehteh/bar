@@ -20,8 +20,8 @@
 ###
 ### Only variables, functions and rules that have doc comments are included in the output.
 ###
-### Documentation says what a thing does and how to use it.  The reasoning behind it -- why it is
-### written that way, what was measured -- belongs in single '#' source comments, which are not
+### Documentation says what a thing does and how to use it.  The reasoning behind it, why it is
+### written that way, what was measured, belongs in single '#' source comments, which are not
 ### published.
 
 # prototype: "topic" = "help"
@@ -334,7 +334,7 @@ function help_usage ## <name> - the builtin help of one rule, function or variab
     done
 
     if (( ${#modules[@]} )); then
-        # 'help_render' reads it from the shell it renders in -- the variable is the hand-over.
+        # 'help_render' reads it from the shell it renders in: the variable is the hand-over.
         # shellcheck disable=SC2034
         local HELP_MODULES="${modules[*]}"
         help --short "$name"
@@ -471,8 +471,8 @@ INVOCATION AND SEMANTICS
   filesystem boundary unless '\$BAR_CROSS_FS' is set.  When no rule directory exists, the
   modules installed below '\$BAR_PREFIX' are used and '\$BAR_TOPLEVEL' stays the directory bar
   was invoked from: it is the directory that holds the rule directory, and the rulefile lookup
-  and everything else bar keeps in the project (the memodb state, run logs) resolves below it
-  -- never below an ancestor or the filesystem root.
+  and everything else bar keeps in the project (the memodb state, run logs) resolves below it,
+  never below an ancestor or the filesystem root.
 
   Then the given rule (or MAIN) with the supplied arguments becomes evaluated. Finally, if
   a 'CLEANUP' rule exists, it is evaluated.
@@ -485,11 +485,6 @@ INVOCATION AND SEMANTICS
 
   When called by a symlink, the standard rulefile is loaded and instead of ‘MAIN’, a rule with
   the same name as the symlink is called with all arguments passed.
-
-
-MODULE API/RULES
-
-$(help_describe_files ${modules[@]+"${modules[@]}"} )
 
 
 INITIAL INSTALLATION
@@ -598,9 +593,9 @@ RULE SEMANTICS
   shortcuts to make the body refer to shell functions, this should be preferred.
 
 
-RULE FILE PREPROCESSOR
+RULE SYNTAX
 
-  A rule file -- the 'Barf' and every module in 'Bar.d/' -- may be written in a syntax close to
+  A rule file, the 'Barf' and every module in 'Bar.d/', may be written in a syntax close to
   the one of makefiles and justfiles.  'bar' runs a preprocessor over it which expands that syntax
   into the 'rule' statements of RULE DEFINITION SYNTAX below and passes every other line through
   unchanged: it never refuses a line, what it does not know is reported by the parser, at the line
@@ -654,27 +649,34 @@ RULE FILE PREPROCESSOR
     what it expands to alone, never depending on the files before it.
 
 
-STATE DUMP
+  Examples:
 
-  Loading the modules and the rulefile is most of bar's startup, and what it produces depends on
-  nothing but the files.  So the cold run writes that state to '.bar.<rulefile>.dump' beside the
-  rulefile -- 'Barf' gives '.bar.Barf.dump', 'please SomeOtherRules' gives '.bar.SomeOtherRules.dump'
-  next to that file -- and later runs source it instead of loading, for as long as none of the
-  inputs changed.  A run without a rulefile keeps no dump, a directory the file may not be written
-  to keeps none either, and 'bar init' puts the file into '.gitignore'.  'BAR_STATE_DUMP' names
-  another file, 'off' -- in the environment or as a line of the rulefile -- reads and writes none.
+   # Different ways to define rule bodies
+   foo_ok: ; echo inline
+   foo_ok:
+      echo indented
 
-  The dump is transparent: it carries which modules the load loaded, so a 'require' in a rule body
-  is the no-op it is without a dump, and the state a module decides at load time from the
-  environment is decided again by the function it registers in 'BAR_STATE_INIT_FNS'.  What it
-  costs is diagnostics: an error inside a module's function names '.bar.Barf.dump' and a line there,
-  not the module and the module's line.
+   foo_ok: -- <<<"echo herestring"
+   foo_ok: -- <<EOR
+      echo heredoc
+   EOR
+
+   # Make a rule that fails
+   foo_fail: ; false
+
+   # add a tests rule with 3 clauses
+   tests: foo_ok? 'example "argument"' ; echo "foo_ok success"
+   tests: !foo_ok ; echo "This is never called, but MAIN still passes"
+   tests: foo_fail? ; echo "This is also never called"
+
+   # add tests to MAIN
+   MAIN: tests
 
 
-RULE DEFINITION SYNTAX
+RULE FUNCTION
 
   This is the plain form a rule file is preprocessed into.  A rule file you write is normally
-  written in the make/just-like syntax of RULE FILE PREPROCESSOR above, which is the preferred
+  written in the make/just-like syntax of RULE SYNTAX above, which is the preferred
   one; 'rule' statements are for what that syntax cannot express.
 
    rule [[--rule-flag].. <name>:] [--clause-flag].. [[!]deps[?|~][??] args..]..
@@ -925,6 +927,39 @@ AUTOMATIC MODULE LOADING
   single word without underscores.
 
 
+STATE DUMP
+
+  Loading the modules and the rulefile is most of bar's startup cost and only static
+  preprocessing.  To optimize this bar writes a dummp of that state to '.bar.<rulefile>.dump'
+  beside the rulefile: 'Barf' gives '.bar.Barf.dump', 'please SomeOtherRules' gives
+  '.bar.SomeOtherRules.dump'.  Running bar again uses this state file when no rules have
+  changed instead of preprocessing all files again.  'bar init' puts the file into
+  '.gitignore'. 'BAR_STATE_DUMP' names another file, 'off' in the environment or as a line of
+  the rulefile turns this optimization off.
+
+
+HELPER REPERTOIRE
+
+  Many recurring questions like filters, retrieval, listing, counting, a state queries, have
+  one deterministic answer which would otherwise be re-derived with several commands and a lot of
+  context.  Such an answer is a 'helper': a rule of a 'helper module' which names itself with a
+  '# helper-module:' header in its first lines and registers each of its rules with a
+  '# helper:', '# helper-bar:' or '# helper-please:' declaration above it, the three forms
+  share their four fields and differ only in which personality ('bar' or 'please') lists the
+  helper, and every listed row is prefixed with that personality.
+
+   bar helpers          # the repertoire of this installation, one line per helper plus its count
+   bar helpers --json   # the same repertoire as one JSON object, for a wrapper
+   bar helpers --check  # verify that every helper module is registered (also run by 'lints')
+
+  The repertoire is generated by reading the module sources: listing it loads no module and runs
+  no helper, and 'please helpers' works from any directory. It even appends the 'bar'
+  repertoire of the directory it is run in (a 'bar helpers' there), again without dedup.  See
+  'Bar.d/helpers_rules' for the naming rules (a helper rule loads its module by its own first
+  word), the registration format, the output conventions and the elision and exit code
+  requirements every helper has to follow.
+
+
 STANDARD RULES
 
   Bar ships with a module that defines a set of standard rules where other modules can add
@@ -939,26 +974,9 @@ STANDARD RULES
   the outer value back in place.
 
 
-HELPER REPERTOIRE
+MODULE API/RULES
 
-  Many recurring questions -- a filter, a retrieval, a listing, a count, a state snapshot -- have
-  one deterministic answer which would otherwise be re-derived with several commands and a lot of
-  context.  Such an answer is a 'helper': a rule of a 'helper module' which names itself with a
-  '# helper-module:' header in its first lines and registers each of its rules with a
-  '# helper:', '# helper-bar:' or '# helper-please:' declaration above it -- the three forms
-  share their four fields and differ only in which personality ('bar' or 'please') lists the
-  helper, and every listed row is prefixed with that personality.
-
-   bar helpers          # the repertoire of this installation, one line per helper plus its count
-   bar helpers --json   # the same repertoire as one JSON object, for a wrapper
-   bar helpers --check  # verify that every helper module is registered (also run by 'lints')
-
-  The repertoire is generated by reading the module sources: listing it loads no module and runs
-  no helper, and 'please helpers' works from any directory -- it even appends the 'bar'
-  repertoire of the directory it is run in (a 'bar helpers' there), again without dedup.  See
-  'Bar.d/helpers_rules' for the naming rules (a helper rule loads its module by its own first
-  word), the registration format, the output conventions and the elision and exit code
-  requirements every helper has to follow.
+$(help_describe_files ${modules[@]+"${modules[@]}"} )
 
 
 MAIN API

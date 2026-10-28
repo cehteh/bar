@@ -92,8 +92,8 @@ INVOCATION AND SEMANTICS
   filesystem boundary unless '$BAR_CROSS_FS' is set.  When no rule directory exists, the
   modules installed below '$BAR_PREFIX' are used and '$BAR_TOPLEVEL' stays the directory bar
   was invoked from: it is the directory that holds the rule directory, and the rulefile lookup
-  and everything else bar keeps in the project (the memodb state, run logs) resolves below it
-  -- never below an ancestor or the filesystem root.
+  and everything else bar keeps in the project (the memodb state, run logs) resolves below it,
+  never below an ancestor or the filesystem root.
 
   Then the given rule (or MAIN) with the supplied arguments becomes evaluated. Finally, if
   a 'CLEANUP' rule exists, it is evaluated.
@@ -106,6 +106,493 @@ INVOCATION AND SEMANTICS
 
   When called by a symlink, the standard rulefile is loaded and instead of ‘MAIN’, a rule with
   the same name as the symlink is called with all arguments passed.
+
+
+INITIAL INSTALLATION
+
+  Bar can be invoked in different ways:
+
+  1.  Installed in $PATH:
+      To make this work it is best to clone bar locally and symlink the checked out files
+      to your '.local/' tree. This allows easy upgrades via git:
+
+      When you have radicle (https://radicle.xyz/) installed you can clone it with:
+
+       rad clone rad:z3WhBdHt1VVNyeQ61zpY66pNzuSrP
+
+      Otherwise it can be cloned by git with:
+
+       git clone https://seed.pipapo.org/z3WhBdHt1VVNyeQ61zpY66pNzuSrP.git bar
+
+      Then you can install it in your ~/.local tree with:
+
+       cd bar
+       ./bar init_install ~/.local/
+
+      This creates symlinks to 'bar', 'please', 'Bar.d', 'Barf.default', 'Please.default' in ~/.local
+      and symlinks 'Bar.d/*' to '~/.config/please/'.  Existing symlinks are left untouched and only
+      the ones for modules which are not linked yet are added, so a module which was added to
+      'Bar.d/' later becomes reachable by running 'init_install' again (no manual symlink needed).
+
+      Now 'bar' is installed, check it with 'bar help'
+
+  2.  The local './bar' initialized from above:
+      Since bar is a bash script, it’s easy to version and ship it with other software.
+      To initialize it in a current directory use either of:
+
+       bar init          # creates bar, Barf, Bar.d/
+       bar init --hidden # creates .bar, .Barf, .Bar.d/
+
+      This installs the modules bar needs at startup and then completes 'Bar.d/' from the installed
+      'Barf' ('bar init_deps').  With 'bar init --no-install-deps' that last step is left out, so
+      the 'Barf' can be customized first: 'bar init_deps' afterwards vendors the modules the
+      edited 'Barf' names.
+
+      After that Barf can be customized, unnecessary modules in Bar.d/ may be deleted ('bar
+      modules_prune' deletes the ones which are still unmodified copies of the installed ones and
+      completes the tree again).  Once that is done these files should be put under version
+      control.
+
+      When the installed bar from 1. becomes updated then a local version can be updated by:
+
+       bar init --update
+
+      This only updates 'bar' and any existing modules in 'Bar.d/' but will not touch the
+      'Barf' file since that is meant for local customization.
+
+       bar init_update_merge_barf
+
+      Will do a merge of the installed 'Barf' file with the local one. This *will* leave 3-way
+      conflict markers behind when there are changes. These must be manually resolved!
+
+      The updated files should then be committed to version control.
+
+  3.  githooks symlinked from './.git/hooks/*' -> '../../bar'
+      'bar' has support to be used as githooks. This needs manual enabling. Individual hooks can be
+      enabled or disabled with 'bar githook_enable <hook>' and 'bar githook_disable <hook>'.
+      For existing projects using 'bar' a maintainer can setup rules to activate all necessary hooks.
+      This then can be activated by './bar activate'.
+
+
+GIT HOOK ACTIVATION
+
+  Bar will be inert in a project that ships with bar initialized. One can call it manually by
+  './bar'.  A maintainer of the project may define 'activate' rules that activate
+  githooks. These are then activated by './bar activate'. This will create symlinks in the
+  '.git/hooks/' directory to the 'bar' script. These hooks will then be executed when the
+  respective git hook is triggered. The rules for these hooks are defined in the 'Barf' file
+  in the project directory.
+
+
+RULE SEMANTICS
+
+  Rules are a named, ordered collection of clauses. They are considered pure with inputs being
+  the current directory name and the rule's arguments. Note that the content of files is *not*
+  considered and the outcome of the rule should not depend on external variables. Rules are
+  evaluated lazily, only once; the result of a rule is cached. This means that rules, esp. the
+  actions within the body must have deterministic sematics. For performance reasons this is
+  not enforced but one may observe surprising behavior when this requirement is violated.
+
+  Rules will be autoloaded on demand from modules in 'Bar.d/' (see below AUTOMATIC MODULE
+  LOADING). For rules where this fails a fallback exits that creates an implicit rule for any
+  command and shell function defined with a body calling the respective command.
+
+  Each clause in a rule has its own set of dependencies. Dependencies are other rules which
+  are evaluated in order. When a (normal) dependency fails then rule it is considered to be
+  failed as well and no further attempts to evaluate following dependencies and clauses are
+  made.
+
+  Dependencies can be used as 'checking' dependency which either expects the dependency to
+  succeed (suffixed with a '?') or fail (prefixed with a '!'). When such a checking dependency
+  fails then the rest of the current clause is skipped. This allows conditional evaluation.
+  Further dependencies may be tagged as unconditional by suffix them when a tilde '~', these
+  are just evaluated but rules evaluation will proceed unconditionally even if such a
+  dependency fails.
+
+  Finally every clause can have an optional body. This are shell commands executed when all
+  dependencies succeeded. Because of quotiung in shell becomes a but unwieldly there are
+  shortcuts to make the body refer to shell functions, this should be preferred.
+
+
+RULE SYNTAX
+
+  A rule file, the 'Barf' and every module in 'Bar.d/', may be written in a syntax close to
+  the one of makefiles and justfiles.  'bar' runs a preprocessor over it which expands that syntax
+  into the 'rule' statements of RULE DEFINITION SYNTAX below and passes every other line through
+  unchanged: it never refuses a line, what it does not know is reported by the parser, at the line
+  it is on.  Both syntaxes may be mixed in one file, and for a rule file you write this is the
+  preferred one: 'rule' is the plain form it expands to, for what it cannot express.
+  'bar preprocess <file>' prints the text which gets sourced.
+
+   <name>: <deps>..                    rule <name>: <deps>..
+   [<rule-flag>]..                     attached to the next header
+   <name>: [<clause-flag>].. <deps>..  rule <name>: --<clause-flag>.. <deps>..
+   <name>: <deps>.. ; <body>           rule <name>: <deps>.. -- <body>
+   <name>:                             an indented block below is the body
+   <name>: (<dep> <arg>..)             one dependency, quoted, arguments included
+   <name>: <deps>.. <var>[=<value>]..  rule <name>: <deps>.. 'clause_local <var>[=<value>]..' ..
+   <NAME> := <value>                   <NAME>=<value>
+   <NAME> ?= <value>                   : "${<NAME>:=<value>}"
+
+  * A header is a line which starts at column 0 with a name and a colon. Indented lines,
+    heredoc bodies and multi line quoted strings are never touched.
+
+  * '[<rule-flag>]..' are stacked lines at column 0, each a '--rule-flag' of RULE DEFINITION
+    SYNTAX without the dashes. They attach to the next header. They are printed as comments
+    ('# [always]'): the flags travel on the rule line, and one line in stays one line out, so a
+    parse error names the line of the file.
+
+  * '[<clause-flag>]..' after the colon are the '--clause-flag' of RULE DEFINITION SYNTAX
+    without the dashes, brackets stack.
+
+  * '; <body>' ends the dependencies, everything behind it is the clause body.
+
+  * The body of an indented block is the block's text: the indentation of its first line is
+    stripped from all its lines, blank lines belong to it, and it ends at the first non blank
+    line indented less.
+
+  * A run of variable definitions among the dependencies is one dependency 'clause_local' which
+    carries the run: '<var>=<value>' makes the variable local to the clause with that value,
+    '<var>=' with the empty one, and '=<var>' with the value the outer scope has. Two runs are
+    never coalesced, the order is kept, and a run ends at the first word which is no definition.
+
+  * '(<dep> <arg>..)' is one dependency which carries arguments. Modifiers written outside the
+    parentheses are lifted onto it, '!(dep arg)' is the dependency '!dep arg'. Parentheses may
+    nest and inner quoting is kept as written.
+
+  * 'NAME := value' assigns a variable, 'NAME ?= value' assigns it only when it is unset or
+    empty.
+
+  * Shellcheck checks a module and a rule file through this preprocessor ('bar_lint'), so the
+    make/just syntax is not reported as a syntax error and only genuine shell defects are.
+
+  * One filter serves a whole 'bar' invocation and is handed one file at a time: a file expands to
+    what it expands to alone, never depending on the files before it.
+
+
+  Examples:
+
+   # Different ways to define rule bodies
+   foo_ok: ; echo inline
+   foo_ok:
+      echo indented
+
+   foo_ok: -- <<<"echo herestring"
+   foo_ok: -- <<EOR
+      echo heredoc
+   EOR
+
+   # Make a rule that fails
+   foo_fail: ; false
+
+   # add a tests rule with 3 clauses
+   tests: foo_ok? 'example "argument"' ; echo "foo_ok success"
+   tests: !foo_ok ; echo "This is never called, but MAIN still passes"
+   tests: foo_fail? ; echo "This is also never called"
+
+   # add tests to MAIN
+   MAIN: tests
+
+
+RULE FUNCTION
+
+  This is the plain form a rule file is preprocessed into.  A rule file you write is normally
+  written in the make/just-like syntax of RULE SYNTAX above, which is the preferred
+  one; 'rule' statements are for what that syntax cannot express.
+
+   rule [[--rule-flag].. <name>:] [--clause-flag].. [[!]deps[?|~][??] args..]..
+   rule [[--rule-flag].. <name>:] [--clause-flag].. [[!]deps[?|~][??] args..].. -
+   rule [[--rule-flag].. <name>:] [--clause-flag].. [[!]deps[?|~][??] args..].. -- [body..]
+
+  * [--rule-flag]
+
+    Sets flags for a rule. Flags are additive and affect the rule, not single clauses.
+
+    --always
+      The result is not cached and the rule will be always evaluated again.
+
+    --bare
+      When this rule is called as initial rule (bar <rule>) then do not eval SETUP,
+      PREPROCESS, POSTPROCESS and CLEANUP.
+
+    --reverse
+      The clauses of this rule will be evaluated in reverse order
+
+    --disjunct
+      Makes the clauses of this rule disjunctive. The rule will succeed with the first
+      successful clause. Normally clauses are conjunctive and fail with the first failing
+      clause.
+
+    --meta
+      Metarules do not have their own clause local variable. This allow them to modify
+      the clause locals of the calling rule. 'clause_local' for example is a metarule.
+      User defined rules that want to modify clause locals will need to be meta too.
+      See 'try_cargo_toolchain' for an example.
+
+  * [<name>:]
+
+    A rule can have a optional name (suffixed with a colon).  When the name is not given it
+    defaults to 'MAIN'.  Rules that have only a name but no dependencies and no body create a
+    body that calls a bash command or function with the same name as the rule passing rule
+    arguments to it.
+
+  * [--clause-flag]..
+
+    Sets flags affecting this clause only.
+
+    --conclusive
+      Makes a clause result conclusive, if not skipped no more clauses will be tried.
+
+    --default
+      Default clauses will be kept at the end of the list of clauses. Using '--default'
+      together with 'disjunct' rules allows one to hook up action while maintaining a fallback
+      or warning/error when no hooked up rule succeeded.
+
+  * [[!]deps[?|~][??] args..]..
+
+    Dependencies, are a list of other rules that this rule depends on. These will be executed
+    in order. If any of the dependencies fails then this rule is considered failed as well, no
+    further dependencies, bodies or clauses are executed unless this dependency is a checking
+    or unconditional one.
+
+    A dependency can be either prefixed with an exclamation mark or suffixed with question
+    marks or a tilde. The exclamation mark prefix expects the dependency to fail and will
+    continue then, if the dependency succeeds then the remaining dependencies and the rule
+    body are skipped. With a question mark as suffix the dependency is expected to succeed,
+    when it fails then the rest of the dependencies and the rule body is skipped. With a tilde
+    as suffix outcome of the dependencny is ignored and the rest of the dependencies and the
+    rule body is executed.  The difference here is that these checking dependencies decide if
+    a clause should be skipped or succeed while a failure on a normal dependency will fail a
+    rule instantly. When a rule is suffixed with two question marks then this behaves like
+    "'rule_exists? dep' dep". Making this dependency optional. This can be combined with the
+    another question mark, a tilde, or explamation mark prefix. This is commonly used to
+    define optional rule hooks.
+
+    Dependencies can have arguments. When provided then the dependency and its arguments must
+    be quoted. These arguments are passed in the 'RULE_ARGS' array to the body of the rule.
+
+  * -
+
+    When there is a single hypen '-' at the end of a rule definition then the rule body is a
+    call to a command or function of the same name as the rule with all arguments passed. This
+    is used when one wants to add dependencies to a existing command or function.
+
+  * -- [body..]
+
+    After a double hyphen a optional rule body follows. This are the commands to
+    execute for this clause. If these fail then the rule is considered failed. When a name but
+    no body and no dependencies are given then the body defaults to the rule name. This makes
+    it easy to translate simple parameterless commands and functions to rules. Usually the
+    body has to be quoted to prevent shell expansions at definition time. Later when a rule
+    becomes evaluated the body is passed to 'eval'.
+
+    When the body is omitted, then the rule body is read from stdin. This allows to use
+    heredocs or herestrings or read the body from a file.
+
+    When a rule overrides an existing command a 'NOTE' will be printed on higher verbosity
+    levels. The user is responsible for sensible overiding of commands.
+
+  Rules must not have mutually recursive dependencies. When such is detected the
+  evaluation aborts.
+
+  Examples:
+
+   # Add a clause to 'MAIN'
+   rule -- echo hello
+
+   # Different ways to define rule bodies
+   rule foo_ok: -- echo inline
+   rule foo_ok: -- '
+       echo inline quoted
+   '
+   rule foo_ok: -- <<<"echo herestring"
+   rule foo_ok: -- <<EOR
+      echo heredoc
+   EOR
+
+   # Make a rule that fails
+   rule foo_fail: -- false
+
+   # functions and commands can be used as rules, this should be preferred
+   function example
+   {
+       echo "i am example called with $*"
+   }
+
+   # add a tests rule with 3 clauses
+   rule tests: foo_ok? 'example "argument"' -- echo "foo_ok success"
+   rule tests: !foo_ok -- echo "This is never called, but MAIN still passes"
+   rule tests: foo_fail? -- echo "This is also never called"
+
+   # add tests to MAIN
+   rule tests
+
+  For some more examples see the 'example' file that ships with bar.
+
+
+  Special Rules and Names
+
+    Rules that do not have a name fall back to 'MAIN', when no rule name is given at execution
+    time then 'MAIN' will be evaluated.
+
+    If exist 'SETUP', 'PREPROCESS', 'POSTPROCESS' and 'CLEANUP' will be called.
+    * SETUP
+      Should set up the environment for all subsequent evaluation. Rules in 'SETUP'
+      should be self-sufficient and not expect a working environment yet.
+      A failure here will abort bar.
+    * PREPROCESS
+      Doing any preparatory tasks within the set up environment.
+      A failure here will abort bar.
+    * MAIN
+      When the bar is not called via a symlink or the user did not provide a rule to
+      evaluate, then MAIN is the default rule. Otherwise the user supplied or symlink-deduced
+      rulename will be evaluated. The result of this rule determines the exitcode of bar.
+    * POSTPROCESS
+      Is for evaluating things after the main rule finished. The environment and
+      state is still the same as in the main rule. A failure here will be reported but not
+      reflected in the exitode.
+    * CLEANUP
+      Is for removing temporary resources and doing any other kind of cleanup work. This
+      means the state and environment at cleanup time may be differen/partially destructed and
+      should not be relied upon. Clauses in the CLEANUP rule are evaluated in reverse order of
+      their definition. A failure here will be reported but not reflected in the exitcode.
+
+    After a rule that is not flagged with '--always' got evaluated it is not allowed to add
+    more clauses to it anymore, as the outcome would be unexpected and impure.
+
+
+  Keep-Going Mode
+
+    Bar supports a keep-going facility via the BAR_KEEP_GOING environment variable. When
+    enabled, clauses that fail do not immediately halt rule evaluation—subsequent clauses
+    continue to execute, though the overall failure is still propagated.
+
+    BAR_KEEP_GOING can be set to a number which is decremented on each failure, when this
+    reachs zero no more failures are accepted and the evaluation will terminate.
+
+    When BAR_KEEP_GOING set to anything else than a number then evaluation will accept
+    infinite failures.
+
+    When not set then it defaults to one then evaluation will terminate on the
+    first failure.
+
+    Clauses marked '--conclusive' immediately halt keep-going.
+
+
+  Purity Requirements
+
+    All rules and functions must be sequentiually pure in their success branch. This means
+    side effects must not alter the behavior of subsequent rules when they fail. For rules
+    where this may be the case, like rules changing directories they must rather die than
+    proceed with a undefined state in case of a failure.
+
+
+RULE ENVIRONMENT
+
+  Rules implicitly depend on the arguments passed and the current directory they run in. Any
+  other state or environment variable is not considered. When the result of a rule would
+  depend on such external state then the rule is impure and may lead to wrong
+  results.
+
+
+MODULES
+
+  Modules are shell snippets normally located in '$BAR_DIR' ('Bar.d/', 'bar.d/', '.Bar.d/' or
+  '.bar.d/') when called as 'bar' or symlink or '~/.config/please' when called as 'please'.
+  The 'std_lib' and 'rules_lib' are always loaded at startup. Modules matching '*_rules' are
+  also autoloaded at startup. Any other '*_lib' must be manuallly loaded with 'require'.
+  Modules with simple alphabetic names without underscores are lazy loaded on demand.
+
+  Modules are loaded with the 'require' function. This ensures that they are loaded only once.
+  Require will load modules outside of '$BAR_DIR' when a path containing at least one slash
+  is given.
+
+  The first variant for modules that are initially loaded is used for modules that define
+  helper functions that don't have associated rules or rules that are primarly used for
+  checking conditions before delegating to the actual rules which do the work.
+
+  The second variant is for mudules that define rules which are self-contained and can't
+  extend existing rules with new clauses. Here are the rules and functions which do the actual
+  work.
+
+  The reason for this is that some will add clauses to existing rule which must be done before
+  the rules are evaluated while we can improve performance by lazy loading modules that are
+  not always needed.
+
+  The module loader derives the module name from the rule name by removing any prefixes and
+  suffixes. Thus the rules which shall trigger loading must follow the naming schema with the
+  module name after the prefixes in the rule name.
+
+  Per convention '<name>_rules' is a module that contains the rules (and few functions) that
+  that add clauses to other rules to make 'name' accessible. These '*_rules' files are
+  autoloaded at startup.
+
+  '<name>_lib' are libraries for support functions other modules may use (with 'require
+  name_lib').
+
+
+AUTOMATIC MODULE LOADING
+
+  Rule names may include underscores, then the word before the first underscore is used to
+  determine a module name used for auto-loading rules. They can have special prefixes which
+  are removed when auto-loading:
+
+  - 'is_', 'has_' and 'try_' are reserved for check rules they don't have any special
+    semantic except for being stripped at auto loading.
+
+  When a rule is not found then a module name is derived from the rule name by removing the
+  'try_', 'is_', 'has_' prefixes and cutting off anything behind the first
+  underscore. Eg. 'try_module_check' results in 'module'. This is then searched as
+  'Bar.d/module', 'bar.d/module', '.Bar.d/module' or '.bar.d/module' (or respective please
+  variants) and loaded if present. Thus modules that are automatically loaded must be named by
+  single word without underscores.
+
+
+STATE DUMP
+
+  Loading the modules and the rulefile is most of bar's startup cost and only static
+  preprocessing.  To optimize this bar writes a dummp of that state to '.bar.<rulefile>.dump'
+  beside the rulefile: 'Barf' gives '.bar.Barf.dump', 'please SomeOtherRules' gives
+  '.bar.SomeOtherRules.dump'.  Running bar again uses this state file when no rules have
+  changed instead of preprocessing all files again.  'bar init' puts the file into
+  '.gitignore'. 'BAR_STATE_DUMP' names another file, 'off' in the environment or as a line of
+  the rulefile turns this optimization off.
+
+
+HELPER REPERTOIRE
+
+  Many recurring questions like filters, retrieval, listing, counting, a state queries, have
+  one deterministic answer which would otherwise be re-derived with several commands and a lot of
+  context.  Such an answer is a 'helper': a rule of a 'helper module' which names itself with a
+  '# helper-module:' header in its first lines and registers each of its rules with a
+  '# helper:', '# helper-bar:' or '# helper-please:' declaration above it, the three forms
+  share their four fields and differ only in which personality ('bar' or 'please') lists the
+  helper, and every listed row is prefixed with that personality.
+
+   bar helpers          # the repertoire of this installation, one line per helper plus its count
+   bar helpers --json   # the same repertoire as one JSON object, for a wrapper
+   bar helpers --check  # verify that every helper module is registered (also run by 'lints')
+
+  The repertoire is generated by reading the module sources: listing it loads no module and runs
+  no helper, and 'please helpers' works from any directory. It even appends the 'bar'
+  repertoire of the directory it is run in (a 'bar helpers' there), again without dedup.  See
+  'Bar.d/helpers_rules' for the naming rules (a helper rule loads its module by its own first
+  word), the registration format, the output conventions and the elision and exit code
+  requirements every helper has to follow.
+
+
+STANDARD RULES
+
+  Bar ships with a module that defines a set of standard rules where other modules can add
+  clauses to. Check 'Bar.d/std_rules' for details.
+
+  'SETUP', 'PREPROCESS', 'MAIN', 'POSTPROCESS' and 'CLEANUP' are special rule names called
+  approbiately.
+
+  The 'clause_local [var[=value]|=var..]' is for defining variables that are local to a clause.
+  Only scalars can be clause local.  '<var>=<value>' sets the variable to that value, '<var>=' sets
+  it to the empty string, and '=<var>' keeps the value the outer scope had.  The clause ends with
+  the outer value back in place.
 
 
 MODULE API/RULES
@@ -779,8 +1266,8 @@ MODULE API/RULES
     
     Only variables, functions and rules that have doc comments are included in the output.
     
-    Documentation says what a thing does and how to use it.  The reasoning behind it -- why it is
-    written that way, what was measured -- belongs in single '#' source comments, which are not
+    Documentation says what a thing does and how to use it.  The reasoning behind it, why it is
+    written that way, what was measured, belongs in single '#' source comments, which are not
     published.
 
     Functions:
@@ -4150,475 +4637,6 @@ MODULE API/RULES
       watch_git_index [rule [arguments..]]
         Evaluates a rule or MAIN whenever a the git index changed.
         File watchers hook into this rule.
-
-
-INITIAL INSTALLATION
-
-  Bar can be invoked in different ways:
-
-  1.  Installed in $PATH:
-      To make this work it is best to clone bar locally and symlink the checked out files
-      to your '.local/' tree. This allows easy upgrades via git:
-
-      When you have radicle (https://radicle.xyz/) installed you can clone it with:
-
-       rad clone rad:z3WhBdHt1VVNyeQ61zpY66pNzuSrP
-
-      Otherwise it can be cloned by git with:
-
-       git clone https://seed.pipapo.org/z3WhBdHt1VVNyeQ61zpY66pNzuSrP.git bar
-
-      Then you can install it in your ~/.local tree with:
-
-       cd bar
-       ./bar init_install ~/.local/
-
-      This creates symlinks to 'bar', 'please', 'Bar.d', 'Barf.default', 'Please.default' in ~/.local
-      and symlinks 'Bar.d/*' to '~/.config/please/'.  Existing symlinks are left untouched and only
-      the ones for modules which are not linked yet are added, so a module which was added to
-      'Bar.d/' later becomes reachable by running 'init_install' again (no manual symlink needed).
-
-      Now 'bar' is installed, check it with 'bar help'
-
-  2.  The local './bar' initialized from above:
-      Since bar is a bash script, it’s easy to version and ship it with other software.
-      To initialize it in a current directory use either of:
-
-       bar init          # creates bar, Barf, Bar.d/
-       bar init --hidden # creates .bar, .Barf, .Bar.d/
-
-      This installs the modules bar needs at startup and then completes 'Bar.d/' from the installed
-      'Barf' ('bar init_deps').  With 'bar init --no-install-deps' that last step is left out, so
-      the 'Barf' can be customized first: 'bar init_deps' afterwards vendors the modules the
-      edited 'Barf' names.
-
-      After that Barf can be customized, unnecessary modules in Bar.d/ may be deleted ('bar
-      modules_prune' deletes the ones which are still unmodified copies of the installed ones and
-      completes the tree again).  Once that is done these files should be put under version
-      control.
-
-      When the installed bar from 1. becomes updated then a local version can be updated by:
-
-       bar init --update
-
-      This only updates 'bar' and any existing modules in 'Bar.d/' but will not touch the
-      'Barf' file since that is meant for local customization.
-
-       bar init_update_merge_barf
-
-      Will do a merge of the installed 'Barf' file with the local one. This *will* leave 3-way
-      conflict markers behind when there are changes. These must be manually resolved!
-
-      The updated files should then be committed to version control.
-
-  3.  githooks symlinked from './.git/hooks/*' -> '../../bar'
-      'bar' has support to be used as githooks. This needs manual enabling. Individual hooks can be
-      enabled or disabled with 'bar githook_enable <hook>' and 'bar githook_disable <hook>'.
-      For existing projects using 'bar' a maintainer can setup rules to activate all necessary hooks.
-      This then can be activated by './bar activate'.
-
-
-GIT HOOK ACTIVATION
-
-  Bar will be inert in a project that ships with bar initialized. One can call it manually by
-  './bar'.  A maintainer of the project may define 'activate' rules that activate
-  githooks. These are then activated by './bar activate'. This will create symlinks in the
-  '.git/hooks/' directory to the 'bar' script. These hooks will then be executed when the
-  respective git hook is triggered. The rules for these hooks are defined in the 'Barf' file
-  in the project directory.
-
-
-RULE SEMANTICS
-
-  Rules are a named, ordered collection of clauses. They are considered pure with inputs being
-  the current directory name and the rule's arguments. Note that the content of files is *not*
-  considered and the outcome of the rule should not depend on external variables. Rules are
-  evaluated lazily, only once; the result of a rule is cached. This means that rules, esp. the
-  actions within the body must have deterministic sematics. For performance reasons this is
-  not enforced but one may observe surprising behavior when this requirement is violated.
-
-  Rules will be autoloaded on demand from modules in 'Bar.d/' (see below AUTOMATIC MODULE
-  LOADING). For rules where this fails a fallback exits that creates an implicit rule for any
-  command and shell function defined with a body calling the respective command.
-
-  Each clause in a rule has its own set of dependencies. Dependencies are other rules which
-  are evaluated in order. When a (normal) dependency fails then rule it is considered to be
-  failed as well and no further attempts to evaluate following dependencies and clauses are
-  made.
-
-  Dependencies can be used as 'checking' dependency which either expects the dependency to
-  succeed (suffixed with a '?') or fail (prefixed with a '!'). When such a checking dependency
-  fails then the rest of the current clause is skipped. This allows conditional evaluation.
-  Further dependencies may be tagged as unconditional by suffix them when a tilde '~', these
-  are just evaluated but rules evaluation will proceed unconditionally even if such a
-  dependency fails.
-
-  Finally every clause can have an optional body. This are shell commands executed when all
-  dependencies succeeded. Because of quotiung in shell becomes a but unwieldly there are
-  shortcuts to make the body refer to shell functions, this should be preferred.
-
-
-RULE FILE PREPROCESSOR
-
-  A rule file -- the 'Barf' and every module in 'Bar.d/' -- may be written in a syntax close to
-  the one of makefiles and justfiles.  'bar' runs a preprocessor over it which expands that syntax
-  into the 'rule' statements of RULE DEFINITION SYNTAX below and passes every other line through
-  unchanged: it never refuses a line, what it does not know is reported by the parser, at the line
-  it is on.  Both syntaxes may be mixed in one file, and for a rule file you write this is the
-  preferred one: 'rule' is the plain form it expands to, for what it cannot express.
-  'bar preprocess <file>' prints the text which gets sourced.
-
-   <name>: <deps>..                    rule <name>: <deps>..
-   [<rule-flag>]..                     attached to the next header
-   <name>: [<clause-flag>].. <deps>..  rule <name>: --<clause-flag>.. <deps>..
-   <name>: <deps>.. ; <body>           rule <name>: <deps>.. -- <body>
-   <name>:                             an indented block below is the body
-   <name>: (<dep> <arg>..)             one dependency, quoted, arguments included
-   <name>: <deps>.. <var>[=<value>]..  rule <name>: <deps>.. 'clause_local <var>[=<value>]..' ..
-   <NAME> := <value>                   <NAME>=<value>
-   <NAME> ?= <value>                   : "${<NAME>:=<value>}"
-
-  * A header is a line which starts at column 0 with a name and a colon. Indented lines,
-    heredoc bodies and multi line quoted strings are never touched.
-
-  * '[<rule-flag>]..' are stacked lines at column 0, each a '--rule-flag' of RULE DEFINITION
-    SYNTAX without the dashes. They attach to the next header. They are printed as comments
-    ('# [always]'): the flags travel on the rule line, and one line in stays one line out, so a
-    parse error names the line of the file.
-
-  * '[<clause-flag>]..' after the colon are the '--clause-flag' of RULE DEFINITION SYNTAX
-    without the dashes, brackets stack.
-
-  * '; <body>' ends the dependencies, everything behind it is the clause body.
-
-  * The body of an indented block is the block's text: the indentation of its first line is
-    stripped from all its lines, blank lines belong to it, and it ends at the first non blank
-    line indented less.
-
-  * A run of variable definitions among the dependencies is one dependency 'clause_local' which
-    carries the run: '<var>=<value>' makes the variable local to the clause with that value,
-    '<var>=' with the empty one, and '=<var>' with the value the outer scope has. Two runs are
-    never coalesced, the order is kept, and a run ends at the first word which is no definition.
-
-  * '(<dep> <arg>..)' is one dependency which carries arguments. Modifiers written outside the
-    parentheses are lifted onto it, '!(dep arg)' is the dependency '!dep arg'. Parentheses may
-    nest and inner quoting is kept as written.
-
-  * 'NAME := value' assigns a variable, 'NAME ?= value' assigns it only when it is unset or
-    empty.
-
-  * Shellcheck checks a module and a rule file through this preprocessor ('bar_lint'), so the
-    make/just syntax is not reported as a syntax error and only genuine shell defects are.
-
-  * One filter serves a whole 'bar' invocation and is handed one file at a time: a file expands to
-    what it expands to alone, never depending on the files before it.
-
-
-STATE DUMP
-
-  Loading the modules and the rulefile is most of bar's startup, and what it produces depends on
-  nothing but the files.  So the cold run writes that state to '.bar.<rulefile>.dump' beside the
-  rulefile -- 'Barf' gives '.bar.Barf.dump', 'please SomeOtherRules' gives '.bar.SomeOtherRules.dump'
-  next to that file -- and later runs source it instead of loading, for as long as none of the
-  inputs changed.  A run without a rulefile keeps no dump, a directory the file may not be written
-  to keeps none either, and 'bar init' puts the file into '.gitignore'.  'BAR_STATE_DUMP' names
-  another file, 'off' -- in the environment or as a line of the rulefile -- reads and writes none.
-
-  The dump is transparent: it carries which modules the load loaded, so a 'require' in a rule body
-  is the no-op it is without a dump, and the state a module decides at load time from the
-  environment is decided again by the function it registers in 'BAR_STATE_INIT_FNS'.  What it
-  costs is diagnostics: an error inside a module's function names '.bar.Barf.dump' and a line there,
-  not the module and the module's line.
-
-
-RULE DEFINITION SYNTAX
-
-  This is the plain form a rule file is preprocessed into.  A rule file you write is normally
-  written in the make/just-like syntax of RULE FILE PREPROCESSOR above, which is the preferred
-  one; 'rule' statements are for what that syntax cannot express.
-
-   rule [[--rule-flag].. <name>:] [--clause-flag].. [[!]deps[?|~][??] args..]..
-   rule [[--rule-flag].. <name>:] [--clause-flag].. [[!]deps[?|~][??] args..].. -
-   rule [[--rule-flag].. <name>:] [--clause-flag].. [[!]deps[?|~][??] args..].. -- [body..]
-
-  * [--rule-flag]
-
-    Sets flags for a rule. Flags are additive and affect the rule, not single clauses.
-
-    --always
-      The result is not cached and the rule will be always evaluated again.
-
-    --bare
-      When this rule is called as initial rule (bar <rule>) then do not eval SETUP,
-      PREPROCESS, POSTPROCESS and CLEANUP.
-
-    --reverse
-      The clauses of this rule will be evaluated in reverse order
-
-    --disjunct
-      Makes the clauses of this rule disjunctive. The rule will succeed with the first
-      successful clause. Normally clauses are conjunctive and fail with the first failing
-      clause.
-
-    --meta
-      Metarules do not have their own clause local variable. This allow them to modify
-      the clause locals of the calling rule. 'clause_local' for example is a metarule.
-      User defined rules that want to modify clause locals will need to be meta too.
-      See 'try_cargo_toolchain' for an example.
-
-  * [<name>:]
-
-    A rule can have a optional name (suffixed with a colon).  When the name is not given it
-    defaults to 'MAIN'.  Rules that have only a name but no dependencies and no body create a
-    body that calls a bash command or function with the same name as the rule passing rule
-    arguments to it.
-
-  * [--clause-flag]..
-
-    Sets flags affecting this clause only.
-
-    --conclusive
-      Makes a clause result conclusive, if not skipped no more clauses will be tried.
-
-    --default
-      Default clauses will be kept at the end of the list of clauses. Using '--default'
-      together with 'disjunct' rules allows one to hook up action while maintaining a fallback
-      or warning/error when no hooked up rule succeeded.
-
-  * [[!]deps[?|~][??] args..]..
-
-    Dependencies, are a list of other rules that this rule depends on. These will be executed
-    in order. If any of the dependencies fails then this rule is considered failed as well, no
-    further dependencies, bodies or clauses are executed unless this dependency is a checking
-    or unconditional one.
-
-    A dependency can be either prefixed with an exclamation mark or suffixed with question
-    marks or a tilde. The exclamation mark prefix expects the dependency to fail and will
-    continue then, if the dependency succeeds then the remaining dependencies and the rule
-    body are skipped. With a question mark as suffix the dependency is expected to succeed,
-    when it fails then the rest of the dependencies and the rule body is skipped. With a tilde
-    as suffix outcome of the dependencny is ignored and the rest of the dependencies and the
-    rule body is executed.  The difference here is that these checking dependencies decide if
-    a clause should be skipped or succeed while a failure on a normal dependency will fail a
-    rule instantly. When a rule is suffixed with two question marks then this behaves like
-    "'rule_exists? dep' dep". Making this dependency optional. This can be combined with the
-    another question mark, a tilde, or explamation mark prefix. This is commonly used to
-    define optional rule hooks.
-
-    Dependencies can have arguments. When provided then the dependency and its arguments must
-    be quoted. These arguments are passed in the 'RULE_ARGS' array to the body of the rule.
-
-  * -
-
-    When there is a single hypen '-' at the end of a rule definition then the rule body is a
-    call to a command or function of the same name as the rule with all arguments passed. This
-    is used when one wants to add dependencies to a existing command or function.
-
-  * -- [body..]
-
-    After a double hyphen a optional rule body follows. This are the commands to
-    execute for this clause. If these fail then the rule is considered failed. When a name but
-    no body and no dependencies are given then the body defaults to the rule name. This makes
-    it easy to translate simple parameterless commands and functions to rules. Usually the
-    body has to be quoted to prevent shell expansions at definition time. Later when a rule
-    becomes evaluated the body is passed to 'eval'.
-
-    When the body is omitted, then the rule body is read from stdin. This allows to use
-    heredocs or herestrings or read the body from a file.
-
-    When a rule overrides an existing command a 'NOTE' will be printed on higher verbosity
-    levels. The user is responsible for sensible overiding of commands.
-
-  Rules must not have mutually recursive dependencies. When such is detected the
-  evaluation aborts.
-
-  Examples:
-
-   # Add a clause to 'MAIN'
-   rule -- echo hello
-
-   # Different ways to define rule bodies
-   rule foo_ok: -- echo inline
-   rule foo_ok: -- '
-       echo inline quoted
-   '
-   rule foo_ok: -- <<<"echo herestring"
-   rule foo_ok: -- <<EOR
-      echo heredoc
-   EOR
-
-   # Make a rule that fails
-   rule foo_fail: -- false
-
-   # functions and commands can be used as rules, this should be preferred
-   function example
-   {
-       echo "i am example called with $*"
-   }
-
-   # add a tests rule with 3 clauses
-   rule tests: foo_ok? 'example "argument"' -- echo "foo_ok success"
-   rule tests: !foo_ok -- echo "This is never called, but MAIN still passes"
-   rule tests: foo_fail? -- echo "This is also never called"
-
-   # add tests to MAIN
-   rule tests
-
-  For some more examples see the 'example' file that ships with bar.
-
-
-  Special Rules and Names
-
-    Rules that do not have a name fall back to 'MAIN', when no rule name is given at execution
-    time then 'MAIN' will be evaluated.
-
-    If exist 'SETUP', 'PREPROCESS', 'POSTPROCESS' and 'CLEANUP' will be called.
-    * SETUP
-      Should set up the environment for all subsequent evaluation. Rules in 'SETUP'
-      should be self-sufficient and not expect a working environment yet.
-      A failure here will abort bar.
-    * PREPROCESS
-      Doing any preparatory tasks within the set up environment.
-      A failure here will abort bar.
-    * MAIN
-      When the bar is not called via a symlink or the user did not provide a rule to
-      evaluate, then MAIN is the default rule. Otherwise the user supplied or symlink-deduced
-      rulename will be evaluated. The result of this rule determines the exitcode of bar.
-    * POSTPROCESS
-      Is for evaluating things after the main rule finished. The environment and
-      state is still the same as in the main rule. A failure here will be reported but not
-      reflected in the exitode.
-    * CLEANUP
-      Is for removing temporary resources and doing any other kind of cleanup work. This
-      means the state and environment at cleanup time may be differen/partially destructed and
-      should not be relied upon. Clauses in the CLEANUP rule are evaluated in reverse order of
-      their definition. A failure here will be reported but not reflected in the exitcode.
-
-    After a rule that is not flagged with '--always' got evaluated it is not allowed to add
-    more clauses to it anymore, as the outcome would be unexpected and impure.
-
-
-  Keep-Going Mode
-
-    Bar supports a keep-going facility via the BAR_KEEP_GOING environment variable. When
-    enabled, clauses that fail do not immediately halt rule evaluation—subsequent clauses
-    continue to execute, though the overall failure is still propagated.
-
-    BAR_KEEP_GOING can be set to a number which is decremented on each failure, when this
-    reachs zero no more failures are accepted and the evaluation will terminate.
-
-    When BAR_KEEP_GOING set to anything else than a number then evaluation will accept
-    infinite failures.
-
-    When not set then it defaults to one then evaluation will terminate on the
-    first failure.
-
-    Clauses marked '--conclusive' immediately halt keep-going.
-
-
-  Purity Requirements
-
-    All rules and functions must be sequentiually pure in their success branch. This means
-    side effects must not alter the behavior of subsequent rules when they fail. For rules
-    where this may be the case, like rules changing directories they must rather die than
-    proceed with a undefined state in case of a failure.
-
-
-RULE ENVIRONMENT
-
-  Rules implicitly depend on the arguments passed and the current directory they run in. Any
-  other state or environment variable is not considered. When the result of a rule would
-  depend on such external state then the rule is impure and may lead to wrong
-  results.
-
-
-MODULES
-
-  Modules are shell snippets normally located in '$BAR_DIR' ('Bar.d/', 'bar.d/', '.Bar.d/' or
-  '.bar.d/') when called as 'bar' or symlink or '~/.config/please' when called as 'please'.
-  The 'std_lib' and 'rules_lib' are always loaded at startup. Modules matching '*_rules' are
-  also autoloaded at startup. Any other '*_lib' must be manuallly loaded with 'require'.
-  Modules with simple alphabetic names without underscores are lazy loaded on demand.
-
-  Modules are loaded with the 'require' function. This ensures that they are loaded only once.
-  Require will load modules outside of '$BAR_DIR' when a path containing at least one slash
-  is given.
-
-  The first variant for modules that are initially loaded is used for modules that define
-  helper functions that don't have associated rules or rules that are primarly used for
-  checking conditions before delegating to the actual rules which do the work.
-
-  The second variant is for mudules that define rules which are self-contained and can't
-  extend existing rules with new clauses. Here are the rules and functions which do the actual
-  work.
-
-  The reason for this is that some will add clauses to existing rule which must be done before
-  the rules are evaluated while we can improve performance by lazy loading modules that are
-  not always needed.
-
-  The module loader derives the module name from the rule name by removing any prefixes and
-  suffixes. Thus the rules which shall trigger loading must follow the naming schema with the
-  module name after the prefixes in the rule name.
-
-  Per convention '<name>_rules' is a module that contains the rules (and few functions) that
-  that add clauses to other rules to make 'name' accessible. These '*_rules' files are
-  autoloaded at startup.
-
-  '<name>_lib' are libraries for support functions other modules may use (with 'require
-  name_lib').
-
-
-AUTOMATIC MODULE LOADING
-
-  Rule names may include underscores, then the word before the first underscore is used to
-  determine a module name used for auto-loading rules. They can have special prefixes which
-  are removed when auto-loading:
-
-  - 'is_', 'has_' and 'try_' are reserved for check rules they don't have any special
-    semantic except for being stripped at auto loading.
-
-  When a rule is not found then a module name is derived from the rule name by removing the
-  'try_', 'is_', 'has_' prefixes and cutting off anything behind the first
-  underscore. Eg. 'try_module_check' results in 'module'. This is then searched as
-  'Bar.d/module', 'bar.d/module', '.Bar.d/module' or '.bar.d/module' (or respective please
-  variants) and loaded if present. Thus modules that are automatically loaded must be named by
-  single word without underscores.
-
-
-STANDARD RULES
-
-  Bar ships with a module that defines a set of standard rules where other modules can add
-  clauses to. Check 'Bar.d/std_rules' for details.
-
-  'SETUP', 'PREPROCESS', 'MAIN', 'POSTPROCESS' and 'CLEANUP' are special rule names called
-  approbiately.
-
-  The 'clause_local [var[=value]|=var..]' is for defining variables that are local to a clause.
-  Only scalars can be clause local.  '<var>=<value>' sets the variable to that value, '<var>=' sets
-  it to the empty string, and '=<var>' keeps the value the outer scope had.  The clause ends with
-  the outer value back in place.
-
-
-HELPER REPERTOIRE
-
-  Many recurring questions -- a filter, a retrieval, a listing, a count, a state snapshot -- have
-  one deterministic answer which would otherwise be re-derived with several commands and a lot of
-  context.  Such an answer is a 'helper': a rule of a 'helper module' which names itself with a
-  '# helper-module:' header in its first lines and registers each of its rules with a
-  '# helper:', '# helper-bar:' or '# helper-please:' declaration above it -- the three forms
-  share their four fields and differ only in which personality ('bar' or 'please') lists the
-  helper, and every listed row is prefixed with that personality.
-
-   bar helpers          # the repertoire of this installation, one line per helper plus its count
-   bar helpers --json   # the same repertoire as one JSON object, for a wrapper
-   bar helpers --check  # verify that every helper module is registered (also run by 'lints')
-
-  The repertoire is generated by reading the module sources: listing it loads no module and runs
-  no helper, and 'please helpers' works from any directory -- it even appends the 'bar'
-  repertoire of the directory it is run in (a 'bar helpers' there), again without dedup.  See
-  'Bar.d/helpers_rules' for the naming rules (a helper rule loads its module by its own first
-  word), the registration format, the output conventions and the elision and exit code
-  requirements every helper has to follow.
 
 
 MAIN API
