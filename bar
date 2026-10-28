@@ -74,6 +74,10 @@ function bar_main ## [rulefile] [--bare] [rule [arguments..]] - Loads a rulefile
     declare -gx  BARF_FILE                             ## The Barf file used.
     declare -gxr BAR_PWD="$PWD"                        ## Initial working directory.
     declare -gxi BAR_VERBOSITY_LEVEL="${BAR_VERBOSITY_LEVEL:-2}" ## Verbosity level from 0 (silent) to 6 (trace).
+    # The run's parallel budget: one job per available processor unless the caller says otherwise.
+    # 'rule_parallel_budget' in 'rule_lib' validates it, and a run at 1 evaluates serially.
+    # shellcheck disable=SC2155
+    declare -g  BAR_PARALLEL="${BAR_PARALLEL:-$(command -v nproc >/dev/null 2>&1 && nproc || echo 1)}"
     declare -gA  BAR_REQUIRE_LOADED
     # The style names of 'tty_lib' before it is loaded.  The module is found through 'BAR_DIR',
     # which 'find_toplevel' resolves below, and that function reports through these very tables:

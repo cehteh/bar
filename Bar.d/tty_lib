@@ -110,14 +110,16 @@ function tty_bind ## - Binds the stream names and 'tty_newline' for this invocat
             ;;
     esac
     declare -gxrn TTYOUT TTYERR
-    [[ "${TERM:-dumb}" = "dumb" ]] || function tty_newline ## Outputs a newline when we are not at column 1 and on a tty.
+    [[ "${TERM:-dumb}" = "dumb" ]] || function tty_newline ## Outputs a newline when a progress notice is standing.
     {
-        if [[ -t 1 ]]; then
-            local col
-            IFS=';' read -srdR -p $'\033[6n' _ col || true
-            col="${col%R}"
-            [[ "$col" != 1 ]] && echo
-        fi
+        # Whether an unterminated line is standing is asked of the shell which wrote it, never of
+        # the terminal: a cursor-position report ('ESC[6n') is answered by whichever process reads
+        # it first, and the jobs of a parallel run all write to this terminal -- that is how a
+        # message got a blank line in front of it.  'progress' raises the flag, the next message
+        # spends it, and a fork carries its own copy.
+        [[ -n "${BAR_TTY_PARTIAL:-}" ]] || return 0
+        BAR_TTY_PARTIAL=""
+        echo
         return 0
     }
 }
@@ -139,13 +141,15 @@ function tty_echo ## [echo_args] - Echos only when the output is a tty.
     [[ -t 1 ]] && echo "$@"
 }
 
-[[ "${TERM:-dumb}" = "dumb" ]] || function tty_newline ## Outputs a newline when we are not at column 1 and on a tty.
+[[ "${TERM:-dumb}" = "dumb" ]] || function tty_newline ## Outputs a newline when a progress notice is standing.
 {
-    if [[ -t 1 ]]; then
-        local col
-        IFS=';' read -srdR -p $'\033[6n' _ col || true
-        col="${col%R}"
-        [[ "$col" != 1 ]] && echo
-    fi
+    # Whether an unterminated line is standing is asked of the shell which wrote it, never of
+    # the terminal: a cursor-position report ('ESC[6n') is answered by whichever process reads
+    # it first, and the jobs of a parallel run all write to this terminal -- that is how a
+    # message got a blank line in front of it.  'progress' raises the flag, the next message
+    # spends it, and a fork carries its own copy.
+    [[ -n "${BAR_TTY_PARTIAL:-}" ]] || return 0
+    BAR_TTY_PARTIAL=""
+    echo
     return 0
 }

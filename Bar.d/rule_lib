@@ -340,6 +340,7 @@ declare -gi BAR_JOB_OWED=0                     # 1 while this shell is owed its 
 declare -gi BAR_JOB_CLOSED=0                   # 1 once the run is tearing down: no server is started again
 declare -ga BAR_JOB_CLAIMS=()                  # the rule claims this shell holds, for its exit path
 declare -g  BAR_STORE_RC=""                    # what rule_result_get read out of the shared store
+declare -g  BAR_ABANDONED=""                   # 1 once this run has given up what it has not started
 
 # rule_parallel_budget - validates BAR_PARALLEL, setting it to 1 when it is unset or not a number
 function rule_parallel_budget
@@ -347,6 +348,47 @@ function rule_parallel_budget
     if [[ ! "${BAR_PARALLEL:-}" =~ ^[0-9]+$ ]] || (( BAR_PARALLEL < 1 )); then
         BAR_PARALLEL=1
     fi
+    return 0
+}
+
+# Abandoning a run -- early fail, and the atomicity of a body
+#
+# When a conjunctive rule fails, nothing which has not started is worth starting: the rule returns
+# the failure for the whole run.  'rule_jobs_abandon' says so once, in the run's job directory (a
+# file, because a shell which already forked cannot be told any other way), and every shell of the
+# tree asks before it starts the next dependency or the next body.  What has started is finished:
+# a body is the atomic unit of work -- a rule body may have side effects in the directory and a
+# grandchild's body is no different -- so the jobs which are running are collected, not killed.
+# Abandonment is therefore about what would still be started: no new dependency, no new body, and a
+# shell which finds the mark returns.
+
+# rule_jobs_abandon - gives up what this run has not started yet
+function rule_jobs_abandon
+{
+    BAR_ABANDONED=1
+    [[ -n "${BAR_JOB_DIR:-}" ]] || return 0
+    : >"${BAR_JOB_DIR:?}/abandon"
+    return 0
+}
+
+# rule_jobs_abandoned - succeeds once the run has given up what it had not started
+function rule_jobs_abandoned
+{
+    [[ -n "${BAR_ABANDONED:-}" ]] && return 0
+    [[ -n "${BAR_JOB_DIR:-}" && -e "${BAR_JOB_DIR}/abandon" ]]
+}
+
+# rule_jobs_abandon_settle <pids> <rcs> - abandons the rest of the run and collects what this shell started
+function rule_jobs_abandon_settle
+{
+    rule_jobs_abandon
+    rule_jobs_flush "$1" "$2"
+    # The mark goes when the rule which set it returns.  What this shell started is collected by
+    # the line above -- a job waits for its own jobs before it returns, so the whole subtree has
+    # seen the mark -- and the rules which run after this one (POSTPROCESS, CLEANUP) are a new
+    # piece of work that owes its own start.
+    BAR_ABANDONED=""
+    [[ -n "${BAR_JOB_DIR:-}" ]] && rm -f "${BAR_JOB_DIR}/abandon"
     return 0
 }
 
@@ -386,6 +428,14 @@ function rule_job_server_start # - starts the run's job server and result store 
         printf 't\n' >&"$BAR_JOB_SERVER"
     done
     return 0
+}
+
+# rule_job_slot_available - succeeds when a slot can be taken without waiting
+function rule_job_slot_available
+{
+    (( BAR_JOB_SERVER >= 0 )) || return 0
+    local tok
+    IFS= read -r -t 0 -u "$BAR_JOB_SERVER" tok
 }
 
 # rule_job_slot_take <pids> <rcs> - takes the slot a job is started with, giving its own slot back while it waits
@@ -675,6 +725,7 @@ function rule_dep_jobs_prestart
         _ps_deps=()
         [[ "${#BAR_CLAUSE_DEPS[$_ps_clause]}" -gt 0 ]] && readarray -d $'\n' -t _ps_deps <<<"${BAR_CLAUSE_DEPS[$_ps_clause]}"
         for _ps_dep in ${_ps_deps[@]+"${_ps_deps[@]}"}; do
+            rule_jobs_abandoned && return 0
             rule_dep_parse "$_ps_dep"
             # the rule is marked '--parallel', which is what puts every dependency of a clause
             # without a '--conclusive'/'--default' flag into its run: what ends the walk here is a
@@ -685,11 +736,41 @@ function rule_dep_jobs_prestart
             [[ -z "${_ps_pids[$_ps_id]:-}" ]] || continue
             [[ -v BAR_RULES_RESULT[#$_ps_id] ]] && continue
             rule_result_get "$_ps_id" && continue
+            # A spent budget ends the walk here rather than waiting for a slot: the evaluation
+            # below starts the rest as the verdicts come in, taken in declared order, so a failure
+            # in the first of them stops the work behind it instead of starting it.  Waiting here
+            # would collect whichever job finishes first -- the table has no declared order -- and
+            # the walk would go on regardless.
+            (( BAR_INFLIGHT > 0 )) && ! rule_job_slot_available && return 0
             rule_job_slot_take "$_ps_pids_name" "$_ps_rcs_name"
+            if rule_jobs_failed "$_ps_pids_name" "$_ps_rcs_name"; then
+                # the wait collected a failure: the verdict is settled, so nothing more is started
+                # here.  The evaluation below takes the verdicts in declared order and returns at
+                # the dependency which failed.
+                rule_job_slot_restore
+                rule_job_token_give
+                return 0
+            fi
             rule_job_spawn "$_ps_pids_name" "$_ps_rcs_name" "$_ps_id" "$DEP_NAME" "${DEP_ARGS[@]}"
         done
     done
     return 0
+}
+
+# rule_jobs_failed <pids> <rcs> - succeeds when a collected job failed
+#
+# A slot is waited for by collecting what this shell started, so a failure can arrive while the
+# next dependency is about to be started: the rule's verdict is settled then, and what the wait
+# collected is the mark which stops the walk.
+function rule_jobs_failed
+{
+    local -n _jf_rcs="$2"
+    local _jf_key
+    for _jf_key in "${!_jf_rcs[@]}"; do
+        [[ "${_jf_rcs[$_jf_key]}" = pending ]] && continue
+        [[ "${_jf_rcs[$_jf_key]}" = 0 ]] || return 0
+    done
+    return 1
 }
 
 # rule_jobs_flush <pids> <rcs> - collects every job still pending
@@ -839,6 +920,14 @@ function rule_eval ## <name> [args..] - Evaluates a rule
 
     local clause
     for clause in $clauses; do
+        # The run was abandoned meanwhile (a dependency failed in this tree): this shell starts
+        # nothing more -- no dependency and no body -- and collects what it started before it
+        # returns.  A body which already runs finishes: it is the atomic unit of work, and its
+        # verdict goes nowhere because the rule which failed carries the failure for the run.
+        if rule_jobs_abandoned; then
+            rule_jobs_flush job_pid job_rc
+            return 1
+        fi
         [[ "${BAR_RULE_FLAGS[$RULE_NAME]}" != *m* ]] && {
             declare -A CLAUSE_LOCAL=()
         }
@@ -864,6 +953,10 @@ function rule_eval ## <name> [args..] - Evaluates a rule
         local dep
         local -i dep_index
         for ((dep_index = 0; dep_index < ${#deps[@]}; dep_index++)); do
+            if rule_jobs_abandoned; then
+                rule_jobs_flush job_pid job_rc
+                return 1
+            fi
             dep="${deps[dep_index]}"
             rule_dep_parse "$dep"
             local depname="$DEP_NAME"
@@ -916,10 +1009,18 @@ function rule_eval ## <name> [args..] - Evaluates a rule
                         [[ -n "$DEP_PARALLEL" || -n "$clause_parallel" ]] || break
                         [[ -z "$DEP_IFEXISTS" && "$DEP_CHECK" != check && "$DEP_CHECK" != negated ]] || break
                         [[ "${BAR_RULE_FLAGS[$DEP_NAME]-a}" = *a* ]] && break
+                        rule_jobs_abandoned && break
                         ahead_id="$(hash_args "$PWD $DEP_NAME ${DEP_ARGS[*]}")"
                         [[ -z "${job_pid[$ahead_id]:-}" ]] || continue
                         [[ -v BAR_RULES_RESULT[#$ahead_id] ]] && continue
                         rule_job_slot_take job_pid job_rc
+                        if rule_jobs_failed job_pid job_rc; then
+                            # the wait collected a failure: start nothing more of this run, the
+                            # verdicts are taken where the dependencies are declared
+                            rule_job_slot_restore
+                            rule_job_token_give
+                            break
+                        fi
                         rule_job_spawn job_pid job_rc "$ahead_id" "$DEP_NAME" "${DEP_ARGS[@]}"
                     done
                     rule_dep_parse "$dep"
@@ -964,8 +1065,9 @@ function rule_eval ## <name> [args..] - Evaluates a rule
                     # conclusive fail because of dep failure
                     failure "$RULE_NAME: $dep"
                     [[ -n "$check" ]] && BAR_CHECK_LEVEL=$((BAR_CHECK_LEVEL-1))
-                    # a run started for a later dependency must not outlive this return
-                    rule_jobs_flush job_pid job_rc
+                    # a failure ends the rule: what it has not started is not started at all, and
+                    # what it has started is collected (a body which runs is atomic)
+                    rule_jobs_abandon_settle job_pid job_rc
                     if [[ -n "$evaluate_always" ]]; then
                         unset "BAR_RULES_RESULT[#$rule_id]"
                     else
@@ -1007,7 +1109,7 @@ function rule_eval ## <name> [args..] - Evaluates a rule
                             if [[ "$BAR_KEEP_GOING" -eq 0 ]]; then
                                 # Exhausted keep-going limit
                                 failure "$RULE_NAME"
-                                rule_jobs_flush job_pid job_rc
+                                rule_jobs_abandon_settle job_pid job_rc
                                 if [[ -n "$evaluate_always" ]]; then
                                     unset "BAR_RULES_RESULT[#$rule_id]"
                                 else
@@ -1025,7 +1127,7 @@ function rule_eval ## <name> [args..] - Evaluates a rule
                         [[ "$rule_failure_rc" == 0 ]] && rule_failure_rc=$rc
                     else
                         # Stop immediately: clause is conclusive or keep-going disabled
-                        rule_jobs_flush job_pid job_rc
+                        rule_jobs_abandon_settle job_pid job_rc
                         if [[ -n "$evaluate_always" ]]; then
                             unset "BAR_RULES_RESULT[#$rule_id]"
                         else
@@ -1035,8 +1137,8 @@ function rule_eval ## <name> [args..] - Evaluates a rule
                         return "$rc"
                     fi
                 elif [[ "${BAR_CLAUSE_FLAGS[$clause]}" = *c* ]]; then
-                    # Conclusive success: stop
-                    rule_jobs_flush job_pid job_rc
+                    # Conclusive success: stop, and nothing started for a later clause runs
+                    rule_jobs_abandon_settle job_pid job_rc
                     if [[ -n "$evaluate_always" ]]; then
                         unset "BAR_RULES_RESULT[#$rule_id]"
                     else

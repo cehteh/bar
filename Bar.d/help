@@ -892,8 +892,15 @@ RULE FUNCTION
     as well -- the bodies stay in declared order.  BAR_PARALLEL caps how many jobs run at once in
     the whole run: a job which starts jobs of its own spends from the same budget, and a shell
     which has to wait for a slot gives its own back first, so nothing waits on a token it is
-    holding.  Unset, empty or 1 (the default) starts nothing early and bar evaluates exactly as it
-    does serially.
+    holding.  Unset or empty takes one job per available processor ('nproc'), 1 starts nothing
+    early and bar evaluates exactly as it does serially, and any other value which is not a number
+    is read as 1.
+
+    A failure ends what has not started.  A rule which fails -- or whose clause is conclusive --
+    starts no further dependency and no further body; what is already running is collected, not
+    killed, because a rule body is the atomic unit of work: it may have side effects in the
+    directory and a body of a grandchild is no different.  So the run pays for the failure, not for
+    the work behind it.
 
     A verdict is shared.  A rule which two jobs both need is evaluated once and each of them takes
     that result, so a diamond costs its arms one evaluation of what they share; the results live in

@@ -13,12 +13,18 @@
 #   AC5  a dependency evaluated in a job is remembered by the shell that started it
 #   AC6  a clause marked '--parallel' is the '+' prefix on its non-checking dependencies
 #   AC7  a job which requires a module gets a filter of its own, and the parent's still works
-#   AC8  BAR_PARALLEL unset, empty or not a number evaluates exactly as serially
+#   AC8  BAR_PARALLEL is the machine's count unless the caller says otherwise, and a value which
+#        is not a number is the serial run
 #   AC9  the run ends: a 'wait' in CLEANUP does not sit on the filter, and no filter is left
 #   AC10 '~' is not a barrier: '+dep~' is a job and a run continues through it
 #   AC11 'rule --parallel' is inherited by its clauses, '--conclusive' and '--default' opt out
 #   AC12 a job's own jobs spend from one budget for the whole tree
 #   AC13 a rule two jobs both need is evaluated once, and its verdict is theirs
+#   AC14 the clauses of a '--parallel' rule run their dependencies at the same time
+#   AC15 the rules of 'ParallelTest': every one of them costs one dependency, not the sum
+#   AC16 early fail: a failure starts nothing more, and a body which runs finishes
+#   AC17 '--parallel' with the other rule and clause flags: no error, and the incompatible ones
+#        fall back to the serial evaluation
 #
 # usage: tests/test_parallel.sh
 
@@ -186,6 +192,95 @@ rule --parallel --disjunct q_disjunct: q_two -- :
 rule --parallel --disjunct q_disjunct: q_three -- :
 rule --parallel --disjunct q_disjunct: q_four -- :
 
+# The rules of 'ParallelTest', the rulefile the pool was asked for: every one of them costs about
+# one dependency's time, and a disjunct rule keeps its clauses in order.
+pl_slow1: ; sleep 0.5
+pl_slow2: ; sleep 0.5
+pl_slow3: ; sleep 0.5
+pl_slow4: ; sleep 0.5
+pl_false: ; false
+
+rule --parallel pl_slow1x4: pl_slow1 pl_slow2 pl_slow3 pl_slow4
+
+rule --parallel pl_slow2x2: pl_slow1 pl_slow2
+rule --parallel pl_slow2x2: pl_slow3 pl_slow4
+
+rule --parallel pl_slow4x1: pl_slow1
+rule --parallel pl_slow4x1: pl_slow2
+rule --parallel pl_slow4x1: pl_slow3
+rule --parallel pl_slow4x1: pl_slow4
+
+rule --parallel pl_early1x5: pl_slow1 pl_slow2 pl_slow3 pl_slow4 pl_false
+
+rule --parallel pl_early5x1: pl_slow1
+rule --parallel pl_early5x1: pl_slow2
+rule --parallel pl_early5x1: pl_slow3
+rule --parallel pl_early5x1: pl_slow4
+rule --parallel pl_early5x1: pl_false
+
+rule --parallel --disjunct pl_disjunct: pl_slow1 pl_slow2 -- 'echo d1 >>"$P_LOG"'
+rule --parallel --disjunct pl_disjunct: pl_slow3 pl_slow4 -- 'echo d2 >>"$P_LOG"'
+
+pl_caching: pl_caching_inner
+pl_caching_inner: pl_slow1x4 pl_slow4x1
+pl_caching_inner: pl_slow1x4 pl_slow4x1
+
+# early fail: the first dependency fails, so what has not started is not started -- and the leaf
+# which is already running is collected, not killed
+ef_bad:
+	sleep 0.2
+	echo bad >>"$P_LOG"
+	false
+
+ef_l1:
+	echo start1 >>"$P_LOG"
+	sleep 0.8
+	echo done1 >>"$P_LOG"
+
+ef_l2:
+	echo start2 >>"$P_LOG"
+	sleep 0.8
+	echo done2 >>"$P_LOG"
+
+ef_l3:
+	echo start3 >>"$P_LOG"
+	sleep 0.8
+	echo done3 >>"$P_LOG"
+
+rule --parallel ef_main: ef_bad ef_l1 ef_l2 ef_l3
+
+# keep-going: the run continues after a failure, so nothing is abandoned
+kg_bad:
+	echo bad >>"$P_LOG"
+	false
+
+kg_after:
+	echo after >>"$P_LOG"
+
+rule --parallel kg_main: p_a kg_bad kg_after
+
+# '--parallel' beside the flags it can not use: every one of these is a fallback, never an error
+rule --parallel --meta ip_meta: p_a p_b -- :
+
+rule --parallel --reverse ip_reverse: p_a p_b -- :
+
+rule --parallel ip_clause_flags: --conclusive p_a -- :
+rule --parallel ip_clause_flags: --default p_b -- :
+
+rule --parallel ip_conditional: p_a "p_b?" -- :
+
+rule --parallel ip_negated: p_a "!p_tilde_fail" -- :
+
+rule --bare bb_a: -- :
+
+rule --bare bb_b: -- :
+
+rule --parallel --bare ip_bare: bb_a bb_b -- :
+
+rule --always p_always: -- :
+
+rule --parallel ip_always: p_a p_always p_b -- :
+
 CLEANUP:
 	wait
 	echo cleanup >>"$P_LOG.cleanup"
@@ -202,6 +297,17 @@ timed() {
     ELAPSED=$(( ($(date +%s%N) - start) / 1000000 ))
 }
 
+# timed_env <parallel> <NAME=value> <rule> - 'timed' with one more variable in the run's environment
+timed_env() {
+    local par="$1" assign="$2"
+    shift 2
+    local start
+    RC=0
+    start=$(date +%s%N)
+    ( cd "$P" && env BAR_PARALLEL="$par" "$assign" "$BAR" "$@" ) >"$WORK/out" 2>"$WORK/err" || RC=$?
+    ELAPSED=$(( ($(date +%s%N) - start) / 1000000 ))
+}
+
 echo "=== Testing parallel dependency evaluation ==="
 echo
 
@@ -209,6 +315,11 @@ echo "AC1 '+' starts a run of dependencies at the same time"
 : >"$P_LOG"
 timed 1 p_serial
 serial_ms=$ELAPSED
+# The first run in a project builds its state dump and a busy machine only ever adds time, so the
+# baseline below is the better of two: one slow sample must not fail every comparison it serves.
+: >"$P_LOG"
+timed 1 p_serial
+(( ELAPSED < serial_ms )) && serial_ms=$ELAPSED
 : >"$P_LOG"
 timed 2 p_serial
 serial2_ms=$ELAPSED
@@ -294,17 +405,38 @@ check "$RC" "0" "the rule succeeds"
 check "$(sort "$P_LOG" | tr '\n' ' ')" "a:ok b:ok p:ok " "the modules loaded in the jobs and in the parent"
 echo
 
-echo "AC8 BAR_PARALLEL unset, empty or not a number is the serial run"
+echo "AC8 BAR_PARALLEL is the machine's count unless the caller says otherwise"
+# how a run at the default looks depends on the machine: one processor is the serial run
+nproc_now="$(nproc 2>/dev/null || echo 1)"
+default_is_parallel() {
+    # <milliseconds> <what> - the default budget's verdict, judged against the serial run
+    if (( nproc_now > 1 )); then
+        if (( $1 + 400 < serial_ms )); then
+            pass "$2 ran in parallel, one job per processor (${1}ms against ${serial_ms}ms serially)"
+        else
+            fail "$2 did not use the default budget (${1}ms against ${serial_ms}ms serially)"
+        fi
+    else
+        if (( $1 + 400 > serial_ms )); then
+            pass "$2 is the serial run on this machine (${1}ms)"
+        else
+            fail "$2 was parallel on a single processor (${1}ms)"
+        fi
+    fi
+}
 : >"$P_LOG"
 timed "" p_main
 empty_ms=$ELAPSED
 check "$RC" "0" "an empty BAR_PARALLEL: the rule succeeds"
 check "$(sort "$P_LOG" | tr '\n' ' ')" "a b " "an empty BAR_PARALLEL: both dependencies ran"
-if (( empty_ms + 400 > serial_ms )); then
-    pass "an empty BAR_PARALLEL is the serial run (${empty_ms}ms)"
-else
-    fail "an empty BAR_PARALLEL ran in parallel (${empty_ms}ms against ${serial_ms}ms)"
-fi
+default_is_parallel "$empty_ms" "an empty BAR_PARALLEL"
+: >"$P_LOG"
+RC=0
+start=$(date +%s%N)
+( cd "$P" && env -u BAR_PARALLEL "$BAR" p_main ) >"$WORK/out" 2>"$WORK/err" || RC=$?
+unset_ms=$(( ($(date +%s%N) - start) / 1000000 ))
+check "$RC" "0" "an unset BAR_PARALLEL: the rule succeeds"
+default_is_parallel "$unset_ms" "an unset BAR_PARALLEL"
 : >"$P_LOG"
 timed "yes" p_main
 check "$RC" "0" "a BAR_PARALLEL which is not a number: the rule succeeds"
@@ -454,6 +586,96 @@ fi
 timed 4 q_disjunct
 check "$RC" "0" "a '--parallel --disjunct' rule succeeds on its first clause"
 check "$(sort "$P_LOG" | tr '\n' ' ')" "one " "the clauses after it were not started: disjunct stays in order"
+echo
+
+echo "AC15 the rules of 'ParallelTest' cost one dependency, not the sum"
+# that file's own budget is 10 and its leaves sleep 1s; here the leaves sleep 0.5 and the bar is
+# 1300ms, which is the same claim on a shorter suite
+for pl_rule in pl_slow1x4 pl_slow2x2 pl_slow4x1 pl_early1x5 pl_early5x1 pl_disjunct pl_caching; do
+    case "$pl_rule" in
+    pl_early*) want_rc=1 ;;
+    *)         want_rc=0 ;;
+    esac
+    : >"$P_LOG"
+    timed 10 "$pl_rule"
+    check "$RC" "$want_rc" "$pl_rule: the verdict"
+    if (( ELAPSED < 1300 )); then
+        pass "$pl_rule: one dependency's time (${ELAPSED}ms)"
+    else
+        fail "$pl_rule: the sum of its dependencies (${ELAPSED}ms)"
+    fi
+done
+# a disjunct rule keeps its clauses in order: the clause tried first is its meaning
+: >"$P_LOG"
+timed 10 pl_disjunct
+check "$RC" "0" "pl_disjunct: succeeds on its first clause"
+check "$(sort "$P_LOG" | tr '\n' ' ')" "d1 " "the disjunct rule ran its first clause only"
+# the same shape serially is the sum
+: >"$P_LOG"
+timed 1 pl_slow4x1
+pl_serial_ms=$ELAPSED
+check "$RC" "0" "pl_slow4x1 serially: the rule succeeds"
+: >"$P_LOG"
+timed 10 pl_slow4x1
+if (( ELAPSED + 800 < pl_serial_ms )); then
+    pass "the four clauses cost one dependency (${ELAPSED}ms against ${pl_serial_ms}ms serially)"
+else
+    fail "the clauses did not overlap (${ELAPSED}ms against ${pl_serial_ms}ms serially)"
+fi
+echo
+
+echo "AC16 early fail: a failure starts nothing more, and a body which runs finishes"
+# budget 2: the failing dependency and the leaf beside it are started, the two behind them are not
+# -- and what was started finishes (a body is the atomic unit of work, so it is collected, never
+# killed).  The failure is the slower of the two, so the verdict arrives while the next leaf would
+# be started: that is the moment the walk stops.
+: >"$P_LOG"
+timed 2 ef_main
+check "$RC" "1" "the failure is the rule's verdict"
+check "$(sort "$P_LOG" | tr '\n' ' ')" "bad done1 start1 " "only the leaf which was already running ran, and it finished"
+if (( ELAPSED < 1600 )); then
+    pass "the leaves behind the failure were not started (${ELAPSED}ms)"
+else
+    fail "the abandoned work was still run (${ELAPSED}ms)"
+fi
+# a budget which covers every dependency starts all of them: they are running, so they complete
+: >"$P_LOG"
+timed 8 ef_main
+check "$RC" "1" "a budget of 8: the verdict is the same"
+check "$(grep -c '^start' "$P_LOG" || true)" "3" "all three leaves were started: the budget had room"
+check "$(grep -c '^done' "$P_LOG" || true)" "3" "and every one of them finished: a body is atomic"
+# keep-going: the run does not stop, so nothing is abandoned
+: >"$P_LOG"
+timed_env 4 BAR_KEEP_GOING=2 kg_main
+check "$RC" "1" "keep-going: the failure is the rule's verdict"
+contains "$(tr '\n' ' ' <"$P_LOG")" "after " "keep-going: the clause after the failure ran"
+echo
+
+echo "AC17 '--parallel' beside the other rule and clause flags"
+# every combination is a fallback, never an error: the rule completes and bar does not panic
+for ip_rule in ip_meta ip_reverse ip_clause_flags ip_conditional ip_negated ip_bare ip_always; do
+    : >"$P_LOG"
+    timed 4 "$ip_rule"
+    check "$RC" "0" "$ip_rule: the rule succeeds"
+    absent "$(cat "$WORK/err")" "PANIC:" "$ip_rule: no fatal error"
+done
+# '--meta' is shared state, so it is the serial evaluation
+: >"$P_LOG"
+timed 4 ip_meta
+meta_ms=$ELAPSED
+if (( meta_ms + 400 > serial_ms )); then
+    pass "'--parallel --meta' falls back to the serial evaluation (${meta_ms}ms)"
+else
+    fail "'--parallel --meta' ran its dependencies together (${meta_ms}ms against ${serial_ms}ms)"
+fi
+# '--reverse' only reorders the clauses: the dependencies are still pooled
+: >"$P_LOG"
+timed 4 ip_reverse
+if (( ELAPSED + 400 < serial_ms )); then
+    pass "'--parallel --reverse' still pools the dependencies (${ELAPSED}ms)"
+else
+    fail "'--parallel --reverse' did not overlap (${ELAPSED}ms against ${serial_ms}ms)"
+fi
 echo
 
 if (( failures > 0 )); then

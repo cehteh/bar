@@ -94,9 +94,14 @@ function progress # [message..] - elusive progress notice, will be overwritten b
             tty_echo "${TTYERR[label]}  RUN: $*${TTYERR[reset]}"
         }
     else
-        (( "${BAR_VERBOSITY_LEVEL:-5}" > 1 )) && {
+        # the notice goes to a terminal only, and only a line which was written stands: a flag set
+        # here would have the next message terminate a notice nobody saw
+        (( "${BAR_VERBOSITY_LEVEL:-5}" > 1 )) && [[ -t 1 ]] && {
             tty_newline
             tty_echo -n "${TTYERR[label]}  RUN: $*${TTYERR[clear_eol]}${TTYERR[cr]}${TTYERR[reset]}"
+            # the notice stands until the next message terminates it, in 'tty_newline'
+            # shellcheck disable=SC2034
+            BAR_TTY_PARTIAL=1
         }
     fi >&2
     return 0
