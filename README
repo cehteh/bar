@@ -300,9 +300,9 @@ RULE FUNCTION
   written in the make/just-like syntax of RULE SYNTAX above, which is the preferred
   one; 'rule' statements are for what that syntax cannot express.
 
-   rule [[--rule-flag].. <name>:] [--clause-flag].. [[!]deps[?|~][??] args..]..
-   rule [[--rule-flag].. <name>:] [--clause-flag].. [[!]deps[?|~][??] args..].. -
-   rule [[--rule-flag].. <name>:] [--clause-flag].. [[!]deps[?|~][??] args..].. -- [body..]
+   rule [[--rule-flag].. <name>:] [--clause-flag].. [[+][!]deps[?|~][??] args..]..
+   rule [[--rule-flag].. <name>:] [--clause-flag].. [[+][!]deps[?|~][??] args..].. -
+   rule [[--rule-flag].. <name>:] [--clause-flag].. [[+][!]deps[?|~][??] args..].. -- [body..]
 
   * [--rule-flag]
 
@@ -329,6 +329,10 @@ RULE FUNCTION
       User defined rules that want to modify clause locals will need to be meta too.
       See 'try_cargo_toolchain' for an example.
 
+    --parallel
+      Every clause of this rule is evaluated as if it were marked '--parallel' (see the clause
+      flags below). Opt-out: a clause marked '--conclusive' or '--default' stays serial.
+
   * [<name>:]
 
     A rule can have a optional name (suffixed with a colon).  When the name is not given it
@@ -348,7 +352,13 @@ RULE FUNCTION
       together with 'disjunct' rules allows one to hook up action while maintaining a fallback
       or warning/error when no hooked up rule succeeded.
 
-  * [[!]deps[?|~][??] args..]..
+    --parallel
+      Every dependency of this clause which is not a conditional one may be started early, as if
+      it were prefixed with '+'.  Opting out is per clause, so the rule flag '--parallel' sets
+      this for every clause but the '--conclusive' and '--default' ones.  See the dependency
+      rules below.
+
+  * [[+][!]deps[?|~][??] args..]..
 
     Dependencies, are a list of other rules that this rule depends on. These will be executed
     in order. If any of the dependencies fails then this rule is considered failed as well, no
@@ -370,6 +380,16 @@ RULE FUNCTION
 
     Dependencies can have arguments. When provided then the dependency and its arguments must
     be quoted. These arguments are passed in the 'RULE_ARGS' array to the body of the rule.
+
+    A dependency prefixed with '+' is a candidate for starting early: a run of such dependencies
+    is started concurrently ('BAR_PARALLEL' bounds how many run at once, 1 starts none early),
+    while every verdict is still taken in declared order.  A conditional dependency ('?', '??',
+    '!') and a dependency without the prefix end the run and are a barrier: everything started
+    before them is collected before they run, and so is everything started before the body.  '~'
+    is not a barrier, it only discards the verdict, so '+dep~' starts early like any other and a
+    run continues through it.  Whether a rule may be started early is the user's claim that its
+    side effects are acceptable; marking a clause '--parallel' (or its rule) is the shortcut for
+    the prefix on each of its dependencies which is not a conditional one.
 
   * -
 
@@ -477,6 +497,21 @@ RULE FUNCTION
     first failure.
 
     Clauses marked '--conclusive' immediately halt keep-going.
+
+
+  Parallel Evaluation
+
+    Dependencies prefixed with '+' and clauses or rules marked '--parallel' may be started before
+    their turn, so a run of them evaluates at the same time.  A rule flag '--parallel' is the
+    per-clause flag on every clause of that rule but the '--conclusive' and '--default' ones, which
+    stay barriers.  BAR_PARALLEL caps how many jobs run at once in one shell; unset, empty or 1
+    (the default) starts nothing early and bar evaluates exactly as it does serially.  The cap is a
+    best-effort one across the whole process tree: a job starts its own budget.
+
+    Every verdict is still taken in declared order, so a conclusive or checking dependency and
+    the clause body see the same results, in the same order, at any BAR_PARALLEL.  A job's own
+    output is not serialized: two bodies writing to the same terminal interleave, and bar's
+    progress lines may arrive out of order.
 
 
   Purity Requirements
@@ -3870,12 +3905,17 @@ MODULE API/RULES
         Query the current version of this project.
 
   rule_lib - The library that implements rules, always loaded
+    Dependency jobs -- '+' starts a run of dependencies concurrently
 
     Variables:
 
       BAR_KEEP_GOING (gx)
         Controls keep-going mode: 0 or 1 stops at first failure (default), numbers >= 2 allow that many failures before stopping, non-numeric values (yes/true/etc) continue until exhaustion. In keep-going mode, pure clauses continue executing after failures though failures are still propagated. Non-pure or conclusive clauses halt keep-going within the current rule.
         Default: ${BAR_KEEP_GOING:-1}
+
+      BAR_PARALLEL (g)
+        How many dependency jobs may run at once. 1 (the default) starts nothing early and is the serial evaluation.
+        Default: ${BAR_PARALLEL:-1}
 
     Functions:
         See RULE DEFINITION SYNTAX in help for details
@@ -4685,6 +4725,16 @@ MAIN API
         written to, installing only ever adds a copy here.  Prints the installed paths, returns
         non-zero when there is no origin, the name is not a module of this 'Bar.d' or the origin
         does not have it either.
+        Every job the scheduler starts calls this before it evaluates anything.  The parent's
+        channel is not shared: two readers on one connection tear frames (measured), the parent's
+        stop needs every copy of the write end closed, and no job may talk to a filter it does not
+        own.  Dropping it here costs nothing -- a job which never preprocesses never starts one --
+        and 'barf_pp_ensure' starts the job's own on its first 'require', in the shell whose
+        descriptors every module of that load inherits.
+        Closing is the whole of the stop: awk sees EOF on the frame pipe, runs its 'END' and exits,
+        so the 'wait' below returns.  It has to come before anything waits for the children of this
+        shell -- a bare 'wait' would otherwise sit on a filter which is only terminated by that very
+        close.
 
       preprocess <file>
         Print a rule file with its make/just syntax expanded

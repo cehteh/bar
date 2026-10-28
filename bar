@@ -160,7 +160,10 @@ function bar_main ## [rulefile] [--bare] [rule [arguments..]] - Loads a rulefile
 
     if rule_exists "$initial_rule"; then
         [[ -z "${BAR_BARE:-}" ]] && {
-            trap 'rule_exists CLEANUP && { rule_eval CLEANUP || error "CLEANUP failed" ; }' EXIT
+            # the two stops are guarded: a bootstrap ('bar init') reaches this line before the
+            # modules which define them are all loaded, and a missing function must not turn the
+            # exit status of a run into 127
+            trap 'declare -F barf_pp_stop >/dev/null && barf_pp_stop; declare -F rule_jobs_drain >/dev/null && rule_jobs_drain; rule_exists CLEANUP && { rule_eval CLEANUP || error "CLEANUP failed" ; }' EXIT
             rule_exists SETUP && {
                 rule_eval SETUP || die "SETUP failed" ;
             }
@@ -773,6 +776,7 @@ AWK
 # it were the only one -- awk's startup is paid once instead of once per module.
 # No regex metacharacter in the marker: the reader matches it with 'sed'.
 declare -g BAR_PP_IN="" BAR_PP_OUT="" BAR_PP_MARK='!!!!!!!!!!!!!!!!!EOF!!!!!!!!!!!!!!!!!'
+declare -g BAR_PP_OWNER=""   # the shell which started the filter this one talks to
 
 function barf_pp_start # - starts the preprocessor; sets BAR_PP_IN and BAR_PP_OUT
 {
@@ -789,6 +793,41 @@ function barf_pp_start # - starts the preprocessor; sets BAR_PP_IN and BAR_PP_OU
     exec {ppw}>&- {ppr}<&-
     BAR_PP_IN="$ppin"
     BAR_PP_OUT="$ppout"
+    BAR_PP_OWNER="$BASHPID"
+}
+
+function barf_pp_fork # - a forked job drops the filter channel its parent started
+{
+    ## Every job the scheduler starts calls this before it evaluates anything.  The parent's
+    ## channel is not shared: two readers on one connection tear frames (measured), the parent's
+    ## stop needs every copy of the write end closed, and no job may talk to a filter it does not
+    ## own.  Dropping it here costs nothing -- a job which never preprocesses never starts one --
+    ## and 'barf_pp_ensure' starts the job's own on its first 'require', in the shell whose
+    ## descriptors every module of that load inherits.
+    [[ -n "${BAR_PP_IN:-}" && "${BAR_PP_OWNER:-}" != "$BASHPID" ]] || return 0
+    exec {BAR_PP_IN}>&- {BAR_PP_OUT}<&-
+    BAR_PP_IN=""
+    BAR_PP_OUT=""
+    BAR_PP_OWNER=""
+    return 0
+}
+
+function barf_pp_stop # - closes the filter channel; the filter exits on EOF
+{
+    ## Closing is the whole of the stop: awk sees EOF on the frame pipe, runs its 'END' and exits,
+    ## so the 'wait' below returns.  It has to come before anything waits for the children of this
+    ## shell -- a bare 'wait' would otherwise sit on a filter which is only terminated by that very
+    ## close.
+    [[ -n "${BAR_PP_IN:-}" ]] || return 0
+    local pid="${BARF_PP_PID:-}"
+    exec {BAR_PP_IN}>&- {BAR_PP_OUT}<&-
+    BAR_PP_IN=""
+    BAR_PP_OUT=""
+    BAR_PP_OWNER=""
+    # only a child of this shell is reaped here; in a subshell ('<(preprocess f)') the filter
+    # belongs to the shell above it and 'wait' has nothing to do
+    [[ -n "$pid" ]] && wait "$pid" 2>/dev/null
+    return 0
 }
 
 function barf_pp_ensure # - starts the preprocessor unless one is running or there is no filter
@@ -1016,7 +1055,7 @@ function bar_state_volatile ## <name> - True for a variable or function a dump m
     BAR_STATE_BASE_VARS|BAR_STATE_BASE_FUNCS|BAR_STATE_DUMP|BAR_STATE_SETTING|BAR_STATE_PATH|\
     BAR_STATE_VARS|BAR_STATE_FUNCS|BAR_STATE_MAGIC|BAR_REQUIRE_LOADED|\
     BAR_SELF|BAR_CALLED_AS|BAR_PWD|BAR_TOPLEVEL|BAR_PREFIX|BAR_DIR|BARF_FILE|BAR_BARE|BAR_TIMESTAMP|\
-    BAR_VERBOSITY_LEVEL|BARF_PP_AWK|BARF_PP_FILES|BARF_PP_NAME|BAR_PP_IN|BAR_PP_OUT|BAR_PP_MARK|\
+    BAR_VERBOSITY_LEVEL|BARF_PP_AWK|BARF_PP_FILES|BARF_PP_NAME|BAR_PP_IN|BAR_PP_OUT|BAR_PP_MARK|BAR_PP_OWNER|\
     SHELLOPTS|BASHOPTS|TTYOUT|TTYERR|COLOR|TERM|PWD|OLDPWD|SHLVL|_|RANDOM|SECONDS|LINENO|\
     EPOCHREALTIME|EPOCHSECONDS|\
     BASHPID|PPID|GROUPS|DIRSTACK|PIPESTATUS|FUNCNAME|BASH*)

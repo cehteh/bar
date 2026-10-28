@@ -17,7 +17,7 @@ declare -gax BAR_CLAUSES=()            # clause bodies enumerated
 declare -gax BAR_CLAUSE_DEPS=()        # dependencies for each clause
 declare -ga  BAR_CLAUSE_FLAGS=()       # [c]onclusive [d]efault
 
-function rule () ## [[--rule-flag].. <name>:] [--clause-flag].. [[!]dep[?] [arg]..].. [-- body..] - Defines a rule.
+function rule () ## [[--rule-flag].. <name>:] [--clause-flag].. [[+][!]dep[?] [arg]..].. [-- body..] - Defines a rule.
 {
     ## See RULE DEFINITION SYNTAX in help for details
     trace "$*"
@@ -39,6 +39,9 @@ function rule () ## [[--rule-flag].. <name>:] [--clause-flag].. [[!]dep[?] [arg]
             ;;
         --meta)
             ruleflags+="m"
+            ;;
+        --parallel)
+            ruleflags+="p"
             ;;
         --disable)
             ruleflags+="D"
@@ -65,6 +68,9 @@ function rule () ## [[--rule-flag].. <name>:] [--clause-flag].. [[!]dep[?] [arg]
             ;;
         --default)
             clauseflags+="d"
+            ;;
+        --parallel)
+            clauseflags+="p"
             ;;
         *)
             break;;
@@ -322,6 +328,151 @@ function clause_local_restore
     unset CLAUSE_LOCAL
 }
 
+### Dependency jobs -- '+' starts a run of dependencies concurrently
+
+declare -g  BAR_PARALLEL="${BAR_PARALLEL:-1}"  ## How many dependency jobs may run at once. 1 (the default) starts nothing early and is the serial evaluation.
+declare -gi BAR_INFLIGHT=0                     # jobs started and not yet collected in this shell
+declare -ga BAR_JOB_PIDS=()                    # what the run still owes, for the exit path
+
+# rule_parallel_budget - validates BAR_PARALLEL, setting it to 1 when it is unset or not a number
+function rule_parallel_budget
+{
+    if [[ ! "${BAR_PARALLEL:-}" =~ ^[0-9]+$ ]] || (( BAR_PARALLEL < 1 )); then
+        BAR_PARALLEL=1
+    fi
+    return 0
+}
+
+# rule_dep_parse <dependency> - splits a dependency into DEP_NAME, DEP_ARGS, DEP_CHECK, DEP_IFEXISTS and DEP_PARALLEL
+function rule_dep_parse
+{
+    local dep="$1"
+    DEP_NAME=""
+    DEP_ARGS=()
+    DEP_CHECK=""
+    DEP_IFEXISTS=""
+    DEP_PARALLEL=""
+    if [[ "$dep" = "+"* ]]; then
+        DEP_PARALLEL=true
+        dep="${dep:1}"
+    fi
+    DEP_NAME="${dep%% *}"
+    read -r -a DEP_ARGS <<<"${dep:${#DEP_NAME}+1}"
+    if [[ "$DEP_NAME" = *"??" ]]; then
+        DEP_IFEXISTS=true
+        DEP_NAME="${DEP_NAME%??}"
+    fi
+    if [[ "$DEP_NAME" = *"?" ]]; then
+        DEP_CHECK=check
+        DEP_NAME="${DEP_NAME%?}"
+    fi
+    if [[ "$DEP_NAME" = "!"* ]]; then
+        DEP_CHECK=negated
+        DEP_NAME="${DEP_NAME:1}"
+    fi
+    if [[ "$DEP_NAME" = *"~" ]]; then
+        [[ -z "$DEP_CHECK" ]] || die "~ can not be combined with ! or ?"
+        DEP_CHECK=unconditional
+        DEP_NAME="${DEP_NAME%?}"
+    fi
+    return 0
+}
+
+# rule_job_spawn <pids> <rcs> <index> <name> [args..] - starts one dependency as a job of its own; rcs[<index>] is 'pending' until collected
+function rule_job_spawn
+{
+    local -n _sp_pids="$1" _sp_rcs="$2"
+    local -i _sp_index="$3"
+    shift 3
+    # The job gets the parent's function and arrays by fork, but not its filter channel and not its
+    # budget: 'barf_pp_fork' drops the channel so the job starts its own if it needs one, and the
+    # counter starts fresh because a fork's count is not the tree's.  Both are the best-effort
+    # limits agreed for this feature.
+    (
+        # the job's own budget starts empty: a fork's count is not the tree's, and a best-effort
+        # limit across processes is what was agreed for this feature
+        # shellcheck disable=SC2030
+        BAR_INFLIGHT=0
+        if command -v barf_pp_fork >/dev/null; then barf_pp_fork; fi
+        rule_eval "$@"
+    ) &
+    _sp_pids[_sp_index]="$!"
+    _sp_rcs[_sp_index]="pending"
+    BAR_JOB_PIDS+=("$!")
+    # shellcheck disable=SC2031
+    BAR_INFLIGHT=$((BAR_INFLIGHT + 1))
+    return 0
+}
+
+# rule_job_collect <pids> <rcs> <index> - waits for one started job, records its status and releases its slot
+function rule_job_collect
+{
+    local -n _co_pids="$1" _co_rcs="$2"
+    local -i _co_index="$3"
+    [[ -n "${_co_pids[_co_index]:-}" && "${_co_rcs[_co_index]:-}" = pending ]] || return 0
+    local _co_pid="${_co_pids[_co_index]}"
+    local -i _co_rc=0
+    wait "$_co_pid" || _co_rc=$?
+    _co_rcs[_co_index]="$_co_rc"
+    BAR_INFLIGHT=$((BAR_INFLIGHT - 1))
+    local -a _co_kept=()
+    local _co_job
+    for _co_job in ${BAR_JOB_PIDS[@]+"${BAR_JOB_PIDS[@]}"}; do
+        [[ "$_co_job" = "$_co_pid" ]] || _co_kept+=("$_co_job")
+    done
+    BAR_JOB_PIDS=(${_co_kept[@]+"${_co_kept[@]}"})
+    return 0
+}
+
+# rule_jobs_reap_one <pids> <rcs> - blocks until the oldest started job ends, which frees its slot
+function rule_jobs_reap_one
+{
+    local -n _ro_pids="$1" _ro_rcs="$2"
+    local -i _ro_index
+    for _ro_index in "${!_ro_pids[@]}"; do
+        if [[ "${_ro_rcs[_ro_index]:-}" = pending ]]; then
+            rule_job_collect "$1" "$2" "$_ro_index"
+            return 0
+        fi
+    done
+    return 0
+}
+
+# rule_jobs_flush <pids> <rcs> - collects every job this clause started, in declared order
+function rule_jobs_flush
+{
+    local -n _fl_pids="$1" _fl_rcs="$2"
+    local -i _fl_index
+    for _fl_index in "${!_fl_pids[@]}"; do
+        rule_job_collect "$1" "$2" "$_fl_index"
+    done
+    return 0
+}
+
+# rule_jobs_drain [<seconds>] - ends a run with no job left: waits, then signals what outlives the wait
+function rule_jobs_drain
+{
+    local -i limit="${1:-5}"
+    local -i ticks=0
+    local pid
+    for pid in ${BAR_JOB_PIDS[@]+"${BAR_JOB_PIDS[@]}"}; do
+        kill -0 "$pid" 2>/dev/null || continue
+        while (( ticks < limit * 20 )) && kill -0 "$pid" 2>/dev/null; do
+            sleep 0.05
+            ticks=$((ticks + 1))
+        done
+        if kill -0 "$pid" 2>/dev/null; then
+            kill -TERM "$pid" 2>/dev/null
+            sleep 0.05
+            kill -0 "$pid" 2>/dev/null && kill -KILL "$pid" 2>/dev/null
+        fi
+        wait "$pid" 2>/dev/null
+    done
+    BAR_JOB_PIDS=()
+    BAR_INFLIGHT=0
+    return 0
+}
+
 function rule_eval ## <name> [args..] - Evaluates a rule
 {
     ## Normally this is used by bar itself but it can be used from function and rule bodies
@@ -390,31 +541,42 @@ function rule_eval ## <name> [args..] - Evaluates a rule
         local deps=()
         [[ "${#BAR_CLAUSE_DEPS[$clause]}" -gt 0 ]] && readarray -d $'\n' -t deps <<<"${BAR_CLAUSE_DEPS[$clause]}"
 
-        local dep
-        for dep in "${deps[@]}"; do
-            local depname="${dep%% *}"
-            declare -a depargs
-            read -r -a depargs <<<"${dep:${#depname}+1}"
-            local check=
-            local ifexists=
+        # Jobs started for this clause, indexed like 'deps': the pid while one runs, its status once
+        # collected.  '--conclusive' needs nothing of its own -- every job is collected before the
+        # body runs, so a clause which stops the rule stops it after the work it started.
+        rule_parallel_budget
+        local -a job_pid=()
+        local -a job_rc=()
+        local can_parallel=
+        local clause_parallel=
+        if (( BAR_PARALLEL > 1 )) && [[ "${BAR_RULE_FLAGS[$RULE_NAME]:-}" != *m* ]]; then
+            can_parallel=true
+        fi
+        [[ "${BAR_CLAUSE_FLAGS[$clause]}" = *p* ]] && clause_parallel=true
+        # 'rule --parallel' is inherited by its clauses with opt-out semantics: a clause marked
+        # '--conclusive' (the rule stops on its success) or '--default' (it always runs last) is a
+        # barrier and keeps the serial evaluation.
+        if [[ -z "$clause_parallel" && "${BAR_RULE_FLAGS[$RULE_NAME]:-}" = *p* &&
+              "${BAR_CLAUSE_FLAGS[$clause]}" != *c* && "${BAR_CLAUSE_FLAGS[$clause]}" != *d* ]]; then
+            clause_parallel=true
+        fi
 
-            if [[ "$depname" = *"??" ]]; then
-                ifexists=true
-                depname="${depname%??}"
-            fi
-            if [[ "$depname" = *"?" ]]; then
-                check=true
-                depname="${depname%?}"
-            fi
-            if [[ "$depname" = "!"* ]]; then
-                check=negated
-                depname="${depname:1}"
-            fi
-            if [[ "$depname" = *"~" ]]; then
-                [[ -z "$check" ]] || die "~ can not be combined with ! or ?"
-                check=unconditional
-                depname="${depname%?}"
-            fi
+        local dep
+        local -i dep_index
+        for ((dep_index = 0; dep_index < ${#deps[@]}; dep_index++)); do
+            dep="${deps[dep_index]}"
+            rule_dep_parse "$dep"
+            local depname="$DEP_NAME"
+            local -a depargs=("${DEP_ARGS[@]}")
+            local check="$DEP_CHECK"
+            local ifexists="$DEP_IFEXISTS"
+            local dep_parallel="$DEP_PARALLEL"
+
+            # a clause marked '--parallel' is the shortcut for '+' on every dependency which is not
+            # a conditional one.  '~' is not conditional: it discards the verdict but lets the rule
+            # go on, so '+dep~' is a job like any other and only '?', '??' and '!' decide a run.
+            [[ -n "$clause_parallel" && -z "$ifexists" && "$check" != check && "$check" != negated ]] && dep_parallel=true
+
             [[ -n "$check" ]] && BAR_CHECK_LEVEL=$((BAR_CHECK_LEVEL+1))
 
             # Check if bare rule depends on non-bare rule
@@ -436,7 +598,37 @@ function rule_eval ## <name> [args..] - Evaluates a rule
                 # shellcheck disable=2155
                 local dep_id="$(hash_args "$PWD $depname ${depargs[*]}")"
                 local dep_rc="${BAR_RULES_RESULT[$dep_id]:-}"
-                if [[ "${BAR_RULE_FLAGS[$depname]-a}" = *a* || -z "$dep_rc" ]]; then
+
+                # Start the run of '+' dependencies this one belongs to: every following dependency
+                # which is a plain '+' one starts here too, up to the budget, so the run overlaps
+                # while the verdicts below are still taken in declared order.  A conditional
+                # dependency ('?', '??', '!') or one without the prefix ends the run ('~' does not:
+                # it only discards a verdict), and a dependency already decided needs no job.
+                if [[ -n "$can_parallel" && -n "$dep_parallel" && -z "${job_pid[dep_index]:-}" && -z "$dep_rc" ]]; then
+                    local -i ahead
+                    for ((ahead = dep_index; ahead < ${#deps[@]}; ahead++)); do
+                        [[ -z "${job_pid[ahead]:-}" ]] || continue
+                        rule_dep_parse "${deps[ahead]}"
+                        [[ -n "$DEP_PARALLEL" || -n "$clause_parallel" ]] || break
+                        [[ -z "$DEP_IFEXISTS" && "$DEP_CHECK" != check && "$DEP_CHECK" != negated ]] || break
+                        [[ "${BAR_RULE_FLAGS[$DEP_NAME]-a}" = *a* ]] && break
+                        while (( BAR_INFLIGHT >= BAR_PARALLEL )); do
+                            rule_jobs_reap_one job_pid job_rc
+                        done
+                        rule_job_spawn job_pid job_rc "$ahead" "$DEP_NAME" "${DEP_ARGS[@]}"
+                    done
+                    rule_dep_parse "$dep"
+                fi
+
+                if [[ -n "${job_pid[dep_index]:-}" ]]; then
+                    # the job ran early, but the verdict is taken where the dependency is declared
+                    rule_job_collect job_pid job_rc "$dep_index"
+                    dep_rc="${job_rc[dep_index]}"
+                    # a fork's table dies with it: this is how the next dependency sees the result
+                    if [[ "${BAR_RULE_FLAGS[$depname]-a}" != *a* ]]; then
+                        BAR_RULES_RESULT[$dep_id]="$dep_rc"
+                    fi
+                elif [[ "${BAR_RULE_FLAGS[$depname]-a}" = *a* || -z "$dep_rc" ]]; then
                     dep_rc=0
                     # shellcheck disable=2086
                     rule_eval "$depname" "${depargs[@]}" || dep_rc=$?
@@ -452,7 +644,7 @@ function rule_eval ## <name> [args..] - Evaluates a rule
                     [[ -n "$check" ]] && BAR_CHECK_LEVEL=$((BAR_CHECK_LEVEL-1))
                     break
                 elif [[ "$dep_rc" != 0 ]]; then
-                    if [[ "$check" = true ]]; then
+                    if [[ "$check" = check ]]; then
                         failure "$RULE_NAME: $dep"
                         skip=true
                         [[ -n "$check" ]] && BAR_CHECK_LEVEL=$((BAR_CHECK_LEVEL-1))
@@ -465,6 +657,8 @@ function rule_eval ## <name> [args..] - Evaluates a rule
                     # conclusive fail because of dep failure
                     failure "$RULE_NAME: $dep"
                     [[ -n "$check" ]] && BAR_CHECK_LEVEL=$((BAR_CHECK_LEVEL-1))
+                    # a run started for a later dependency must not outlive this return
+                    rule_jobs_flush job_pid job_rc
                     if [[ -n "$evaluate_always" ]]; then
                         unset "BAR_RULES_RESULT[#$rule_id]"
                     else
@@ -478,6 +672,10 @@ function rule_eval ## <name> [args..] - Evaluates a rule
                 fi
            fi
         done
+
+        # every path out of the dependency loop is a barrier: a skipped clause and a failing one
+        # alike must leave no job running behind them
+        rule_jobs_flush job_pid job_rc
 
         rc=0
         if [[ "$skip" != true ]]; then
