@@ -164,6 +164,28 @@ d_main_bad: +d_arm1_bad +d_arm2_bad
 w_main:
 	echo body >>"$P_LOG"
 
+q_one:
+	sleep 0.4 ; echo one >>"$P_LOG"
+
+q_two:
+	sleep 0.4 ; echo two >>"$P_LOG"
+
+q_three:
+	sleep 0.4 ; echo three >>"$P_LOG"
+
+q_four:
+	sleep 0.4 ; echo four >>"$P_LOG"
+
+rule --parallel q_main: q_one -- 'echo b1 >>"$P_LOG"'
+rule --parallel q_main: q_two -- 'echo b2 >>"$P_LOG"'
+rule --parallel q_main: q_three -- 'echo b3 >>"$P_LOG"'
+rule --parallel q_main: q_four -- 'echo b4 >>"$P_LOG"'
+
+rule --parallel --disjunct q_disjunct: q_one -- :
+rule --parallel --disjunct q_disjunct: q_two -- :
+rule --parallel --disjunct q_disjunct: q_three -- :
+rule --parallel --disjunct q_disjunct: q_four -- :
+
 CLEANUP:
 	wait
 	echo cleanup >>"$P_LOG.cleanup"
@@ -408,6 +430,30 @@ check "$(grep -c shared "$P_LOG" || true)" "1" "and it was still evaluated once"
 : >"$P_LOG"
 timed 2 d_main
 check "$(grep -c shared "$P_LOG" || true)" "1" "a later run evaluates again: the store lives with its run"
+echo
+
+echo "AC14 the clauses of a '--parallel' rule run their dependencies at the same time"
+# four clauses, one 400ms dependency each: pooled they cost one dependency, serially the sum, and
+# the bodies stay in declared order -- a body works in the directory
+: >"$P_LOG"
+timed 1 q_main
+q_serial_ms=$ELAPSED
+check "$RC" "0" "BAR_PARALLEL=1: the rule succeeds"
+: >"$P_LOG"
+timed 4 q_main
+check "$RC" "0" "BAR_PARALLEL=4: the rule succeeds"
+check "$(grep -v '^b' "$P_LOG" | sort | tr '\n' ' ')" "four one three two " "every clause's dependency ran, once each"
+check "$(grep '^b' "$P_LOG" | tr '\n' ' ')" "b1 b2 b3 b4 " "the bodies ran in declared order"
+if (( ELAPSED + 600 < q_serial_ms )); then
+    pass "the four clauses cost one dependency (${ELAPSED}ms against ${q_serial_ms}ms serially)"
+else
+    fail "the clauses did not overlap (${ELAPSED}ms against ${q_serial_ms}ms serially)"
+fi
+# a disjunct rule keeps its clauses in order: the clause tried first is its meaning
+: >"$P_LOG"
+timed 4 q_disjunct
+check "$RC" "0" "a '--parallel --disjunct' rule succeeds on its first clause"
+check "$(sort "$P_LOG" | tr '\n' ' ')" "one " "the clauses after it were not started: disjunct stays in order"
 echo
 
 if (( failures > 0 )); then

@@ -331,7 +331,12 @@ RULE FUNCTION
 
     --parallel
       Every clause of this rule is evaluated as if it were marked '--parallel' (see the clause
-      flags below). Opt-out: a clause marked '--conclusive' or '--default' stays serial.
+      flags below), and the dependencies of all its clauses are started at the first of them, so
+      the rule costs its slowest dependency rather than their sum.  The clause bodies still run
+      in the shell of the rule and in declared order: a body works in the directory and may rely
+      on what the body before it did.  Opt-out: a clause marked '--conclusive' or '--default'
+      stays serial.  A '--disjunct' rule keeps its clauses in order -- which clause is tried first
+      is its meaning -- and inherits the flag per clause instead.
 
   * [<name>:]
 
@@ -504,10 +509,12 @@ RULE FUNCTION
     Dependencies prefixed with '+' and clauses or rules marked '--parallel' may be started before
     their turn, so a run of them evaluates at the same time.  A rule flag '--parallel' is the
     per-clause flag on every clause of that rule but the '--conclusive' and '--default' ones, which
-    stay barriers.  BAR_PARALLEL caps how many jobs run at once in the whole run: a job which starts
-    jobs of its own spends from the same budget, and a shell which has to wait for a slot gives its
-    own back first, so nothing waits on a token it is holding.  Unset, empty or 1 (the default)
-    starts nothing early and bar evaluates exactly as it does serially.
+    stay barriers, and it starts the dependencies of the clauses which follow at the first clause
+    as well -- the bodies stay in declared order.  BAR_PARALLEL caps how many jobs run at once in
+    the whole run: a job which starts jobs of its own spends from the same budget, and a shell
+    which has to wait for a slot gives its own back first, so nothing waits on a token it is
+    holding.  Unset, empty or 1 (the default) starts nothing early and bar evaluates exactly as it
+    does serially.
 
     A verdict is shared.  A rule which two jobs both need is evaluated once and each of them takes
     that result, so a diamond costs its arms one evaluation of what they share; the results live in
