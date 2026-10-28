@@ -194,6 +194,13 @@ rule --parallel --disjunct q_disjunct: q_four -- :
 
 # The rules of 'ParallelTest', the rulefile the pool was asked for: every one of them costs about
 # one dependency's time, and a disjunct rule keeps its clauses in order.
+pb1: (sleep 0.5)
+pb2: (sleep 0.5)
+pb3: (sleep 0.5)
+pb4: (sleep 0.5)
+
+rule --parallel pb_main: pb1 pb2 pb3 pb4
+
 pl_slow1: ; sleep 0.5
 pl_slow2: ; sleep 0.5
 pl_slow3: ; sleep 0.5
@@ -226,28 +233,45 @@ pl_caching_inner: pl_slow1x4 pl_slow4x1
 pl_caching_inner: pl_slow1x4 pl_slow4x1
 
 # early fail: the first dependency fails, so what has not started is not started -- and the leaf
-# which is already running is collected, not killed
+# which is already running is collected, not killed.  Six leaves to a budget of two: a walk which
+# did not stop would take three waves of 0.3s, so one wave plus the failure is what the timing
+# below proves.
 ef_bad:
-	sleep 0.2
+	sleep 0.1
 	echo bad >>"$P_LOG"
 	false
 
 ef_l1:
 	echo start1 >>"$P_LOG"
-	sleep 0.8
+	sleep 0.3
 	echo done1 >>"$P_LOG"
 
 ef_l2:
 	echo start2 >>"$P_LOG"
-	sleep 0.8
+	sleep 0.3
 	echo done2 >>"$P_LOG"
 
 ef_l3:
 	echo start3 >>"$P_LOG"
-	sleep 0.8
+	sleep 0.3
 	echo done3 >>"$P_LOG"
 
-rule --parallel ef_main: ef_bad ef_l1 ef_l2 ef_l3
+ef_l4:
+	echo start4 >>"$P_LOG"
+	sleep 0.3
+	echo done4 >>"$P_LOG"
+
+ef_l5:
+	echo start5 >>"$P_LOG"
+	sleep 0.3
+	echo done5 >>"$P_LOG"
+
+ef_l6:
+	echo start6 >>"$P_LOG"
+	sleep 0.3
+	echo done6 >>"$P_LOG"
+
+rule --parallel ef_main: ef_bad ef_l1 ef_l2 ef_l3 ef_l4 ef_l5 ef_l6
 
 # keep-going: the run continues after a failure, so nothing is abandoned
 kg_bad:
@@ -625,25 +649,27 @@ fi
 echo
 
 echo "AC16 early fail: a failure starts nothing more, and a body which runs finishes"
-# budget 2: the failing dependency and the leaf beside it are started, the two behind them are not
-# -- and what was started finishes (a body is the atomic unit of work, so it is collected, never
-# killed).  The failure is the slower of the two, so the verdict arrives while the next leaf would
-# be started: that is the moment the walk stops.
+# two of seven leaves fit the budget: the failing dependency and one leaf.  The failure lands while
+# that leaf's body is running, so the leaf is collected -- a body is the atomic unit of work, never
+# killed -- and the five leaves behind it are never started.  One wave plus the failure is 0.4s
+# here; three waves of them would be 0.9s.
 : >"$P_LOG"
 timed 2 ef_main
 check "$RC" "1" "the failure is the rule's verdict"
-check "$(sort "$P_LOG" | tr '\n' ' ')" "bad done1 start1 " "only the leaf which was already running ran, and it finished"
-if (( ELAPSED < 1600 )); then
-    pass "the leaves behind the failure were not started (${ELAPSED}ms)"
+check "$(grep -c '^start' "$P_LOG" || true)" "1" "only the one leaf the budget started ran"
+check "$(grep -c '^done' "$P_LOG" || true)" "1" "and it finished: a body is atomic, it is not killed"
+check "$(grep -c '^bad' "$P_LOG" || true)" "1" "the failing dependency ran"
+if (( ELAPSED < 700 )); then
+    pass "the failure cost one wave, not six leaves (${ELAPSED}ms)"
 else
-    fail "the abandoned work was still run (${ELAPSED}ms)"
+    fail "the work behind the failure was still run (${ELAPSED}ms)"
 fi
 # a budget which covers every dependency starts all of them: they are running, so they complete
 : >"$P_LOG"
 timed 8 ef_main
 check "$RC" "1" "a budget of 8: the verdict is the same"
-check "$(grep -c '^start' "$P_LOG" || true)" "3" "all three leaves were started: the budget had room"
-check "$(grep -c '^done' "$P_LOG" || true)" "3" "and every one of them finished: a body is atomic"
+check "$(grep -c '^start' "$P_LOG" || true)" "6" "all six leaves were started: the budget had room"
+check "$(grep -c '^done' "$P_LOG" || true)" "6" "and every one of them finished: a body is atomic"
 # keep-going: the run does not stop, so nothing is abandoned
 : >"$P_LOG"
 timed_env 4 BAR_KEEP_GOING=2 kg_main
@@ -675,6 +701,20 @@ if (( ELAPSED + 400 < serial_ms )); then
     pass "'--parallel --reverse' still pools the dependencies (${ELAPSED}ms)"
 else
     fail "'--parallel --reverse' did not overlap (${ELAPSED}ms against ${serial_ms}ms)"
+fi
+echo
+
+echo "AC18 the progress notices of a parallel run leave no empty line behind"
+# A notice is written without its newline and cleared in place by the next message.  Another shell
+# may have ended that line already (every job writes to the same terminal), and the notice must not
+# then end it a second time: that was a blank line in front of the next message.
+if command -v script >/dev/null 2>&1; then
+    play=$( ( cd "$P" && TERM=xterm BAR_PARALLEL=4 timeout 20 script -qec "$BAR pb_main" /dev/null 2>/dev/null ) || true )
+    plain=$(printf '%s' "$play" | sed $'s/\033\\[[0-9;]*[A-Za-z]//g')
+    check "$(printf '%s' "$plain" | grep -c '^[[:space:]]*$' || true)" "0" "no empty line in the terminal output"
+    contains "$plain" "OK: pb_main" "the run's own result was printed"
+else
+    pass "no 'script' on this host: the terminal output is not exercised"
 fi
 echo
 

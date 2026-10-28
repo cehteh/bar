@@ -909,7 +909,8 @@ RULE FUNCTION
     Every verdict is still taken in declared order, so a conclusive or checking dependency and
     the clause body see the same results, in the same order, at any BAR_PARALLEL.  A job's own
     output is not serialized: two bodies writing to the same terminal interleave, and bar's
-    progress lines may arrive out of order.
+    progress lines may arrive out of order.  A notice is cleared in place rather than ended, so a
+    shell whose line another already finished leaves no empty one behind it.
 
 
   Purity Requirements

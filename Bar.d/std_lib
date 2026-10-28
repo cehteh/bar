@@ -95,10 +95,14 @@ function progress # [message..] - elusive progress notice, will be overwritten b
         }
     else
         # the notice goes to a terminal only, and only a line which was written stands: a flag set
-        # here would have the next message terminate a notice nobody saw
-        (( "${BAR_VERBOSITY_LEVEL:-5}" > 1 )) && [[ -t 1 ]] && {
+        # here would have the next message end a notice nobody saw.  The messages go to fd 2, so
+        # that is the stream asked about -- a notice written into a file is a line without its
+        # newline.
+        (( "${BAR_VERBOSITY_LEVEL:-5}" > 1 )) && [[ -t 2 ]] && {
             tty_newline
-            tty_echo -n "${TTYERR[label]}  RUN: $*${TTYERR[clear_eol]}${TTYERR[cr]}${TTYERR[reset]}"
+            # written to fd 2, which is what 'progress' writes to and what the gate above asked
+            # about ('tty_echo' asks about fd 1)
+            echo -n "${TTYERR[label]}  RUN: $*${TTYERR[clear_eol]}${TTYERR[cr]}${TTYERR[reset]}"
             # the notice stands until the next message terminates it, in 'tty_newline'
             # shellcheck disable=SC2034
             BAR_TTY_PARTIAL=1
