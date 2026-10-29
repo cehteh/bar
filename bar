@@ -786,7 +786,7 @@ AWK
 # frame.  The marker is also what clears the state the file leaves behind, so a file expands as if
 # it were the only one -- awk's startup is paid once instead of once per module.
 # No regex metacharacter in the marker: the reader matches it with 'sed'.
-declare -g BAR_PP_IN="" BAR_PP_OUT="" BAR_PP_MARK='!!!!!!!!!!!!!!!!!EOF!!!!!!!!!!!!!!!!!'
+declare -g BAR_PP_IN="" BAR_PP_OUT="" BAR_PP_MARK="!$RANDOM$RANDOM$RANDOM$RANDOM!"
 declare -g BAR_PP_OWNER=""   # the shell which started the filter this one talks to
 
 function barf_pp_start # - starts the preprocessor; sets BAR_PP_IN and BAR_PP_OUT
