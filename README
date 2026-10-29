@@ -388,7 +388,7 @@ RULE FUNCTION
 
     A dependency prefixed with '+' is a candidate for starting early: a run of such dependencies
     is started concurrently ('BAR_PARALLEL' bounds how many run at once, 1 starts none early),
-    while every verdict is still taken in declared order.  A conditional dependency ('?', '??',
+    while the verdicts of a run which succeeds are still taken in declared order.  A conditional dependency ('?', '??',
     '!') and a dependency without the prefix end the run and are a barrier: everything started
     before them is collected before they run, and so is everything started before the body.  '~'
     is not a barrier, it only discards the verdict, so '+dep~' starts early like any other and a
@@ -517,21 +517,25 @@ RULE FUNCTION
     early and bar evaluates exactly as it does serially, and any other value which is not a number
     is read as 1.
 
-    A failure ends what has not started.  A rule which fails -- or whose clause is conclusive --
-    starts no further dependency and no further body; what is already running is collected, not
-    killed, because a rule body is the atomic unit of work: it may have side effects in the
-    directory and a body of a grandchild is no different.  So the run pays for the failure, not for
-    the work behind it.
+    A failure ends the run at the failure.  A rule which fails starts no further dependency and no
+    further body, and the jobs it has already started are killed: their verdict cannot be used any
+    more, and the rule's own bodies have not run, so nothing of that rule is half-done.  The
+    failure is taken when it arrives, not in the declared order of the dependencies -- a dependency
+    which fails while one declared before it is still running is the rule's verdict, and that one
+    is killed -- so a run pays the failure and not the work behind it, wherever the failing
+    dependency was declared.  A rule which stops early on a '--conclusive' clause and *succeeds*
+    collects what it started instead: what a body left behind is the point of a run which succeeds.
 
     A verdict is shared.  A rule which two jobs both need is evaluated once and each of them takes
     that result, so a diamond costs its arms one evaluation of what they share; the results live in
     a store of this run, which ends with it, and a rule marked '--always' is never stored.
 
-    Every verdict is still taken in declared order, so a conclusive or checking dependency and
-    the clause body see the same results, in the same order, at any BAR_PARALLEL.  A job's own
-    output is not serialized: two bodies writing to the same terminal interleave, and bar's
-    progress lines may arrive out of order.  A notice is cleared in place rather than ended, so a
-    shell whose line another already finished leaves no empty one behind it.
+    A run which succeeds takes its verdicts in declared order, so a checking dependency and the
+    clause body see the same results, in the same order, at any BAR_PARALLEL; a failure is the
+    exception above, and a killed job records no verdict at all.  A job's own output is not
+    serialized: two bodies writing to the same terminal interleave, and bar's progress lines may
+    arrive out of order.  A notice is cleared in place rather than ended, so a shell whose line
+    another already finished leaves no empty one behind it.
 
 
   Purity Requirements

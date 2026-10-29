@@ -6,7 +6,7 @@
 # flag, BAR_PARALLEL, the barriers around them and the filter a job of its own starts.
 #
 #   AC1  '+' starts a run of dependencies at the same time, and BAR_PARALLEL bounds it
-#   AC2  the verdict is taken in declared order at any BAR_PARALLEL
+#   AC2  a failure settles the rule when it arrives, whichever dependency is declared first
 #   AC3  a checking dependency and a plain one are barriers: what was started before them is
 #        collected before they run
 #   AC4  the clause body is a barrier too: it sees every dependency it declared
@@ -22,7 +22,7 @@
 #   AC13 a rule two jobs both need is evaluated once, and its verdict is theirs
 #   AC14 the clauses of a '--parallel' rule run their dependencies at the same time
 #   AC15 the rules of 'ParallelTest': every one of them costs one dependency, not the sum
-#   AC16 early fail: a failure starts nothing more, and a body which runs finishes
+#   AC16 early fail: a failure starts nothing more, and the jobs it has started are killed
 #   AC17 '--parallel' with the other rule and clause flags: no error, and the incompatible ones
 #        fall back to the serial evaluation
 #
@@ -76,7 +76,7 @@ slow_fail:
 	sleep 0.6 ; echo slow >>"$P_LOG" ; return 3
 
 fast_fail:
-	sleep 0.6 ; echo fast >>"$P_LOG" ; return 5
+	sleep 0.2 ; echo fast >>"$P_LOG" ; return 5
 
 p_verdict: +slow_fail +fast_fail
 	:
@@ -87,10 +87,16 @@ side:
 needs_side:
 	[ -s "$P_LOG" ]
 
+no_side:
+	[ ! -s "$P_LOG" ]
+
 p_check_barrier: +side needs_side?
 	:
 
 p_plain_barrier: +side needs_side
+	:
+
+p_plain_first: no_side +side
 	:
 
 p_body: +p_a +p_b
@@ -232,10 +238,9 @@ pl_caching: pl_caching_inner
 pl_caching_inner: pl_slow1x4 pl_slow4x1
 pl_caching_inner: pl_slow1x4 pl_slow4x1
 
-# early fail: the first dependency fails, so what has not started is not started -- and the leaf
-# which is already running is collected, not killed.  Six leaves to a budget of two: a walk which
-# did not stop would take three waves of 0.3s, so one wave plus the failure is what the timing
-# below proves.
+# early fail: the failing dependency ends the run -- what has not started is not started, and what
+# is running is killed.  Six leaves to a budget of two: a walk which did not stop would take three
+# waves of 0.3s, and the run costs the failure (0.1s) instead.
 ef_bad:
 	sleep 0.1
 	echo bad >>"$P_LOG"
@@ -272,6 +277,9 @@ ef_l6:
 	echo done6 >>"$P_LOG"
 
 rule --parallel ef_main: ef_bad ef_l1 ef_l2 ef_l3 ef_l4 ef_l5 ef_l6
+
+# the same leaves with the failure declared last: nothing before it is a barrier
+rule --parallel ef_late: ef_l1 ef_l2 ef_l3 ef_l4 ef_l5 ef_l6 ef_bad
 
 # keep-going: the run continues after a failure, so nothing is abandoned
 kg_bad:
@@ -369,14 +377,17 @@ else
 fi
 echo
 
-echo "AC2 the verdict is taken in declared order"
+echo "AC2 a failure settles the rule when it arrives, not in declared order"
+# the run is serial and parallel alike a walk over the dependencies in declared order, but a
+# failure which arrives while the run waits for another dependency ends it there: the failing
+# dependency is the verdict, and the ones still running are killed rather than waited for.
 : >"$P_LOG"
 timed 2 p_verdict
-check "$RC" "3" "BAR_PARALLEL=2: the first failing dependency decides, though the later one failed too"
-check "$(sort "$P_LOG" | tr '\n' ' ')" "fast slow " "both ran, so the later one was already decided when the verdict was taken"
+check "$RC" "5" "BAR_PARALLEL=2: the failure which arrived first is the verdict, not the one declared first"
+check "$(sort "$P_LOG" | tr '\n' ' ')" "fast " "the slow dependency was killed before it could report"
 : >"$P_LOG"
 timed 1 p_verdict
-check "$RC" "3" "BAR_PARALLEL=1: the same verdict"
+check "$RC" "3" "BAR_PARALLEL=1: the declared order is the run's order"
 check "$(sort "$P_LOG" | tr '\n' ' ')" "slow " "serially the later one never ran"
 echo
 
@@ -392,6 +403,11 @@ fi
 : >"$P_LOG"
 timed 2 p_plain_barrier
 check "$RC" "0" "a dependency without the prefix ran after the job it needs"
+# and one declared before any job runs at its turn: it waits for nothing, so the log is still empty
+: >"$P_LOG"
+timed 2 p_plain_first
+check "$RC" "0" "a plain dependency declared first runs before the jobs of the run have finished"
+check "$(sort "$P_LOG" | tr '\n' ' ')" "side " "the job behind it ran too"
 echo
 
 echo "AC4 the clause body is a barrier too"
@@ -648,28 +664,46 @@ else
 fi
 echo
 
-echo "AC16 early fail: a failure starts nothing more, and a body which runs finishes"
+echo "AC16 early fail: a failure ends the run it has not started, and kills what it has"
 # two of seven leaves fit the budget: the failing dependency and one leaf.  The failure lands while
-# that leaf's body is running, so the leaf is collected -- a body is the atomic unit of work, never
-# killed -- and the five leaves behind it are never started.  One wave plus the failure is 0.4s
-# here; three waves of them would be 0.9s.
+# that leaf's body is running, and the leaf is killed -- its verdict cannot be used any more, and
+# the failing rule's own body never ran -- so the run costs the failure, not the wave.  The five
+# leaves behind it are never started.
 : >"$P_LOG"
 timed 2 ef_main
 check "$RC" "1" "the failure is the rule's verdict"
 check "$(grep -c '^start' "$P_LOG" || true)" "1" "only the one leaf the budget started ran"
-check "$(grep -c '^done' "$P_LOG" || true)" "1" "and it finished: a body is atomic, it is not killed"
+check "$(grep -c '^done' "$P_LOG" || true)" "0" "and it was killed, not collected: its work is not needed"
 check "$(grep -c '^bad' "$P_LOG" || true)" "1" "the failing dependency ran"
-if (( ELAPSED < 700 )); then
-    pass "the failure cost one wave, not six leaves (${ELAPSED}ms)"
+if (( ELAPSED < 600 )); then
+    pass "the failure cost the failure, not the wave (${ELAPSED}ms)"
 else
     fail "the work behind the failure was still run (${ELAPSED}ms)"
 fi
-# a budget which covers every dependency starts all of them: they are running, so they complete
+# a budget which covers every dependency starts all of them, and the failure is still what the run
+# costs: six bodies were running when it landed, and six are killed
 : >"$P_LOG"
 timed 8 ef_main
 check "$RC" "1" "a budget of 8: the verdict is the same"
 check "$(grep -c '^start' "$P_LOG" || true)" "6" "all six leaves were started: the budget had room"
-check "$(grep -c '^done' "$P_LOG" || true)" "6" "and every one of them finished: a body is atomic"
+check "$(grep -c '^done' "$P_LOG" || true)" "0" "none of them finished: the failure killed the run"
+if (( ELAPSED < 600 )); then
+    pass "six running bodies cost nothing behind the failure (${ELAPSED}ms)"
+else
+    fail "the running leaves were collected instead of killed (${ELAPSED}ms)"
+fi
+# the failing dependency declared last is the user's case: everything before it is running, and the
+# run still costs the failure.  A budget of 8 starts all seven, so the failure arrives first.
+: >"$P_LOG"
+timed 8 ef_late
+check "$RC" "1" "a failing dependency declared last: the verdict is its failure"
+check "$(grep -c '^start' "$P_LOG" || true)" "6" "the leaves declared before it started"
+check "$(grep -c '^done' "$P_LOG" || true)" "0" "and every one of them was killed"
+if (( ELAPSED < 600 )); then
+    pass "the declared position of the failure does not cost a wave (${ELAPSED}ms)"
+else
+    fail "the run waited for what it declared before the failure (${ELAPSED}ms)"
+fi
 # keep-going: the run does not stop, so nothing is abandoned
 : >"$P_LOG"
 timed_env 4 BAR_KEEP_GOING=2 kg_main
