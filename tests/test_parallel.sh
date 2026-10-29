@@ -253,7 +253,10 @@ pl_caching_inner: pl_slow1x4 pl_slow4x1
 
 # early fail: the failing dependency ends the run -- what has not started is not started, and what
 # is running is killed.  Six leaves to a budget of two: a walk which did not stop would take three
-# waves of 0.3s, and the run costs the failure (0.1s) instead.
+# waves of 2s, and the run costs the failure (0.1s) instead.  The leaves are 2s and not 0.3s
+# because the assertion they serve is a race between the failure being noticed and a body finishing
+# its sleep: on a loaded host the notice is delayed by process spawns, and 0.2s of margin is not
+# enough for the ordering to hold (measured: 6 of 6 bodies finished under 10x oversubscription).
 ef_bad:
 	sleep 0.1
 	echo bad >>"$P_LOG"
@@ -261,32 +264,32 @@ ef_bad:
 
 ef_l1:
 	echo start1 >>"$P_LOG"
-	sleep 0.3
+	sleep 2
 	echo done1 >>"$P_LOG"
 
 ef_l2:
 	echo start2 >>"$P_LOG"
-	sleep 0.3
+	sleep 2
 	echo done2 >>"$P_LOG"
 
 ef_l3:
 	echo start3 >>"$P_LOG"
-	sleep 0.3
+	sleep 2
 	echo done3 >>"$P_LOG"
 
 ef_l4:
 	echo start4 >>"$P_LOG"
-	sleep 0.3
+	sleep 2
 	echo done4 >>"$P_LOG"
 
 ef_l5:
 	echo start5 >>"$P_LOG"
-	sleep 0.3
+	sleep 2
 	echo done5 >>"$P_LOG"
 
 ef_l6:
 	echo start6 >>"$P_LOG"
-	sleep 0.3
+	sleep 2
 	echo done6 >>"$P_LOG"
 
 rule --parallel ef_main: ef_bad ef_l1 ef_l2 ef_l3 ef_l4 ef_l5 ef_l6
