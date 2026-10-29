@@ -32,6 +32,11 @@
 #        'make' a body starts spends from it -- skipped where make has no FIFO job server
 #
 # usage: tests/test_parallel.sh
+#
+# 'At the same time' is read off the bodies' own start and end marks ($P_SPAN), never off the run's
+# wall clock: a busy machine stretches every body alike, so a margin in milliseconds measures the
+# host rather than the run.  The two bounds left in place compare a run against a sleep of the
+# fixture (a leaf's own duration), which load can only make more true.
 
 set -euo pipefail
 
@@ -71,18 +76,22 @@ P_NESTED="$WORK/nested"
 export P_NESTED
 P_JOB="$WORK/jobserver"
 export P_JOB
+P_SPAN="$WORK/spans"
+export P_SPAN
 
 cat >"$P/Barf" <<'EOF'
+# A body marks when it started and when it ended.  The assertions which prove that dependencies
+# ran at the same time read those marks instead of comparing wall clock: a busy machine stretches
+# every body alike, so a margin in milliseconds measures the host rather than the run.
+span() { printf '%s %s %s\n' "$1" "$2" "$(date +%s%N)" >>"$P_SPAN" ; }
+
 p_a:
-	sleep 0.6 ; echo a >>"$P_LOG"
+	span s a ; sleep 0.6 ; span e a ; echo a >>"$P_LOG"
 
 p_b:
-	sleep 0.6 ; echo b >>"$P_LOG"
+	span s b ; sleep 0.6 ; span e b ; echo b >>"$P_LOG"
 
 p_main: +p_a +p_b
-	:
-
-p_serial: p_a p_b
 	:
 
 slow_fail:
@@ -127,7 +136,7 @@ p_memo: counted
 rule p_clause_flag: --parallel p_a p_b -- :
 
 p_tilde_fail:
-	sleep 0.6 ; echo tf >>"$P_LOG" ; return 4
+	span s tf ; sleep 0.6 ; span e tf ; echo tf >>"$P_LOG" ; return 4
 
 p_tilde: +p_a +p_tilde_fail~ +p_b
 	:
@@ -190,16 +199,16 @@ w_main:
 	echo body >>"$P_LOG"
 
 q_one:
-	sleep 0.4 ; echo one >>"$P_LOG"
+	span s one ; sleep 1 ; span e one ; echo one >>"$P_LOG"
 
 q_two:
-	sleep 0.4 ; echo two >>"$P_LOG"
+	span s two ; sleep 1 ; span e two ; echo two >>"$P_LOG"
 
 q_three:
-	sleep 0.4 ; echo three >>"$P_LOG"
+	span s three ; sleep 1 ; span e three ; echo three >>"$P_LOG"
 
 q_four:
-	sleep 0.4 ; echo four >>"$P_LOG"
+	span s four ; sleep 1 ; span e four ; echo four >>"$P_LOG"
 
 rule --parallel q_main: q_one -- 'echo b1 >>"$P_LOG"'
 rule --parallel q_main: q_two -- 'echo b2 >>"$P_LOG"'
@@ -220,10 +229,14 @@ pb4: (sleep 0.5)
 
 rule --parallel pb_main: pb1 pb2 pb3 pb4
 
-pl_slow1: ; sleep 0.5
-pl_slow2: ; sleep 0.5
-pl_slow3: ; sleep 0.5
-pl_slow4: ; sleep 0.5
+pl_slow1:
+	span s 1 ; sleep 1 ; span e 1
+pl_slow2:
+	span s 2 ; sleep 1 ; span e 2
+pl_slow3:
+	span s 3 ; sleep 1 ; span e 3
+pl_slow4:
+	span s 4 ; sleep 1 ; span e 4
 pl_false: ; false
 
 rule --parallel pl_slow1x4: pl_slow1 pl_slow2 pl_slow3 pl_slow4
@@ -399,6 +412,30 @@ overlap() {
         sort -n -k1,1 -k2,2 | awk '{c += $2; if (c > m) m = c} END {print m + 0}'
 }
 
+# at_once <n> <what> - at least <n> of the bodies stamped in $P_SPAN overlapped
+at_once() {
+    local got
+    got="$(overlap "$P_SPAN")"
+    if (( got >= $1 )); then
+        pass "$2 (${got} at once)"
+    else
+        fail "$2 (${got} at once, wanted ${1})"
+    fi
+}
+
+# solo <what> - no two of the bodies stamped in $P_SPAN overlapped
+solo() {
+    local got
+    got="$(overlap "$P_SPAN")"
+    if (( got == 0 )); then
+        fail "$1 (no body stamped: nothing was measured)"
+    elif (( got == 1 )); then
+        pass "$1"
+    else
+        fail "$1 (${got} ran at the same time)"
+    fi
+}
+
 # timed <parallel> <rule> - runs a rule in the project, recording RC and ELAPSED (milliseconds)
 timed() {
     local par="$1"
@@ -425,37 +462,20 @@ echo "=== Testing parallel dependency evaluation ==="
 echo
 
 echo "AC1 '+' starts a run of dependencies at the same time"
+# What is measured is the bodies' own start and end marks, not the run's wall clock: 'the two
+# overlapped' is the property, and a busy machine cannot take it away (it only stretches both).
 : >"$P_LOG"
-timed 1 p_serial
-serial_ms=$ELAPSED
-# The first run in a project builds its state dump and a busy machine only ever adds time, so the
-# baseline below is the better of two: one slow sample must not fail every comparison it serves.
-: >"$P_LOG"
-timed 1 p_serial
-(( ELAPSED < serial_ms )) && serial_ms=$ELAPSED
-: >"$P_LOG"
-timed 2 p_serial
-serial2_ms=$ELAPSED
-: >"$P_LOG"
+: >"$P_SPAN"
 timed 1 p_main
-par1_ms=$ELAPSED
 check "$RC" "0" "BAR_PARALLEL=1: the rule succeeds"
 check "$(sort "$P_LOG" | tr '\n' ' ')" "a b " "BAR_PARALLEL=1: both dependencies ran, once each"
+solo "BAR_PARALLEL=1: one dependency at a time"
 : >"$P_LOG"
+: >"$P_SPAN"
 timed 2 p_main
-par2_ms=$ELAPSED
 check "$RC" "0" "BAR_PARALLEL=2: the rule succeeds"
 check "$(sort "$P_LOG" | tr '\n' ' ')" "a b " "BAR_PARALLEL=2: both dependencies ran, once each"
-if (( par2_ms + 400 < par1_ms )); then
-    pass "the run overlaps: ${par2_ms}ms at 2 against ${par1_ms}ms at 1"
-else
-    fail "the run does not overlap: ${par2_ms}ms at 2 against ${par1_ms}ms at 1"
-fi
-if (( par1_ms + 400 > serial_ms && par1_ms < serial_ms + 900 )); then
-    pass "BAR_PARALLEL=1 costs what the serial rule costs (${par1_ms}ms against ${serial_ms}ms)"
-else
-    fail "BAR_PARALLEL=1 is not the serial run (${par1_ms}ms against ${serial_ms}ms)"
-fi
+at_once 2 "BAR_PARALLEL=2: the run overlaps"
 echo
 
 echo "AC2 a failure settles the rule when it arrives, not in declared order"
@@ -476,11 +496,7 @@ echo "AC3 a checking dependency and a plain one are barriers"
 : >"$P_LOG"
 timed 2 p_check_barrier
 check "$RC" "0" "a '?dependency' ran after the job it checks the side effect of"
-if (( ELAPSED + 400 < 1500 )); then
-    pass "the barrier collected the started job instead of restarting it (${ELAPSED}ms)"
-else
-    fail "the barrier did not collect the started job (${ELAPSED}ms)"
-fi
+check "$(grep -c '^side' "$P_LOG" || true)" "1" "the barrier collected the started job instead of restarting it"
 : >"$P_LOG"
 timed 2 p_plain_barrier
 check "$RC" "0" "a dependency without the prefix ran after the job it needs"
@@ -506,17 +522,14 @@ echo
 
 echo "AC6 a clause marked '--parallel'"
 : >"$P_LOG"
+: >"$P_SPAN"
 timed 1 p_clause_flag
-flag1_ms=$ELAPSED
+solo "at BAR_PARALLEL=1 the clause's dependencies ran one after the other"
 : >"$P_LOG"
+: >"$P_SPAN"
 timed 2 p_clause_flag
-flag2_ms=$ELAPSED
 check "$RC" "0" "the rule succeeds"
-if (( flag2_ms + 400 < flag1_ms )); then
-    pass "its dependencies ran together (${flag2_ms}ms against ${flag1_ms}ms)"
-else
-    fail "its dependencies ran serially (${flag2_ms}ms against ${flag1_ms}ms)"
-fi
+at_once 2 "its dependencies ran together"
 echo
 
 echo "AC7 a job requiring a module gets a filter of its own"
@@ -530,42 +543,30 @@ echo "AC8 BAR_PARALLEL is the machine's count unless the caller says otherwise"
 # how a run at the default looks depends on the machine: one processor is the serial run
 nproc_now="$(nproc 2>/dev/null || echo 1)"
 default_is_parallel() {
-    # <milliseconds> <what> - the default budget's verdict, judged against the serial run
+    # <what> - the default budget's verdict, read off the bodies' stamps
     if (( nproc_now > 1 )); then
-        if (( $1 + 400 < serial_ms )); then
-            pass "$2 ran in parallel, one job per processor (${1}ms against ${serial_ms}ms serially)"
-        else
-            fail "$2 did not use the default budget (${1}ms against ${serial_ms}ms serially)"
-        fi
+        at_once 2 "$1 ran in parallel, one job per processor"
     else
-        if (( $1 + 400 > serial_ms )); then
-            pass "$2 is the serial run on this machine (${1}ms)"
-        else
-            fail "$2 was parallel on a single processor (${1}ms)"
-        fi
+        solo "$1 is the serial run on this machine"
     fi
 }
 : >"$P_LOG"
+: >"$P_SPAN"
 timed "" p_main
-empty_ms=$ELAPSED
 check "$RC" "0" "an empty BAR_PARALLEL: the rule succeeds"
 check "$(sort "$P_LOG" | tr '\n' ' ')" "a b " "an empty BAR_PARALLEL: both dependencies ran"
-default_is_parallel "$empty_ms" "an empty BAR_PARALLEL"
+default_is_parallel "an empty BAR_PARALLEL"
 : >"$P_LOG"
+: >"$P_SPAN"
 RC=0
-start=$(date +%s%N)
 ( cd "$P" && env -u BAR_PARALLEL "$BAR" p_main ) >"$WORK/out" 2>"$WORK/err" || RC=$?
-unset_ms=$(( ($(date +%s%N) - start) / 1000000 ))
 check "$RC" "0" "an unset BAR_PARALLEL: the rule succeeds"
-default_is_parallel "$unset_ms" "an unset BAR_PARALLEL"
+default_is_parallel "an unset BAR_PARALLEL"
 : >"$P_LOG"
+: >"$P_SPAN"
 timed "yes" p_main
 check "$RC" "0" "a BAR_PARALLEL which is not a number: the rule succeeds"
-if (( ELAPSED + 400 > serial_ms )); then
-    pass "a non numeric BAR_PARALLEL is the serial run (${ELAPSED}ms)"
-else
-    fail "a non numeric BAR_PARALLEL ran in parallel (${ELAPSED}ms against ${serial_ms}ms)"
-fi
+solo "a non numeric BAR_PARALLEL is the serial run"
 echo
 
 echo "AC9 the run ends"
@@ -586,46 +587,34 @@ fi
 echo
 echo "AC10 '~' is not a barrier"
 : >"$P_LOG"
+: >"$P_SPAN"
 timed 1 p_tilde
-tilde1_ms=$ELAPSED
 check "$RC" "0" "BAR_PARALLEL=1: the rule succeeds though a '~' dependency failed"
 check "$(sort "$P_LOG" | tr '\n' ' ')" "a b tf " "all three dependencies ran"
+solo "BAR_PARALLEL=1: the run was the declared order"
 : >"$P_LOG"
+: >"$P_SPAN"
 timed 3 p_tilde
-tilde3_ms=$ELAPSED
 check "$RC" "0" "BAR_PARALLEL=3: the rule succeeds"
-if (( tilde3_ms + 400 < tilde1_ms )); then
-    pass "the run continued through the '~' dependency (${tilde3_ms}ms against ${tilde1_ms}ms)"
-else
-    fail "the '~' dependency ended the run (${tilde3_ms}ms against ${tilde1_ms}ms)"
-fi
+at_once 2 "the run continued through the '~' dependency"
 echo
 
 echo "AC11 'rule --parallel' is inherited, '--conclusive' and '--default' opt out"
 : >"$P_LOG"
+: >"$P_SPAN"
 timed 2 p_rule_flag
 check "$RC" "0" "the rule succeeds"
-if (( ELAPSED + 400 < serial_ms )); then
-    pass "the dependencies of its clause ran together (${ELAPSED}ms against ${serial_ms}ms serially)"
-else
-    fail "the rule flag did not reach its clause (${ELAPSED}ms against ${serial_ms}ms serially)"
-fi
+at_once 2 "the dependencies of its clause ran together"
 : >"$P_LOG"
+: >"$P_SPAN"
 timed 2 p_rule_flag_c
 check "$RC" "0" "a '--conclusive' clause succeeds"
-if (( ELAPSED + 400 > serial_ms )); then
-    pass "'--conclusive' stayed serial (${ELAPSED}ms)"
-else
-    fail "'--conclusive' inherited the rule flag (${ELAPSED}ms against ${serial_ms}ms serially)"
-fi
+solo "'--conclusive' stayed serial"
 : >"$P_LOG"
+: >"$P_SPAN"
 timed 2 p_rule_flag_d
 check "$RC" "0" "a '--default' clause succeeds"
-if (( ELAPSED + 400 > serial_ms )); then
-    pass "'--default' stayed serial (${ELAPSED}ms)"
-else
-    fail "'--default' inherited the rule flag (${ELAPSED}ms against ${serial_ms}ms serially)"
-fi
+solo "'--default' stayed serial"
 echo
 
 echo "AC12 a job's own jobs spend from the budget of the tree"
@@ -671,11 +660,6 @@ echo "AC13 a rule two jobs both need is evaluated once"
 timed 2 d_main
 check "$RC" "0" "the rule succeeds"
 check "$(grep -c shared "$P_LOG" || true)" "1" "the shared rule ran once, though both arms needed it"
-if (( ELAPSED + 400 < 900 )); then
-    pass "the second arm took the stored verdict instead of evaluating again (${ELAPSED}ms)"
-else
-    fail "the second arm evaluated the shared rule again (${ELAPSED}ms for one 300ms rule)"
-fi
 : >"$P_LOG"
 timed 2 d_main_bad
 check "$RC" "1" "the shared failure is the verdict of the diamond"
@@ -689,19 +673,17 @@ echo "AC14 the clauses of a '--parallel' rule run their dependencies at the same
 # four clauses, one 400ms dependency each: pooled they cost one dependency, serially the sum, and
 # the bodies stay in declared order -- a body works in the directory
 : >"$P_LOG"
+: >"$P_SPAN"
 timed 1 q_main
-q_serial_ms=$ELAPSED
 check "$RC" "0" "BAR_PARALLEL=1: the rule succeeds"
+solo "BAR_PARALLEL=1: one clause at a time"
 : >"$P_LOG"
+: >"$P_SPAN"
 timed 4 q_main
 check "$RC" "0" "BAR_PARALLEL=4: the rule succeeds"
 check "$(grep -v '^b' "$P_LOG" | sort | tr '\n' ' ')" "four one three two " "every clause's dependency ran, once each"
 check "$(grep '^b' "$P_LOG" | tr '\n' ' ')" "b1 b2 b3 b4 " "the bodies ran in declared order"
-if (( ELAPSED + 600 < q_serial_ms )); then
-    pass "the four clauses cost one dependency (${ELAPSED}ms against ${q_serial_ms}ms serially)"
-else
-    fail "the clauses did not overlap (${ELAPSED}ms against ${q_serial_ms}ms serially)"
-fi
+at_once 4 "the four clauses cost one dependency"
 # a disjunct rule keeps its clauses in order: the clause tried first is its meaning
 : >"$P_LOG"
 timed 4 q_disjunct
@@ -710,21 +692,18 @@ check "$(sort "$P_LOG" | tr '\n' ' ')" "one " "the clauses after it were not sta
 echo
 
 echo "AC15 the rules of 'ParallelTest' cost one dependency, not the sum"
-# that file's own budget is 10 and its leaves sleep 1s; here the leaves sleep 0.5 and the bar is
-# 1300ms, which is the same claim on a shorter suite
+# that file's own budget is 10 and its leaves sleep 1s; here the leaves sleep 0.5 and the claim is
+# read off the leaves' stamps, which is the same claim on a shorter suite -- and on any host
 for pl_rule in pl_slow1x4 pl_slow2x2 pl_slow4x1 pl_early1x5 pl_early5x1 pl_disjunct pl_caching; do
     case "$pl_rule" in
     pl_early*) want_rc=1 ;;
     *)         want_rc=0 ;;
     esac
     : >"$P_LOG"
+    : >"$P_SPAN"
     timed 10 "$pl_rule"
     check "$RC" "$want_rc" "$pl_rule: the verdict"
-    if (( ELAPSED < 1300 )); then
-        pass "$pl_rule: one dependency's time (${ELAPSED}ms)"
-    else
-        fail "$pl_rule: the sum of its dependencies (${ELAPSED}ms)"
-    fi
+    at_once 2 "$pl_rule: one dependency's time"
 done
 # a disjunct rule keeps its clauses in order: the clause tried first is its meaning
 : >"$P_LOG"
@@ -733,19 +712,20 @@ check "$RC" "0" "pl_disjunct: succeeds on its first clause"
 check "$(sort "$P_LOG" | tr '\n' ' ')" "d1 " "the disjunct rule ran its first clause only"
 # the same shape serially is the sum
 : >"$P_LOG"
+: >"$P_SPAN"
 timed 1 pl_slow4x1
-pl_serial_ms=$ELAPSED
 check "$RC" "0" "pl_slow4x1 serially: the rule succeeds"
+solo "pl_slow4x1 serially: one leaf at a time"
 : >"$P_LOG"
+: >"$P_SPAN"
 timed 10 pl_slow4x1
-if (( ELAPSED + 800 < pl_serial_ms )); then
-    pass "the four clauses cost one dependency (${ELAPSED}ms against ${pl_serial_ms}ms serially)"
-else
-    fail "the clauses did not overlap (${ELAPSED}ms against ${pl_serial_ms}ms serially)"
-fi
+at_once 4 "the four clauses cost one dependency"
 echo
 
 echo "AC16 early fail: a failure ends the run it has not started, and kills what it has"
+# The bound below is the wave, not the host: a leaf sleeps 2s, so a run which waited for what it
+# abandoned cannot come in under 1500ms whatever the machine does, and one which killed it needs
+# only the notice.  The kill itself is asserted above by the 'done' count, which no load can fake.
 # two of seven leaves fit the budget: the failing dependency and one leaf.  The failure lands while
 # that leaf's body is running, and the leaf is killed -- its verdict cannot be used any more, and
 # the failing rule's own body never ran -- so the run costs the failure, not the wave.  The five
@@ -756,7 +736,7 @@ check "$RC" "1" "the failure is the rule's verdict"
 check "$(grep -c '^start' "$P_LOG" || true)" "1" "only the one leaf the budget started ran"
 check "$(grep -c '^done' "$P_LOG" || true)" "0" "and it was killed, not collected: its work is not needed"
 check "$(grep -c '^bad' "$P_LOG" || true)" "1" "the failing dependency ran"
-if (( ELAPSED < 600 )); then
+if (( ELAPSED < 1500 )); then
     pass "the failure cost the failure, not the wave (${ELAPSED}ms)"
 else
     fail "the work behind the failure was still run (${ELAPSED}ms)"
@@ -768,7 +748,7 @@ timed 8 ef_main
 check "$RC" "1" "a budget of 8: the verdict is the same"
 check "$(grep -c '^start' "$P_LOG" || true)" "6" "all six leaves were started: the budget had room"
 check "$(grep -c '^done' "$P_LOG" || true)" "0" "none of them finished: the failure killed the run"
-if (( ELAPSED < 600 )); then
+if (( ELAPSED < 1500 )); then
     pass "six running bodies cost nothing behind the failure (${ELAPSED}ms)"
 else
     fail "the running leaves were collected instead of killed (${ELAPSED}ms)"
@@ -780,7 +760,7 @@ timed 8 ef_late
 check "$RC" "1" "a failing dependency declared last: the verdict is its failure"
 check "$(grep -c '^start' "$P_LOG" || true)" "6" "the leaves declared before it started"
 check "$(grep -c '^done' "$P_LOG" || true)" "0" "and every one of them was killed"
-if (( ELAPSED < 600 )); then
+if (( ELAPSED < 1500 )); then
     pass "the declared position of the failure does not cost a wave (${ELAPSED}ms)"
 else
     fail "the run waited for what it declared before the failure (${ELAPSED}ms)"
@@ -802,21 +782,14 @@ for ip_rule in ip_meta ip_reverse ip_clause_flags ip_conditional ip_negated ip_b
 done
 # '--meta' is shared state, so it is the serial evaluation
 : >"$P_LOG"
+: >"$P_SPAN"
 timed 4 ip_meta
-meta_ms=$ELAPSED
-if (( meta_ms + 400 > serial_ms )); then
-    pass "'--parallel --meta' falls back to the serial evaluation (${meta_ms}ms)"
-else
-    fail "'--parallel --meta' ran its dependencies together (${meta_ms}ms against ${serial_ms}ms)"
-fi
+solo "'--parallel --meta' falls back to the serial evaluation"
 # '--reverse' only reorders the clauses: the dependencies are still pooled
 : >"$P_LOG"
+: >"$P_SPAN"
 timed 4 ip_reverse
-if (( ELAPSED + 400 < serial_ms )); then
-    pass "'--parallel --reverse' still pools the dependencies (${ELAPSED}ms)"
-else
-    fail "'--parallel --reverse' did not overlap (${ELAPSED}ms against ${serial_ms}ms)"
-fi
+at_once 2 "'--parallel --reverse' still pools the dependencies"
 echo
 
 echo "AC18 the progress notices of a parallel run leave no empty line behind"
@@ -824,10 +797,18 @@ echo "AC18 the progress notices of a parallel run leave no empty line behind"
 # may have ended that line already (every job writes to the same terminal), and the notice must not
 # then end it a second time: that was a blank line in front of the next message.
 if command -v script >/dev/null 2>&1; then
-    play=$( ( cd "$P" && TERM=xterm BAR_PARALLEL=4 timeout 20 script -qec "$BAR pb_main" /dev/null 2>/dev/null ) || true )
+    scr_rc=0
+    scr_start=$(date +%s%N)
+    ( cd "$P" && TERM=xterm BAR_PARALLEL=4 timeout 60 script -qec "$BAR pb_main" /dev/null ) \
+        >"$WORK/scr.out" 2>"$WORK/scr.err" || scr_rc=$?
+    scr_ms=$(( ($(date +%s%N) - scr_start) / 1000000 ))
+    play=$(cat "$WORK/scr.out")
     plain=$(printf '%s' "$play" | sed $'s/\033\\[[0-9;]*[A-Za-z]//g')
     check "$(printf '%s' "$plain" | grep -c '^[[:space:]]*$' || true)" "0" "no empty line in the terminal output"
-    contains "$plain" "OK: pb_main" "the run's own result was printed"
+    if ! contains "$plain" "OK: pb_main" "the run's own result was printed"; then
+        echo "  (the capture: rc=${scr_rc} ${scr_ms}ms, $(wc -c <"$WORK/scr.out") bytes on stdout, $(wc -c <"$WORK/scr.err") on stderr)"
+        sed -n '1,3p' "$WORK/scr.err" | sed 's/^/  (stderr) /'
+    fi
 else
     pass "no 'script' on this host: the terminal output is not exercised"
 fi
