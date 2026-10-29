@@ -335,6 +335,8 @@ declare -gi BAR_INFLIGHT=0                     # jobs started and not yet collec
 declare -ga BAR_JOB_PIDS=()                    # what the run still owes, for the exit path
 declare -g  BAR_JOB_DIR=""                     # the run's job directory: the server FIFO and the shared results
 declare -gi BAR_JOB_SERVER=-1                  # the server's descriptor, inherited by every job; -1 when there is none
+declare -gi BAR_JOB_SERVER_OWNED=0             # 1 when the FIFO is this run's, 0 when the environment's server was joined
+declare -g  BAR_JOB_MAKEFLAGS=""               # the MAKEFLAGS before this run put its server into it
 declare -gi BAR_JOB_TOKEN=0                    # 1 while this shell holds a slot of its own
 declare -gi BAR_JOB_OWED=0                     # 1 while this shell is owed its own slot back
 declare -gi BAR_JOB_CLOSED=0                   # 1 once the run is tearing down: no server is started again
@@ -470,7 +472,8 @@ function rule_jobs_kill
     # The tokens of the killed jobs are gone with them (a shell which is killed does not hand its
     # slot back), so the server cannot be spent from again in this shell: an evaluation which waits
     # for a token nobody will return hangs, and what is left of a failed run (POSTPROCESS, CLEANUP)
-    # is better served serially than not at all.
+    # is better served serially than not at all.  When the server is a make's, those tokens are
+    # missing from that build too -- a kill is the one way to spend a slot of it for good.
     BAR_JOB_SERVER=-1
     BAR_JOB_CLOSED=1
     BAR_PARALLEL=1
@@ -496,32 +499,100 @@ function rule_jobs_abandon_kill
 # which has to wait for a token hands its own back first and collects what it already started, so a
 # blocked shell holds no token -- which is what keeps a tree at the cap from waiting on itself
 # (make's jobserver rule).
+#
+# The protocol is GNU make's FIFO job server: one byte is one token, taken by reading it and
+# returned by writing it, and the FIFO is named by '--jobserver-auth=fifo:<path>' in MAKEFLAGS.
+# That is what lets a run share a budget with make in both directions: a bar started by a parallel
+# make joins that make's server instead of opening a second budget, and a make a body starts finds
+# this run's server in MAKEFLAGS and spends from it.
+
+# rule_job_server_inherited - prints the FIFO of the job server the environment already carries
+function rule_job_server_inherited
+{
+    local word
+    local -a words=()
+    [[ -n "${MAKEFLAGS:-}" ]] || return 1
+    read -r -a words <<<"$MAKEFLAGS"
+    for word in ${words[@]+"${words[@]}"}; do
+        case "$word" in
+        --jobserver-auth=fifo:?*)
+            printf '%s\n' "${word#--jobserver-auth=fifo:}"
+            return 0
+            ;;
+        esac
+    done
+    return 1
+}
+
+# rule_job_server_export - hands this run's job server to the processes a body starts
+#
+# make reads its job server out of MAKEFLAGS, so a 'make' a body starts joins this run's budget
+# rather than opening one of its own.  The words being replaced are the job server's: everything
+# else the environment put into MAKEFLAGS stays.
+function rule_job_server_export
+{
+    (( BAR_JOB_SERVER >= 0 && BAR_JOB_SERVER_OWNED )) || return 0
+    local word
+    local -a words=() kept=()
+    [[ -n "${MAKEFLAGS:-}" ]] && read -r -a words <<<"$MAKEFLAGS"
+    for word in ${words[@]+"${words[@]}"}; do
+        case "$word" in
+        --jobserver-auth=* | -j | -j[0-9]*) continue ;;
+        esac
+        kept+=("$word")
+    done
+    kept+=("-j$BAR_PARALLEL" "--jobserver-auth=fifo:${BAR_JOB_DIR}/server")
+    BAR_JOB_MAKEFLAGS="${MAKEFLAGS:-}"
+    MAKEFLAGS="${kept[*]}"
+    export MAKEFLAGS
+    return 0
+}
 
 function rule_job_server_start # - starts the run's job server and result store unless one is running
 {
     [[ -z "$BAR_JOB_DIR" ]] || return 0
-    (( BAR_PARALLEL > 1 && ! BAR_JOB_CLOSED )) || return 0
-    local dir fd
+    (( ! BAR_JOB_CLOSED )) || return 0
+    local dir fd inherited
+    inherited="$(rule_job_server_inherited)" || inherited=""
+    # A job server the environment carries is the budget of the build which started this run: it is
+    # joined rather than answered with a second one, and the FIFO is left to the process which made
+    # it.  A FIFO which is not there is gone, and the run then has a server of its own.
+    if [[ -n "$inherited" ]]; then
+        if [[ ! -p "$inherited" ]] || ! exec {fd}<>"$inherited"; then
+            inherited=""
+        fi
+    fi
+    [[ -n "$inherited" ]] || [[ $BAR_PARALLEL -gt 1 ]] || return 0
     if ! dir="$(mktemp -d "${TMPDIR:-/tmp}/bar-jobs.XXXXXXXXXX")"; then
         BAR_PARALLEL=1
         return 0
     fi
-    if ! mkdir "$dir/results" "$dir/claims" || ! mkfifo "$dir/server"; then
-        rm -rf "$dir"
-        BAR_PARALLEL=1
-        return 0
-    fi
-    if ! exec {fd}<>"$dir/server"; then
+    if ! mkdir "$dir/results" "$dir/claims"; then
         rm -rf "$dir"
         BAR_PARALLEL=1
         return 0
     fi
     BAR_JOB_DIR="$dir"
+    if [[ -n "$inherited" ]]; then
+        BAR_JOB_SERVER=$fd
+        BAR_JOB_SERVER_OWNED=0
+        return 0
+    fi
+    if ! mkfifo "$dir/server" || ! exec {fd}<>"$dir/server"; then
+        rm -rf "$dir"
+        BAR_JOB_DIR=""
+        BAR_PARALLEL=1
+        return 0
+    fi
     BAR_JOB_SERVER=$fd
+    BAR_JOB_SERVER_OWNED=1
     local -i token
+    # one byte per token: that is how GNU make counts them, so a make which joins this server takes
+    # and returns the same tokens the shells of this run do
     for ((token = 1; token <= BAR_PARALLEL; token++)); do
-        printf 't\n' >&"$BAR_JOB_SERVER"
+        printf 't' >&"$BAR_JOB_SERVER"
     done
+    rule_job_server_export
     return 0
 }
 
@@ -530,7 +601,7 @@ function rule_job_slot_available
 {
     (( BAR_JOB_SERVER >= 0 )) || return 0
     local tok
-    IFS= read -r -t 0 -u "$BAR_JOB_SERVER" tok
+    IFS= read -r -n 1 -t 0 -u "$BAR_JOB_SERVER" tok
 }
 
 # rule_job_slot_take <pids> <rcs> - takes the slot a job is started with, giving its own slot back while it waits
@@ -550,8 +621,8 @@ function rule_job_slot_take
     fi
     while :; do
         # a probe which consumes nothing: 'read -t 0' succeeds only when a token is waiting
-        if IFS= read -r -t 0 -u "$BAR_JOB_SERVER" tok; then
-            IFS= read -r -u "$BAR_JOB_SERVER" tok && break
+        if IFS= read -r -n 1 -t 0 -u "$BAR_JOB_SERVER" tok; then
+            IFS= read -r -n 1 -u "$BAR_JOB_SERVER" tok && break
             continue
         fi
         # the budget is spent: collect what this shell started before waiting
@@ -559,7 +630,7 @@ function rule_job_slot_take
             rule_jobs_reap_one "$1" "$2"
             continue
         fi
-        IFS= read -r -u "$BAR_JOB_SERVER" tok && break
+        IFS= read -r -n 1 -u "$BAR_JOB_SERVER" tok && break
     done
     BAR_JOB_OWED=$own
     return 0
@@ -573,7 +644,7 @@ function rule_job_slot_restore
     local tok
     # the token itself is not a value: taking it is what holds the slot
     # shellcheck disable=SC2034
-    IFS= read -r -u "$BAR_JOB_SERVER" tok
+    IFS= read -r -n 1 -u "$BAR_JOB_SERVER" tok
     BAR_JOB_TOKEN=1
     return 0
 }
@@ -582,7 +653,7 @@ function rule_job_slot_restore
 function rule_job_token_give
 {
     (( BAR_JOB_SERVER >= 0 )) || return 0
-    printf 't\n' >&"$BAR_JOB_SERVER"
+    printf 't' >&"$BAR_JOB_SERVER"
     return 0
 }
 
@@ -1003,9 +1074,21 @@ function rule_jobs_drain
     # run would then leave behind.
     BAR_JOB_CLOSED=1
     if (( BAR_JOB_SERVER >= 0 )); then
+        # only this shell's duplicate goes: a server the environment carried is not this run's to
+        # close, and its FIFO is not in BAR_JOB_DIR
         exec {BAR_JOB_SERVER}>&-
         BAR_JOB_SERVER=-1
     fi
+    BAR_JOB_SERVER_OWNED=0
+    # the server is gone with the run: MAKEFLAGS must not hand a body of CLEANUP a FIFO which is not
+    # there any more
+    if [[ -n "${BAR_JOB_MAKEFLAGS:-}" ]]; then
+        MAKEFLAGS="$BAR_JOB_MAKEFLAGS"
+        export MAKEFLAGS
+    elif [[ -n "${MAKEFLAGS:-}" ]]; then
+        unset MAKEFLAGS
+    fi
+    BAR_JOB_MAKEFLAGS=""
     if [[ -n "${BAR_JOB_DIR:-}" ]]; then
         rm -rf "${BAR_JOB_DIR:?}"
         BAR_JOB_DIR=""

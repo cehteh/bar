@@ -28,6 +28,8 @@
 #   AC18 the progress notices of a parallel run leave no empty line behind
 #   AC19 a dependency which is a command is a job like any other, and a failure declared in a
 #        later clause settles the rule before the clause before it has been collected
+#   AC20 the run's job server is GNU make's: a 'make -j' which starts the run is joined, and a
+#        'make' a body starts spends from it -- skipped where make has no FIFO job server
 #
 # usage: tests/test_parallel.sh
 
@@ -45,6 +47,7 @@ contains() { if [[ "$1" == *"$2"* ]]; then pass "$3"; else fail "$3 (no [$2] in 
 absent() { if [[ "$1" != *"$2"* ]]; then pass "$3"; else fail "$3 ([$2] found in [$1])"; fi; }
 
 WORK="$(mktemp -d)"
+export WORK
 trap 'rm -rf "$WORK"' EXIT
 
 # mkproj <dir> - a project of its own: this repository's modules as its 'Bar.d' and nothing else.
@@ -61,6 +64,8 @@ P_LOG="$WORK/log"
 export P_LOG
 P_NESTED="$WORK/nested"
 export P_NESTED
+P_JOB="$WORK/jobserver"
+export P_JOB
 
 cat >"$P/Barf" <<'EOF'
 p_a:
@@ -326,10 +331,65 @@ rule --parallel cf_later: false
 
 rule --parallel ip_always: p_a p_always p_b -- :
 
+# The job server is GNU make's, shared in both directions: a make which starts this run hands its
+# budget down, and a make one of these bodies start spends from the run's.
+js_a:
+	LOG="$P_JOB.1" make -f "$WORK/jservers.mk" -s
+
+js_b:
+	LOG="$P_JOB.2" make -f "$WORK/jservers.mk" -s
+
+rule js_main: +js_a +js_b -- :
+
+jm_a:
+	echo "s a $(date +%s%N)" >>"$P_JOB" ; sleep 0.4 ; echo "e a $(date +%s%N)" >>"$P_JOB"
+
+jm_b:
+	echo "s b $(date +%s%N)" >>"$P_JOB" ; sleep 0.4 ; echo "e b $(date +%s%N)" >>"$P_JOB"
+
+jm_c:
+	echo "s c $(date +%s%N)" >>"$P_JOB" ; sleep 0.4 ; echo "e c $(date +%s%N)" >>"$P_JOB"
+
+jm_d:
+	echo "s d $(date +%s%N)" >>"$P_JOB" ; sleep 0.4 ; echo "e d $(date +%s%N)" >>"$P_JOB"
+
+rule jm_main: +jm_a +jm_b +jm_c +jm_d -- :
+
 CLEANUP:
 	wait
 	echo cleanup >>"$P_LOG.cleanup"
 EOF
+
+# the makefile the bodies above run: four targets, one job server token each
+cat >"$WORK/jservers.mk" <<'EOF'
+all: js1 js2 js3 js4
+js1 js2 js3 js4:
+	@echo "s $@ $$(date +%s%N)" >>"$$LOG"
+	@sleep 0.3
+	@echo "e $@ $$(date +%s%N)" >>"$$LOG"
+EOF
+
+# and one which starts a bar run of its own, with a budget of -j of its own as well
+cat >"$WORK/make_starts_bar.mk" <<EOF
+all:
+	+cd "$P" && BAR_PARALLEL=4 "$BAR" jm_main
+EOF
+
+# make_jobserver - succeeds when the installed make has the FIFO job server a run can share
+make_jobserver() {
+    local line major minor
+    command -v make >/dev/null 2>&1 || return 1
+    line="$(make --version 2>/dev/null | LC_ALL=C sed -n '1s/^GNU Make \([0-9][0-9]*\)\.\([0-9][0-9]*\).*/\1 \2/p')"
+    [[ -n "$line" ]] || return 1
+    read -r major minor <<<"$line"
+    (( major > 4 || (major == 4 && minor >= 4) ))
+}
+
+# overlap <log>.. - how many of the 's'/'e' lines of these logs ran at the same time at most
+overlap() {
+    awk '{print $3 "	" ($1 == "s" ? 1 : -1)}' "$@" |
+        sort -n -k1,1 -k2,2 | awk '{c += $2; if (c > m) m = c} END {print m + 0}'
+}
 
 # timed <parallel> <rule> - runs a rule in the project, recording RC and ELAPSED (milliseconds)
 timed() {
@@ -784,6 +844,59 @@ check "$(grep -c '^done' "$P_LOG" || true)" "0" "the earlier clause's work was k
 timed_env 4 BAR_KEEP_GOING=2 cf_later
 check "$RC" "1" "keep-going: the failure is still the verdict"
 check "$(grep -c '^done' "$P_LOG" || true)" "3" "keep-going: the earlier clause ran to its end"
+echo
+
+echo "AC20 the job server is GNU make's, and it is shared in both directions"
+if ! make_jobserver; then
+    echo "  (no GNU make 4.4 or newer: the job server sharing is not testable here)"
+else
+    # a make which starts the run hands its budget down: BAR_PARALLEL=4 cannot spend what the outer
+    # build does not have, so 'make -j2' is what bounds the four dependencies
+    : >"$P_JOB"
+    RC=0
+    make -f "$WORK/make_starts_bar.mk" -j2 -s >"$WORK/out" 2>"$WORK/err" || RC=$?
+    check "$RC" "0" "make -j2: the rule succeeds"
+    check "$(grep -c '^s' "$P_JOB" || true)" "4" "make -j2: all four dependencies ran"
+    j_overlap="$(overlap "$P_JOB")"
+    if (( j_overlap <= 2 )); then
+        pass "make -j2 bounds the run ($j_overlap at once, though BAR_PARALLEL=4)"
+    else
+        fail "$j_overlap ran at once under 'make -j2': the run opened a budget of its own"
+    fi
+    # and a wider budget above is spent from: the run is parallel, and still its own cap of 4
+    : >"$P_JOB"
+    RC=0
+    make -f "$WORK/make_starts_bar.mk" -j8 -s >"$WORK/out" 2>"$WORK/err" || RC=$?
+    check "$RC" "0" "make -j8: the rule succeeds"
+    j_overlap="$(overlap "$P_JOB")"
+    if (( j_overlap > 2 && j_overlap <= 4 )); then
+        pass "a wider make budget reaches the dependencies ($j_overlap at once, capped at 4)"
+    else
+        fail "$j_overlap ran at once under 'make -j8': the budget above was not spent from"
+    fi
+    # the other direction: a make a body starts takes its tokens from this run
+    : >"$P_JOB.1"
+    : >"$P_JOB.2"
+    timed 2 js_main
+    check "$RC" "0" "BAR_PARALLEL=2: the rule whose bodies run make succeeds"
+    check "$(cat "$P_JOB.1" "$P_JOB.2" | grep -c '^s' || true)" "8" "every target of both makes ran"
+    j_overlap="$(overlap "$P_JOB.1" "$P_JOB.2")"
+    if (( j_overlap <= 2 )); then
+        pass "BAR_PARALLEL=2 bounds two makes as well ($j_overlap at once)"
+    else
+        fail "$j_overlap ran at once under BAR_PARALLEL=2: the makes opened budgets of their own"
+    fi
+    : >"$P_JOB.1"
+    : >"$P_JOB.2"
+    timed 8 js_main
+    check "$RC" "0" "BAR_PARALLEL=8: the rule succeeds"
+    j_overlap="$(overlap "$P_JOB.1" "$P_JOB.2")"
+    if (( j_overlap > 2 && j_overlap <= 8 )); then
+        pass "a body's make spends from the run's budget ($j_overlap at once at 8)"
+    else
+        fail "$j_overlap ran at once at BAR_PARALLEL=8: a body's make did not join the run's server"
+    fi
+fi
 echo
 
 if (( failures > 0 )); then

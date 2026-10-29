@@ -388,18 +388,13 @@ RULE FUNCTION
 
     A dependency prefixed with '+' is a candidate for starting early: a run of such dependencies
     is started concurrently ('BAR_PARALLEL' bounds how many run at once, 1 starts none early),
-    while the verdicts of a run which succeeds are still taken in declared order.  A conditional dependency ('?', '??',
-    '!') and a dependency without the prefix end the run and are a barrier: everything started
-    before them is collected before they run, and so is everything started before the body.  '~'
-    is not a barrier, it only discards the verdict, so '+dep~' starts early like any other and a
-    run continues through it.  Whether a rule may be started early is the user's claim that its
-    side effects are acceptable; marking a clause '--parallel' (or its rule) is the shortcut for
-    the prefix on each of its dependencies which is not a conditional one.
-
-    A dependency is a rule by name, and a command or a function becomes one for the occasion (see
-    the '-' spelling below): 'sleep 1' and 'false' are dependencies like any other and a start
-    early reaches them, in a shell of their own.  What a run does not start is a name nothing
-    provides, and a rule marked '--always', which is evaluated where it is declared.
+    while the verdicts of a run which succeeds are still taken in declared order.  A conditional
+    dependency ('?', '??', '!') and a dependency without the prefix end the run and are a barrier:
+    everything started before them is collected before they run, and so is everything started
+    before the body.  '~' is not a barrier, it only discards the verdict, so '+dep~' starts early
+    like any other and a run continues through it.  Whether a rule may be started early is the
+    user's claim that its side effects are acceptable; marking a clause '--parallel' (or its rule)
+    is the shortcut for the prefix on each of its dependencies which is not a conditional one.
 
     A failure settles the rule wherever it is declared: the clauses which follow are started
     ahead, so one of them failing ends the rule at once instead of after the clause before it has
@@ -517,25 +512,40 @@ RULE FUNCTION
 
   Parallel Evaluation
 
-    Dependencies prefixed with '+' and clauses or rules marked '--parallel' may be started before
-    their turn, so a run of them evaluates at the same time.  A rule flag '--parallel' is the
-    per-clause flag on every clause of that rule but the '--conclusive' and '--default' ones, which
-    stay barriers, and it starts the dependencies of the clauses which follow at the first clause
-    as well -- the bodies stay in declared order.  BAR_PARALLEL caps how many jobs run at once in
-    the whole run: a job which starts jobs of its own spends from the same budget, and a shell
-    which has to wait for a slot gives its own back first, so nothing waits on a token it is
-    holding.  Unset or empty takes one job per available processor ('nproc'), 1 starts nothing
-    early and bar evaluates exactly as it does serially, and any other value which is not a number
-    is read as 1.
+    Parallelism is opt-in, and its three marks are the same start at three scales.  A rule marked
+    '--parallel' starts the dependencies of all its clauses at the first of them -- the bodies stay
+    in declared order, a body works in the directory -- and its clauses inherit the flag: each
+    behaves as if marked '--parallel' but for the '--conclusive' and '--default' ones, which stay
+    barriers.  The inheritance reaches the dependencies those clauses declare, so the whole rule is
+    one run: a dependency which is a '--parallel' rule itself hands the flag to its own dependencies
+    in turn, and the subtree is a pool rather than one job per level.  A clause marked '--parallel'
+    is the same start for the dependencies of that clause only, and the '+' prefix is the same for
+    one dependency: it may be started before its turn, with the run of '+' dependencies beside it
+    evaluated concurrently.  The verdicts of a run which succeeds are taken in declared order.
+
+    What parallelizes anything is one of those marks; 'BAR_PARALLEL' only says how many jobs may run
+    at once.  A rule, clause or dependency which is not flagged runs in serial order however large
+    the budget is.  Unset or empty takes one job per available processor ('nproc'), 1 starts
+    nothing early and bar evaluates exactly as it does serially, and any other value which is not a
+    number is read as 1.  The budget is one for the whole run: a job which starts jobs of its own
+    spends from it, and a shell which has to wait for a slot gives its own back first, so nothing
+    waits on a token it is holding.
+
+    The budget is a GNU make job server, named the way make names it ('MAKEFLAGS',
+    '--jobserver-auth=fifo:<path>'), and it is shared in both directions.  A bar which a 'make -j'
+    starts joins that make's server instead of opening a second budget, so the build stays at make's
+    '-j'; a 'make' a body starts finds this run's server in 'MAKEFLAGS' and spends from it, so it
+    stays at 'BAR_PARALLEL'.  A 'make -j1' has no server to share.
 
     A failure ends the run at the failure.  A rule which fails starts no further dependency and no
     further body, and the jobs it has already started are killed: their verdict cannot be used any
-    more, and the rule's own bodies have not run, so nothing of that rule is half-done.  The
-    failure is taken when it arrives, not in the declared order of the dependencies -- a dependency
-    which fails while one declared before it is still running is the rule's verdict, and that one
-    is killed -- so a run pays the failure and not the work behind it, wherever the failing
-    dependency was declared.  A rule which stops early on a '--conclusive' clause and *succeeds*
-    collects what it started instead: what a body left behind is the point of a run which succeeds.
+    more.  A dependency is cancelable, the execution of a body is atomic once it has started, and
+    the rule's own bodies have not run -- so nothing of that rule is half-done.  The failure is
+    taken when it arrives, not in the declared order of the dependencies -- a dependency which fails
+    while one declared before it is still running is the rule's verdict, and that one is killed --
+    so a run pays the failure and not the work behind it, wherever the failing dependency was
+    declared.  A rule which stops early on a '--conclusive' clause and *succeeds* collects what it
+    started instead: what a body left behind is the point of a run which succeeds.
 
     A verdict is shared.  A rule which two jobs both need is evaluated once and each of them takes
     that result, so a diamond costs its arms one evaluation of what they share; the results live in
