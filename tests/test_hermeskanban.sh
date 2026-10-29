@@ -579,9 +579,13 @@ echo "--- AC13 determinism ---"
 # The clock moves between two runs, and a card's age is the clock's, not the board's: the listing
 # carries one age per card, so it is normalized away -- everything else (order, id, state,
 # assignee, priority, dependencies, whether a run is in flight, the title) must be identical.
+# An age is not one unit: past a minute it reads '30m7s', past an hour '1h2m3s', so the pattern is
+# a run of number/unit pairs -- a single '[0-9]+[dhms]+' left the seconds of a card older than a
+# minute in place, and two listings taken a second apart then disagreed on the one thing both are
+# allowed to disagree about (measured: the gate went red on '30m7s' against '30m6s').
 settle() {
     sed -E -e 's/^as of: .*/as of: X/' -e 's/\(([0-9]+[dhms])+, [0-9]+s\)/(age)/' \
-        -e 's/((triage|todo|scheduled|ready|running|blocked|review|done) +)[0-9]+[dhms]+ +/\1AGE /' \
+        -e 's/((triage|todo|scheduled|ready|running|blocked|review|done) +)([0-9]+[dhms])+ +/\1AGE /' \
         -e 's/"now":[0-9]+/"now":0/' -e 's/"age_seconds":[0-9]+/"age_seconds":0/'
 }
 

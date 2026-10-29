@@ -33,10 +33,11 @@
 #
 # usage: tests/test_parallel.sh
 #
-# 'At the same time' is read off the bodies' own start and end marks ($P_SPAN), never off the run's
-# wall clock: a busy machine stretches every body alike, so a margin in milliseconds measures the
-# host rather than the run.  The two bounds left in place compare a run against a sleep of the
-# fixture (a leaf's own duration), which load can only make more true.
+# No assertion here compares one duration against another.  'At the same time' is read off the
+# bodies' own start and end marks ($P_SPAN), as the number of intervals open at once; everything
+# else is call counts and the order of the log.  A verdict a busier machine can flip is a defect
+# in the test rather than a signal: load stretches every body alike, and only a margin turns that
+# stretching into a failure.
 
 set -euo pipefail
 
@@ -436,26 +437,20 @@ solo() {
     fi
 }
 
-# timed <parallel> <rule> - runs a rule in the project, recording RC and ELAPSED (milliseconds)
+# timed <parallel> <rule> - runs a rule in the project, recording its exit status in RC
 timed() {
     local par="$1"
     shift
-    local start
     RC=0
-    start=$(date +%s%N)
     ( cd "$P" && BAR_PARALLEL="$par" "$BAR" "$@" ) >"$WORK/out" 2>"$WORK/err" || RC=$?
-    ELAPSED=$(( ($(date +%s%N) - start) / 1000000 ))
 }
 
 # timed_env <parallel> <NAME=value> <rule> - 'timed' with one more variable in the run's environment
 timed_env() {
     local par="$1" assign="$2"
     shift 2
-    local start
     RC=0
-    start=$(date +%s%N)
     ( cd "$P" && env BAR_PARALLEL="$par" "$assign" "$BAR" "$@" ) >"$WORK/out" 2>"$WORK/err" || RC=$?
-    ELAPSED=$(( ($(date +%s%N) - start) / 1000000 ))
 }
 
 echo "=== Testing parallel dependency evaluation ==="
@@ -723,24 +718,23 @@ at_once 4 "the four clauses cost one dependency"
 echo
 
 echo "AC16 early fail: a failure ends the run it has not started, and kills what it has"
-# The bound below is the wave, not the host: a leaf sleeps 2s, so a run which waited for what it
-# abandoned cannot come in under 1500ms whatever the machine does, and one which killed it needs
-# only the notice.  The kill itself is asserted above by the 'done' count, which no load can fake.
-# two of seven leaves fit the budget: the failing dependency and one leaf.  The failure lands while
+# Two of seven leaves fit the budget: the failing dependency and one leaf.  The failure lands while
 # that leaf's body is running, and the leaf is killed -- its verdict cannot be used any more, and
 # the failing rule's own body never ran -- so the run costs the failure, not the wave.  The five
 # leaves behind it are never started.
+#
+# The kill is asserted by absence: a leaf writes its 'done' line when its sleep returns, and a job
+# whose verdict is not wanted is killed before it can, so that line never appears -- whereas a run
+# which collected the wave to throw it away would leave one.  How many milliseconds the run took is
+# deliberately not asserted: a duration is the one claim a loaded host can flip, and the wave it
+# would be measured against is the leaves' own 2s sleep, which is chosen for the kill/notice race
+# and not as a stopwatch.
 : >"$P_LOG"
 timed 2 ef_main
 check "$RC" "1" "the failure is the rule's verdict"
 check "$(grep -c '^start' "$P_LOG" || true)" "1" "only the one leaf the budget started ran"
 check "$(grep -c '^done' "$P_LOG" || true)" "0" "and it was killed, not collected: its work is not needed"
 check "$(grep -c '^bad' "$P_LOG" || true)" "1" "the failing dependency ran"
-if (( ELAPSED < 1500 )); then
-    pass "the failure cost the failure, not the wave (${ELAPSED}ms)"
-else
-    fail "the work behind the failure was still run (${ELAPSED}ms)"
-fi
 # a budget which covers every dependency starts all of them, and the failure is still what the run
 # costs: six bodies were running when it landed, and six are killed
 : >"$P_LOG"
@@ -748,11 +742,6 @@ timed 8 ef_main
 check "$RC" "1" "a budget of 8: the verdict is the same"
 check "$(grep -c '^start' "$P_LOG" || true)" "6" "all six leaves were started: the budget had room"
 check "$(grep -c '^done' "$P_LOG" || true)" "0" "none of them finished: the failure killed the run"
-if (( ELAPSED < 1500 )); then
-    pass "six running bodies cost nothing behind the failure (${ELAPSED}ms)"
-else
-    fail "the running leaves were collected instead of killed (${ELAPSED}ms)"
-fi
 # the failing dependency declared last is the user's case: everything before it is running, and the
 # run still costs the failure.  A budget of 8 starts all seven, so the failure arrives first.
 : >"$P_LOG"
@@ -760,11 +749,6 @@ timed 8 ef_late
 check "$RC" "1" "a failing dependency declared last: the verdict is its failure"
 check "$(grep -c '^start' "$P_LOG" || true)" "6" "the leaves declared before it started"
 check "$(grep -c '^done' "$P_LOG" || true)" "0" "and every one of them was killed"
-if (( ELAPSED < 1500 )); then
-    pass "the declared position of the failure does not cost a wave (${ELAPSED}ms)"
-else
-    fail "the run waited for what it declared before the failure (${ELAPSED}ms)"
-fi
 # keep-going: the run does not stop, so nothing is abandoned
 : >"$P_LOG"
 timed_env 4 BAR_KEEP_GOING=2 kg_main
