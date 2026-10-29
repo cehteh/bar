@@ -1379,6 +1379,8 @@ MODULE API/RULES
         - [-s|--short]:                 Show only the queried sections
         - topic|rule|function|variable: Navigate to or show only specified topics
         - text:                         Search the specified text in the documentation
+        A name also arrives at the topic which documents it, the plural included: 'bar help
+        helpers' starts at HELPER REPERTOIRE, not at the block of the function of that name.
 
   helpers_rules - The helper repertoire: deterministic answers to recurring retrieval questions.
     

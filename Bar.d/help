@@ -169,6 +169,23 @@ function help
         fi
       fi
 
+      # A topic heading documents the name it is titled after, so the name reaches the section
+      # rather than the block of the thing called that: 'bar help helpers' arrives at
+      # 'HELPER REPERTOIRE'.  Compared is the heading's first word, with a trailing plural 's'
+      # ignored on either side, and only a topic takes part here -- a rule or function keeps its
+      # own match, it just does not outrank the section which explains it.
+      if (( matched == 0 )) && [[ "$proto" == topic && "$lower_query" != *" "* ]]; then
+        local heading_word="${value%% *}"
+        local query_word="$lower_query"
+        heading_word="${heading_word,,}"
+        [[ ${#query_word} -gt 3 && "$query_word" == *[!s]s ]] && query_word="${query_word%s}"
+        [[ ${#heading_word} -gt 3 && "$heading_word" == *[!s]s ]] && heading_word="${heading_word%s}"
+        if [[ -n "$query_word" && "$query_word" == "$heading_word" ]]; then
+          matched=1
+          match_exact=1
+        fi
+      fi
+
       if (( matched == 0 )); then
         continue
       fi
@@ -1783,6 +1800,8 @@ function help_describe_variables
 ##   - [-s|--short]:                 Show only the queried sections
 ##   - topic|rule|function|variable: Navigate to or show only specified topics
 ##   - text:                         Search the specified text in the documentation
+##   A name also arrives at the topic which documents it, the plural included: 'bar help
+##   helpers' starts at HELPER REPERTOIRE, not at the block of the function of that name.
 rule --bare help:
 
 # Provide indexer via bare rule for external consumers like completion

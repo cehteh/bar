@@ -378,6 +378,8 @@ contains "$OUT" "bar helpers" "AC10: 'bar help helpers' finds the repertoire"
 run_bar "$REPO_ROOT" help helpers
 check "$RC" "0" "AC10: 'bar help helpers' exits 0"
 contains "$OUT" "HELPER REPERTOIRE" "AC10: the topic is reachable by name"
+check "$(printf '%s\n' "$OUT" | awk 'NF { print; exit }')" "HELPER REPERTOIRE" \
+    "AC10: the name arrives at the topic, not at the block of the function of that name"
 
 # --------------------------------------------------------------------------------------------
 # AC11/AC12/AC13/AC14 a fresh installation
