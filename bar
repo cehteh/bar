@@ -168,6 +168,13 @@ function bar_main ## [rulefile] [--bare] [rule [arguments..]] - Loads a rulefile
             # modules which define them are all loaded, and a missing function must not turn the
             # exit status of a run into 127
             trap 'declare -F barf_pp_stop >/dev/null && barf_pp_stop; declare -F rule_jobs_drain >/dev/null && rule_jobs_drain; rule_exists CLEANUP && { rule_eval CLEANUP || error "CLEANUP failed" ; }' EXIT
+            # an interrupt ends the run, not only its shell: what bar started has the terminal's
+            # signal ignored (an asynchronous command of a non-interactive shell does), so the run
+            # itself is the only thing which can end it -- and it must, or the work outlives the run
+            # which pays for it.  The status is the signal's, as a shell which took it would report.
+            trap 'if declare -F rule_jobs_interrupt >/dev/null; then rule_jobs_interrupt 130; else exit 130; fi' INT
+            trap 'if declare -F rule_jobs_interrupt >/dev/null; then rule_jobs_interrupt 143; else exit 143; fi' TERM
+            trap 'if declare -F rule_jobs_interrupt >/dev/null; then rule_jobs_interrupt 129; else exit 129; fi' HUP
             rule_exists SETUP && {
                 rule_eval SETUP || die "SETUP failed" ;
             }

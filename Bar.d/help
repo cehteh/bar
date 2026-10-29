@@ -926,6 +926,12 @@ RULE FUNCTION
     declared.  A rule which stops early on a '--conclusive' clause and *succeeds* collects what it
     started instead: what a body left behind is the point of a run which succeeds.
 
+    An interrupt ends the run: '^C' from the terminal, or a 'TERM'/'HUP' sent to it.  What the run
+    started is killed with it -- the jobs with the process trees below them, and the children a body
+    left in the background -- because they are the ones which cannot take the signal: an asynchronous
+    command of a non-interactive shell has SIGINT and SIGQUIT ignored, so they would outlive the run
+    which pays for them.  The exit path still runs, and the status is the signal's (130 for '^C').
+
     A verdict is shared.  A rule which two jobs both need is evaluated once and each of them takes
     that result, so a diamond costs its arms one evaluation of what they share; the results live in
     a store of this run, which ends with it, and a rule marked '--always' is never stored.

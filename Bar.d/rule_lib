@@ -1096,6 +1096,51 @@ function rule_jobs_drain
     return 0
 }
 
+# rule_jobs_interrupt <status> - ends an interrupted run: what it started is killed, then its exit path
+#
+# A '^C' reaches the run's shell and nothing below it.  An asynchronous command of a non-interactive
+# shell has SIGINT and SIGQUIT ignored -- every job bar starts, and every child a body puts in the
+# background -- so the terminal's signal stops the evaluation and leaves the work running, owned by
+# nobody and still holding the run's slots, its claims and its directory.  The trap is what ends
+# them: the jobs are killed with the trees below them (the same path a failure takes), then whatever
+# the shell still has below itself, and '<exit>' hands the rest to the EXIT trap -- the filter, the
+# job server, the run's directory and CLEANUP.
+function rule_jobs_interrupt
+{
+    local -i _ri_status="${1:-130}" _ri_ticks=0 _ri_left=0 _ri_index=0
+    local _ri_pid
+    local -a _ri_pids=() _ri_rcs=() _ri_below=()
+    # the traps go first: the kill path waits for what it signalled, and a second signal while it
+    # does must not re-enter it.  'errexit' goes too -- the run is ending, and every wait below
+    # reports the death it asked for, which is not a reason to leave the path half done.
+    trap - INT TERM HUP
+    set +e
+    for _ri_pid in ${BAR_JOB_PIDS[@]+"${BAR_JOB_PIDS[@]}"}; do
+        _ri_pids[_ri_index]="$_ri_pid"
+        _ri_rcs[_ri_index]=pending
+        _ri_index=$((_ri_index + 1))
+    done
+    (( _ri_index )) && rule_jobs_kill _ri_pids _ri_rcs
+    # a body runs in this shell, so what it put in the background is below this shell
+    mapfile -t _ri_below < <(rule_job_children "$$")
+    for _ri_pid in ${_ri_below[@]+"${_ri_below[@]}"}; do
+        kill -TERM "$_ri_pid" 2>/dev/null
+    done
+    while (( _ri_ticks < 25 )); do
+        _ri_left=0
+        for _ri_pid in ${_ri_below[@]+"${_ri_below[@]}"}; do
+            kill -0 "$_ri_pid" 2>/dev/null && _ri_left=1
+        done
+        (( _ri_left )) || break
+        sleep 0.02
+        _ri_ticks=$((_ri_ticks + 1))
+    done
+    for _ri_pid in ${_ri_below[@]+"${_ri_below[@]}"}; do
+        kill -0 "$_ri_pid" 2>/dev/null && kill -KILL "$_ri_pid" 2>/dev/null
+    done
+    exit "$_ri_status"
+}
+
 function rule_eval ## <name> [args..] - Evaluates a rule
 {
     ## Normally this is used by bar itself but it can be used from function and rule bodies
