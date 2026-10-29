@@ -737,10 +737,10 @@ RULE FUNCTION
       or warning/error when no hooked up rule succeeded.
 
     --parallel
-      Every dependency of this clause which is a rule and not a conditional one may be started
-      early, as if it were prefixed with '+'.  Opting out is per clause, so the rule flag
-      '--parallel' sets this for every clause but the '--conclusive' and '--default' ones.  See
-      the dependency rules below.
+      Every dependency of this clause which is not a conditional one may be started early, as if
+      it were prefixed with '+'.  Opting out is per clause, so the rule flag '--parallel' sets
+      this for every clause but the '--conclusive' and '--default' ones.  See the dependency
+      rules below.
 
   * [[+][!]deps[?|~][??] args..]..
 
@@ -773,13 +773,18 @@ RULE FUNCTION
     is not a barrier, it only discards the verdict, so '+dep~' starts early like any other and a
     run continues through it.  Whether a rule may be started early is the user's claim that its
     side effects are acceptable; marking a clause '--parallel' (or its rule) is the shortcut for
-    the prefix on each of its dependencies which is a rule and not a conditional one.
+    the prefix on each of its dependencies which is not a conditional one.
 
-    A dependency which is not a rule runs in the rule's own shell, at its turn: it is a barrier
-    whether the prefix is there or not, and '--parallel' does not make it a candidate.  What it
-    sets in the shell ('cd', 'export') has to be there for the dependencies declared after it and
-    for the body, so it cannot be moved into a job of its own.  A failure which has to end a rule
-    early therefore has to be a rule ('bad: false'), or be declared where it is reached at once.
+    A dependency is a rule by name, and a command or a function becomes one for the occasion (see
+    the '-' spelling below): 'sleep 1' and 'false' are dependencies like any other and a start
+    early reaches them, in a shell of their own.  What a run does not start is a name nothing
+    provides, and a rule marked '--always', which is evaluated where it is declared.
+
+    A failure settles the rule wherever it is declared: the clauses which follow are started
+    ahead, so one of them failing ends the rule at once instead of after the clause before it has
+    been collected -- and what the rule started is killed.  Keep-going ('BAR_KEEP_GOING') is the
+    mode which runs the remaining clauses anyway, and a disjunct rule tries them in order, so
+    neither is settled by a failure behind it.
 
   * -
 

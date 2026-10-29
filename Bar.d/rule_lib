@@ -797,6 +797,22 @@ function rule_jobs_flush_clause
     return 0
 }
 
+# rule_dep_startable <name> - whether a dependency may be started ahead of its turn
+#
+# A dependency is a rule, by name -- and bar makes a rule out of a command or a function when it is
+# reached ('rule_autoload'): 'sleep 1' and 'false' are rules in everything that matters to the walk,
+# so it starts them like any other and a failing one settles the run at once.  It does not start a
+# name nothing provides (the evaluation reports that where the dependency is declared) and it does
+# not start a rule marked '--always', which the run evaluates for itself.
+function rule_dep_startable
+{
+    if rule_exists "$1"; then
+        [[ "${BAR_RULE_FLAGS[$1]:-}" = *a* ]] && return 1
+        return 0
+    fi
+    command -v -- "$1" >/dev/null 2>&1
+}
+
 # rule_dep_jobs_prestart <pids> <rcs> <clause>.. - starts the dependencies of a parallel rule ahead
 #
 # The clauses of a rule marked '--parallel' are still evaluated in declared order and their bodies
@@ -826,7 +842,7 @@ function rule_dep_jobs_prestart
             # without a '--conclusive'/'--default' flag into its run: what ends the walk here is a
             # dependency which is conditional or one the run must not start again
             [[ -z "$DEP_IFEXISTS" && "$DEP_CHECK" != check && "$DEP_CHECK" != negated ]] || return 0
-            [[ "${BAR_RULE_FLAGS[$DEP_NAME]-a}" = *a* ]] && return 0
+            rule_dep_startable "$DEP_NAME" || return 0
             _ps_id="$(hash_args "$PWD $DEP_NAME ${DEP_ARGS[*]}")"
             [[ -z "${_ps_pids[$_ps_id]:-}" ]] || continue
             [[ -v BAR_RULES_RESULT[#$_ps_id] ]] && continue
@@ -864,6 +880,45 @@ function rule_jobs_failed
     for _jf_key in "${!_jf_rcs[@]}"; do
         [[ "${_jf_rcs[$_jf_key]}" = pending ]] && continue
         [[ "${_jf_rcs[$_jf_key]}" = 0 ]] || return 0
+    done
+    return 1
+}
+
+# rule_job_failed_dep <pids> <rcs> <clause..> - names a dependency whose job has ended in failure
+#
+# Nothing is waited for: a job which has ended but is not collected yet is collected here, and a
+# job still running is left alone.  That is how a failure settles a rule before the clause which
+# declares it comes to its turn.  BAR_JOB_FAILED_DEP carries the dependency as it was declared,
+# BAR_JOB_FAILED_RC its status.
+function rule_job_failed_dep
+{
+    local _fd_pids_name="$1" _fd_rcs_name="$2"
+    local -n _fd_pids="$_fd_pids_name" _fd_rcs="$_fd_rcs_name"
+    shift 2
+    BAR_JOB_FAILED_DEP=""
+    BAR_JOB_FAILED_RC=0
+    local -a _fd_running=()
+    local _fd_key _fd_clause _fd_dep
+    local -a _fd_deps=()
+    mapfile -t _fd_running < <(jobs -rp)
+    for _fd_key in "${!_fd_pids[@]}"; do
+        [[ "${_fd_rcs[$_fd_key]:-}" = pending ]] || continue
+        [[ " ${_fd_running[*]} " = *" ${_fd_pids[$_fd_key]} "* ]] && continue
+        rule_job_collect "$_fd_pids_name" "$_fd_rcs_name" "$_fd_key"
+        [[ "${_fd_rcs[$_fd_key]}" =~ ^[0-9]+$ ]] || continue
+        (( _fd_rcs[_fd_key] )) || continue
+        BAR_JOB_FAILED_RC="${_fd_rcs[$_fd_key]}"
+        for _fd_clause in "$@"; do
+            [[ "${#BAR_CLAUSE_DEPS[$_fd_clause]}" -gt 0 ]] || continue
+            readarray -d $'\n' -t _fd_deps <<<"${BAR_CLAUSE_DEPS[$_fd_clause]}"
+            for _fd_dep in ${_fd_deps[@]+"${_fd_deps[@]}"}; do
+                rule_dep_parse "$_fd_dep"
+                [[ "$(hash_args "$PWD $DEP_NAME ${DEP_ARGS[*]}")" = "$_fd_key" ]] || continue
+                BAR_JOB_FAILED_DEP="$_fd_dep"
+                return 0
+            done
+        done
+        return 0
     done
     return 1
 }
@@ -1048,6 +1103,24 @@ function rule_eval ## <name> [args..] - Evaluates a rule
     local -A job_pid=()
     local -A job_rc=()
 
+    # A conjunctive rule which stops at the first failure is settled by any failure, so a wait may
+    # name the dependency of every clause and not only the ones the clause it is in declares: the
+    # clauses which follow are started ahead, and a failing one ends the rule at once instead of
+    # after the clause before it has been collected.  Keep-going wants the rest, and a disjunct
+    # rule's later clause is not a verdict over the ones before it, so neither takes this path.
+    local rule_fail_fast=
+    local -a rule_deps_all=()
+    if [[ "$BAR_KEEP_GOING" = 1 && "${BAR_RULE_FLAGS[$RULE_NAME]:-}" != *d* ]]; then
+        rule_fail_fast=true
+        local _ad_clause
+        local -a _ad_deps=()
+        for _ad_clause in $clauses; do
+            [[ "${#BAR_CLAUSE_DEPS[$_ad_clause]}" -gt 0 ]] || continue
+            readarray -d $'\n' -t _ad_deps <<<"${BAR_CLAUSE_DEPS[$_ad_clause]}"
+            rule_deps_all+=(${_ad_deps[@]+"${_ad_deps[@]}"})
+        done
+    fi
+
     # A rule marked '--parallel' starts the dependencies of all its clauses at the first of them;
     # the clause bodies stay in declared order (a body works in the directory).  A disjunct rule
     # does not: which clause is tried first is its meaning, so it inherits the flag per clause.
@@ -1058,6 +1131,23 @@ function rule_eval ## <name> [args..] - Evaluates a rule
 
     local clause
     for clause in $clauses; do
+        # A failure which has already arrived settles the rule, whichever clause declared it: the
+        # dependencies of the clauses which follow are started ahead, so one of them can have
+        # failed while the clause before it is still at its turn, and a conjunctive rule has no
+        # work left to do then.  Keep-going is the mode which wants the rest of the clauses run
+        # and kept, and a disjunct rule's later clause is not a verdict over the ones before it.
+        # shellcheck disable=SC2086
+        if [[ -n "$rule_fail_fast" ]] && rule_job_failed_dep job_pid job_rc $clauses; then
+            failure "$RULE_NAME: $BAR_JOB_FAILED_DEP"
+            rule_jobs_abandon_kill job_pid job_rc
+            if [[ -n "$evaluate_always" ]]; then
+                unset "BAR_RULES_RESULT[#$rule_id]"
+            else
+                rule_result_record "$rule_id" "$BAR_JOB_FAILED_RC"
+            fi
+            [[ "${BAR_RULE_FLAGS[$RULE_NAME]}" != *m* ]] && clause_local_restore
+            return "$BAR_JOB_FAILED_RC"
+        fi
         # The run was abandoned meanwhile (a dependency failed in this tree): this shell starts
         # nothing more -- no dependency and no body -- and collects what it started before it
         # returns.  A body which already runs finishes: it is the atomic unit of work, and its
@@ -1146,7 +1236,7 @@ function rule_eval ## <name> [args..] - Evaluates a rule
                         rule_dep_parse "${deps[ahead]}"
                         [[ -n "$DEP_PARALLEL" || -n "$clause_parallel" ]] || break
                         [[ -z "$DEP_IFEXISTS" && "$DEP_CHECK" != check && "$DEP_CHECK" != negated ]] || break
-                        [[ "${BAR_RULE_FLAGS[$DEP_NAME]-a}" = *a* ]] && break
+                        rule_dep_startable "$DEP_NAME" || break
                         rule_jobs_abandoned && break
                         ahead_id="$(hash_args "$PWD $DEP_NAME ${DEP_ARGS[*]}")"
                         [[ -z "${job_pid[$ahead_id]:-}" ]] || continue
@@ -1171,7 +1261,11 @@ function rule_eval ## <name> [args..] - Evaluates a rule
                 # declared before the failing one.
                 BAR_JOB_FAILED_DEP=""
                 if [[ -n "${job_pid[$dep_id]:-}" ]] && (( BAR_INFLIGHT > 0 )); then
-                    rule_job_wait_first job_pid job_rc ${deps[@]+"${deps[@]}"}
+                    if [[ -n "$rule_fail_fast" ]]; then
+                        rule_job_wait_first job_pid job_rc ${rule_deps_all[@]+"${rule_deps_all[@]}"}
+                    else
+                        rule_job_wait_first job_pid job_rc ${deps[@]+"${deps[@]}"}
+                    fi
                 fi
                 if [[ -n "$BAR_JOB_FAILED_DEP" ]]; then
                     dep="$BAR_JOB_FAILED_DEP"

@@ -25,6 +25,9 @@
 #   AC16 early fail: a failure starts nothing more, and the jobs it has started are killed
 #   AC17 '--parallel' with the other rule and clause flags: no error, and the incompatible ones
 #        fall back to the serial evaluation
+#   AC18 the progress notices of a parallel run leave no empty line behind
+#   AC19 a dependency which is a command is a job like any other, and a failure declared in a
+#        later clause settles the rule before the clause before it has been collected
 #
 # usage: tests/test_parallel.sh
 
@@ -310,6 +313,16 @@ rule --bare bb_b: -- :
 rule --parallel --bare ip_bare: bb_a bb_b -- :
 
 rule --always p_always: -- :
+
+# A dependency which is a command ('false', 'sleep 1') is a rule for the occasion: it is started
+# ahead like any other dependency, and a failing one is the verdict as soon as it returns -- with
+# the leaves it was declared behind killed, not collected.
+rule --parallel cf_cmd_late: ef_l1 ef_l2 ef_l3 false
+
+# the same failure in a clause of its own: the clauses which follow are started ahead too, so it
+# settles the rule instead of waiting for the clause before it to be collected
+rule --parallel cf_later: ef_l1 ef_l2 ef_l3
+rule --parallel cf_later: false
 
 rule --parallel ip_always: p_a p_always p_b -- :
 
@@ -750,6 +763,27 @@ if command -v script >/dev/null 2>&1; then
 else
     pass "no 'script' on this host: the terminal output is not exercised"
 fi
+echo
+
+echo "AC19 a dependency which is a command is a job like any other"
+# three 0.3s leaves and 'false': the failure is a command, not a rule of its own, and the walk
+# used to stop at it because no rule of that name was defined yet -- so it ran at its turn, which
+# is the sum.  It is a job now, and the run costs the failure.
+: >"$P_LOG"
+timed 4 cf_cmd_late
+check "$RC" "1" "a command dependency which fails: the verdict is its failure"
+check "$(grep -c '^start' "$P_LOG" || true)" "3" "the leaves declared before it started"
+check "$(grep -c '^done' "$P_LOG" || true)" "0" "and every one of them was killed"
+# the same failure declared in a clause of its own: the rule is settled wherever the failure is
+: >"$P_LOG"
+timed 4 cf_later
+check "$RC" "1" "a failure in a later clause: the verdict"
+check "$(grep -c '^done' "$P_LOG" || true)" "0" "the earlier clause's work was killed, not collected"
+# keep-going wants the clauses behind a failure, so it is not settled by one
+: >"$P_LOG"
+timed_env 4 BAR_KEEP_GOING=2 cf_later
+check "$RC" "1" "keep-going: the failure is still the verdict"
+check "$(grep -c '^done' "$P_LOG" || true)" "3" "keep-going: the earlier clause ran to its end"
 echo
 
 if (( failures > 0 )); then
