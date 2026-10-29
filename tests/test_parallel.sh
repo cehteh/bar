@@ -780,18 +780,30 @@ echo "AC18 the progress notices of a parallel run leave no empty line behind"
 # A notice is written without its newline and cleared in place by the next message.  Another shell
 # may have ended that line already (every job writes to the same terminal), and the notice must not
 # then end it a second time: that was a blank line in front of the next message.
+#
+# A pty is the point of the fixture -- a notice is only written when the output is a terminal --
+# and 'script' is how one is obtained.  But 'script' copies its own stdin into the pty and stops
+# as soon as that stdin ends: a caller whose stdin is *closed* gets no output at all, rc 0, and
+# the two claims below were then judged on the empty string -- 'no blank line' passed on nothing
+# while 'the result was printed' failed, which is what a gate reports as a red test_parallel with
+# one check failed and no reason (measured: 'tests/test_parallel.sh <&-').  So the pty is given
+# /dev/null as its input, and an empty capture is a failure of its own that names the rc, the
+# sizes and the child's stderr -- never a verdict about a run nobody saw.
 if command -v script >/dev/null 2>&1; then
     scr_rc=0
     scr_start=$(date +%s%N)
-    ( cd "$P" && TERM=xterm BAR_PARALLEL=4 timeout 60 script -qec "$BAR pb_main" /dev/null ) \
+    ( cd "$P" && TERM=xterm BAR_PARALLEL=4 timeout 60 script -qec "$BAR pb_main" /dev/null </dev/null ) \
         >"$WORK/scr.out" 2>"$WORK/scr.err" || scr_rc=$?
     scr_ms=$(( ($(date +%s%N) - scr_start) / 1000000 ))
     play=$(cat "$WORK/scr.out")
-    plain=$(printf '%s' "$play" | sed $'s/\033\\[[0-9;]*[A-Za-z]//g')
-    check "$(printf '%s' "$plain" | grep -c '^[[:space:]]*$' || true)" "0" "no empty line in the terminal output"
-    if ! contains "$plain" "OK: pb_main" "the run's own result was printed"; then
-        echo "  (the capture: rc=${scr_rc} ${scr_ms}ms, $(wc -c <"$WORK/scr.out") bytes on stdout, $(wc -c <"$WORK/scr.err") on stderr)"
+    plain=$(printf '%s' "$play" | sed $'s/\033\[[0-9;]*[A-Za-z]//g')
+    if [[ -z "$play" ]]; then
+        fail "the terminal capture is empty (rc=${scr_rc}, ${scr_ms}ms, $(wc -c <"$WORK/scr.out") bytes on stdout, $(wc -c <"$WORK/scr.err") on stderr)"
         sed -n '1,3p' "$WORK/scr.err" | sed 's/^/  (stderr) /'
+    else
+        pass "the terminal was exercised"
+        check "$(printf '%s' "$plain" | grep -c '^[[:space:]]*$' || true)" "0" "no empty line in the terminal output"
+        contains "$plain" "OK: pb_main" "the run's own result was printed"
     fi
 else
     pass "no 'script' on this host: the terminal output is not exercised"
