@@ -35,6 +35,11 @@
 
 set -euo pipefail
 
+# These assertions measure top-level runs: each bar started here is expected to open a budget of its
+# own.  Started as a child of a bar or a make, MAKEFLAGS carries that parent's job server and a
+# nested run joins it by design, so the inherited server is dropped instead of being measured.
+unset MAKEFLAGS MFLAGS
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 BAR="$REPO_ROOT/bar"
