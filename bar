@@ -802,6 +802,13 @@ function barf_pp_start # - starts the preprocessor; sets BAR_PP_IN and BAR_PP_OU
     ppw="${BARF_PP[1]}" ppr="${BARF_PP[0]}"
     exec {ppin}>&"$ppw" {ppout}<&"$ppr"
     exec {ppw}>&- {ppr}<&-
+    # A body is evaluated in this shell, and a bare 'wait' waits for every child in its job table:
+    # the filter is one of them, and it ends only when the run closes the channel -- which the
+    # stop below does, after the bodies.  A body which waits for its own background jobs would
+    # then sit on a filter which is waiting for the body.  Disowning takes the filter out of that
+    # table; the descriptors and the parentage a frame needs stay as they are, and BARF_PP_PID
+    # keeps the pid for :func:`barf_pp_stop`.
+    disown "$BARF_PP_PID" 2>/dev/null || true
     BAR_PP_IN="$ppin"
     BAR_PP_OUT="$ppout"
     BAR_PP_OWNER="$BASHPID"
@@ -825,19 +832,16 @@ function barf_pp_fork # - a forked job drops the filter channel its parent start
 
 function barf_pp_stop # - closes the filter channel; the filter exits on EOF
 {
-    ## Closing is the whole of the stop: awk sees EOF on the frame pipe, runs its 'END' and exits,
-    ## so the 'wait' below returns.  It has to come before anything waits for the children of this
-    ## shell -- a bare 'wait' would otherwise sit on a filter which is only terminated by that very
-    ## close.
+    ## Closing is the whole of the stop: awk sees EOF on the frame pipe, runs its 'END' and exits.
+    ## Nothing waits for it here, and the filter is disowned (:func:`barf_pp_start`), so there is
+    ## no job of this shell to wait for either -- a 'wait' on the pid answers 127 at once, and this
+    ## runs from the EXIT trap, where a failing command under errexit ends the run with that status
+    ## instead of the one the rules earned.
     [[ -n "${BAR_PP_IN:-}" ]] || return 0
-    local pid="${BARF_PP_PID:-}"
     exec {BAR_PP_IN}>&- {BAR_PP_OUT}<&-
     BAR_PP_IN=""
     BAR_PP_OUT=""
     BAR_PP_OWNER=""
-    # only a child of this shell is reaped here; in a subshell ('<(preprocess f)') the filter
-    # belongs to the shell above it and 'wait' has nothing to do
-    [[ -n "$pid" ]] && wait "$pid" 2>/dev/null
     return 0
 }
 
