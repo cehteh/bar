@@ -57,6 +57,7 @@ tests: test_ext_completers
 tests: test_extcomp
 tests: test_function_completion
 tests: test_helpers
+tests: test_help_lint
 tests: test_git_hook_env
 tests: test_git_search
 tests: test_hermes_logs
@@ -103,6 +104,7 @@ test_ext_completers: -- tests/test_ext_completers.sh
 test_extcomp: -- tests/test_extcomp.sh
 test_function_completion: -- tests/test_function_completion.sh
 test_helpers: -- tests/test_helpers.sh
+test_help_lint: -- tests/test_help_lint.sh
 test_hermeskanban: -- tests/test_hermeskanban.sh
 test_hermes_logs: -- tests/test_hermes_logs.sh
 test_hermes_handoff: -- tests/test_hermes_handoff.sh

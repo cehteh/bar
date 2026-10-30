@@ -1,0 +1,40 @@
+  bar -- a rendered document
+
+ABOUT
+
+  The abstract is freeform,   with wide gaps and no rules at all.
+
+  It ends at the first column-0 title.
+
+
+RULE SEMANTICS
+
+  Body text of the section.
+
+    A header
+
+    Text below the header,   with a column.
+
+  * one item
+  * another item
+    whose text continues here
+  * a third item
+    * a nested item
+      whose text is even too
+
+    A term list
+
+      alpha      the first column
+      beta       the second one
+                 which continues here
+
+   code line
+
+  Text after the code block.
+
+     two lines of code
+     the second one
+
+  * a numbered item
+  1.  a number
+  2.  another one
