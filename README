@@ -1392,14 +1392,16 @@ MODULE API/RULES
         A name also arrives at the topic which documents it, the plural included: 'bar help
         helpers' starts at HELPER REPERTOIRE, not at the block of the function of that name.
 
-      help_lint [-C <n>] [--rule <id>,..] [--debug] [--width <n>] [file]
+      help_lint [-C <n>] [--rule <id>,..] [--debug] [--width <n>] [-v|--verbose] [file]
         report formatting violations in the help output
         Checks rendered documentation -- the text 'bar help' prints, or <file> -- against the rules
         below, one violation per line as '<line>:<id>'.  Nothing is hooked into 'lints'; a caller
         runs it.  '--rule' keeps the named ids, '--debug' names the source ('<file>:<line>', from the
         annotations 'help --debug' prints) instead of the rendered line, '-C <n>' prints n lines of
         context around each violation, and '--width <n>' also reports lines rendered wider than <n>.
-        Exit 0 when nothing is reported, 1 when something is.
+        '--verbose' is the human form: it appends the rule's own sentence, as the list below spells
+        it, and uses '-C 1' unless a '-C' is given.  Exit 0 when nothing is reported, 1 when something
+        is.
         The rules:
         A1  the abstract, up to the first column-0 title, is freeform and not checked
         H1  a section title (column 0) is ALL CAPS

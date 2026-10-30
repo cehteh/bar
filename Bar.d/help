@@ -1964,13 +1964,15 @@ rule --bare help:
 # Provide indexer via bare rule for external consumers like completion
 rule --bare help_indexer:
 
-## [-C <n>] [--rule <id>,..] [--debug] [--width <n>] [file] - report formatting violations in the help output
+## [-C <n>] [--rule <id>,..] [--debug] [--width <n>] [-v|--verbose] [file] - report formatting violations in the help output
 ##   Checks rendered documentation -- the text 'bar help' prints, or <file> -- against the rules
 ##   below, one violation per line as '<line>:<id>'.  Nothing is hooked into 'lints'; a caller
 ##   runs it.  '--rule' keeps the named ids, '--debug' names the source ('<file>:<line>', from the
 ##   annotations 'help --debug' prints) instead of the rendered line, '-C <n>' prints n lines of
 ##   context around each violation, and '--width <n>' also reports lines rendered wider than <n>.
-##   Exit 0 when nothing is reported, 1 when something is.
+##   '--verbose' is the human form: it appends the rule's own sentence, as the list below spells
+##   it, and uses '-C 1' unless a '-C' is given.  Exit 0 when nothing is reported, 1 when something
+##   is.
 ##   The rules:
 ##     A1  the abstract, up to the first column-0 title, is freeform and not checked
 ##     H1  a section title (column 0) is ALL CAPS
@@ -1995,11 +1997,12 @@ rule help_lint:
 
 function help_lint
 {
-    local ctx=0 want="" width=0 debug=0
+    local ctx=0 ctx_given=0 want="" width=0 debug=0 verbose=0
     local -a files=()
     while (( $# > 0 )); do
         case "$1" in
-            -C|--context) ctx="${2:-}"; shift 2 ;;
+            -C|--context) ctx="${2:-}"; ctx_given=1; shift 2 ;;
+            -v|--verbose) verbose=1; shift ;;
             --rule) want="${2:-}"; shift 2 ;;
             --debug) debug=1; shift ;;
             --width) width="${2:-}"; shift 2 ;;
@@ -2011,18 +2014,23 @@ function help_lint
     done
     files+=( "$@" )
 
+    # the human form reads a violation in place: one line of context either side
+    if (( verbose && !ctx_given )); then
+        ctx=1
+    fi
+
     if (( ${#files[@]} > 0 )); then
         if [[ ! -r "${files[0]}" || -d "${files[0]}" ]]; then
             help_usage_error help_lint "not a file: ${files[0]}"
             return 2
         fi
-        help_lint_awk "$ctx" "$want" "$width" "$debug" "${files[0]}"
+        help_lint_awk "$ctx" "$want" "$width" "$debug" "$verbose" "${files[0]}"
         return
     fi
 
     # Read the render, not the README: the README is generated, and a stale one would make the
     # report lie in the one direction that matters.
-    HELP_ANNOTATE=1 help_render | help_lint_awk "$ctx" "$want" "$width" "$debug"
+    HELP_ANNOTATE=1 help_render | help_lint_awk "$ctx" "$want" "$width" "$debug" "$verbose"
 }
 
 # The checker itself, reading the annotated render on stdin or the file it is given.  It is not
@@ -2031,7 +2039,26 @@ function help_lint
 function help_lint_awk
 {
     # One pass over the text: classify, then report per line, so the output is in line order.
-    awk -v ctx="$1" -v want="$2" -v width="$3" -v debug="$4" '
+    # The rule sentences '--verbose' appends are read off this rule's own documentation, so the
+    # human form cannot say anything the rule list does not.
+    awk -v ctx="$1" -v want="$2" -v width="$3" -v debug="$4" -v verbose="$5" \
+        -v doc="${BAR_DIR:-}/help" '
+BEGIN {
+    while (doc != "" && (getline dline < doc) > 0) {
+        if (dline !~ /^##[ \t]+[A-Z][0-9][ \t]/) {
+            continue
+        }
+        sub(/^##[ \t]+/, "", dline)
+        did = substr(dline, 1, 2)
+        dtext = substr(dline, 3)
+        sub(/^[ \t]+/, "", dtext)
+        sub(/[ \t]+$/, "", dtext)
+        desc[did] = dtext
+    }
+    if (doc != "") {
+        close(doc)
+    }
+}
 function trim(s) {
     sub(/^[ \t]+/, "", s)
     sub(/[ \t]+$/, "", s)
@@ -2090,6 +2117,9 @@ function probe_cols(s,    i, lead, run) {
 }
 
 function report(i, id) {
+    if (verbose && (id in desc)) {
+        id = id " " desc[id]
+    }
     if (debug && O[i] != "") {
         printf "#%s %d:%s\n", O[i], i, id
     } else {
@@ -2102,14 +2132,10 @@ function violation(i, id) {
         return
     }
     count++
-    if (ctx > 0) {
-        print_context(i, id)
-    } else {
-        hits[i] = hits[i] (hits[i] == "" ? "" : " ") id
-    }
+    hits[i] = hits[i] (hits[i] == "" ? "" : " ") id
 }
 
-function print_context(i, id,    a, b) {
+function print_context(i, id,    a, b, c) {
     a = i - ctx
     if (a < 1) {
         a = 1
@@ -2119,8 +2145,8 @@ function print_context(i, id,    a, b) {
         b = n
     }
     report(i, id)
-    for (k = a; k <= b; k++) {
-        printf "%6d%s %s\n", k, (k == i) ? ">" : "|", L[k]
+    for (c = a; c <= b; c++) {
+        printf "%6d%s %s\n", c, (c == i) ? ">" : "|", L[c]
     }
 }
 
@@ -2463,13 +2489,15 @@ END {
     }
 
     # the report is in line order, whatever order the checks ran in
-    if (ctx == 0) {
-        for (i = 1; i <= n; i++) {
-            if (hits[i] == "") {
-                continue
-            }
-            idc = split(hits[i], ids, " ")
-            for (k = 1; k <= idc; k++) {
+    for (i = 1; i <= n; i++) {
+        if (hits[i] == "") {
+            continue
+        }
+        idc = split(hits[i], ids, " ")
+        for (k = 1; k <= idc; k++) {
+            if (ctx > 0) {
+                print_context(i, ids[k])
+            } else {
                 report(i, ids[k])
             }
         }
@@ -2477,5 +2505,5 @@ END {
 
     exit (count > 0)
 }
-  ' "${@:5}"
+  ' "${@:6}"
 }

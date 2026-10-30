@@ -15,6 +15,9 @@
 #        lines yields exactly the plain render
 #   AC8  'help_lint --debug' names the source ('<file>:<line>') of the line it reports
 #   AC9  a file which is not there and an unknown option are usage errors (exit 2)
+#   AC11 '-v|--verbose' appends the rule's own sentence and prints one line of context, without -C
+#   AC12 an explicit '-C 0' keeps the context off under '--verbose'
+#   AC13 every sentence '--verbose' prints is the one 'bar usage help_lint' carries
 #
 # usage: tests/test_help_lint.sh
 
@@ -121,6 +124,49 @@ check "$rc" "2" "AC9 an unknown option is a usage error"
 # the documentation the rule carries is what 'bar usage' prints
 contains "$("$BAR" --bare usage help_lint 2>/dev/null || true)" "K2  the columns of one term list align" \
     "AC10 'bar usage help_lint' explains the rule ids"
+
+# AC11 ----------------------------------------------------------------------------------------
+out="$(lint -v --rule W3 "$BAD")"
+contains "$out" "15:W3 a line carries no trailing spaces" "AC11 --verbose appends the rule's sentence"
+contains "$out" $'\n    14|' "AC11 --verbose prints the line above without -C"
+contains "$out" $'\n    15> ' "AC11 --verbose marks the offending line"
+contains "$out" $'\n    16|' "AC11 --verbose prints the line below without -C"
+
+# AC12 ----------------------------------------------------------------------------------------
+out="$(lint --verbose -C 0 --rule W3 "$BAD")"
+contains "$out" "15:W3 a line carries no trailing spaces" "AC12 --verbose still appends the sentence"
+absent "$out" "    14|" "AC12 an explicit -C 0 keeps the context off"
+
+# AC13 ----------------------------------------------------------------------------------------
+# the sentence comes from the rule list itself, so the two can never drift
+drift="$(
+    awk '
+        FNR == NR {
+            if ($0 ~ /^ +[A-Z][0-9]  +/) {
+                s = $0; sub(/^ +/, "", s)
+                t = substr(s, 3); sub(/^ +/, "", t)
+                doc[substr(s, 1, 2)] = t
+            }
+            next
+        }
+        /^[0-9]+:[A-Z][0-9] / {
+            id = substr($0, index($0, ":") + 1, 2)
+            t = substr($0, index($0, ":") + 4)
+            if (!(id in doc)) { print id " is not in the rule list"; next }
+            if (doc[id] != t) { print id " differs from the rule list" }
+        }
+    ' <("$BAR" --bare usage help_lint 2>/dev/null) \
+      <(lint -v --width 40 "$BAD")
+)"
+check "$drift" "" "AC13 the verbose sentences are the documented ones"
+
+# AC14 ----------------------------------------------------------------------------------------
+# context is a presentation of the report, never a different one, and it reads in line order
+flat="$(lint --width 40 "$BAD" | grep '^[0-9]*:' | sort)"
+ctxout="$(lint -C 2 --width 40 "$BAD" | grep '^[0-9]*:' | sort)"
+check "$ctxout" "$flat" "AC14 -C reports the same violations as the flat form"
+out="$(lint -C 2 --width 40 "$BAD" | grep '^[0-9]*:')"
+check "$out" "$(sort -s -n -t: -k1,1 <<<"$out")" "AC14 -C reports in line order"
 
 if (( failures > 0 )); then
     echo "$failures assertion(s) failed"
