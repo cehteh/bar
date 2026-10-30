@@ -1,0 +1,14 @@
+  bar -- a rendered document
+
+ABOUT
+
+  Body.
+
+  * a star item
+  - a dash item
+  + a plus item
+  1.  a dotted number
+
+  -  a dash item whose text column is odd
+      continuation indented to six
+   - a dash item indented at an odd column

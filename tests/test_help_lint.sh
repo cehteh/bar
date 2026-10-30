@@ -5,7 +5,7 @@
 # Acceptance tests for 'help_lint' and for the source annotations 'help --debug' prints.
 #
 #   AC1  a document which follows the rules reports nothing and exits 0
-#   AC2  every rule fires: the broken fixture names each of the 15 ids, and exit is 1
+#   AC2  every rule fires: the broken fixture names each of the 14 ids, and exit is 1
 #   AC3  '-C <n>' prints the numbered block around a violation, the line marked
 #   AC4  '--rule' keeps only the named ids, and a rule which fires on nothing reports nothing
 #   AC5  '--width' is off by default and reports the rendered width when given
@@ -18,6 +18,7 @@
 #   AC11 '-v|--verbose' appends the rule's own sentence and prints one line of context, without -C
 #   AC12 an explicit '-C 0' keeps the context off under '--verbose'
 #   AC13 every sentence '--verbose' prints is the one 'bar usage help_lint' carries
+#   AC15 '-' and '+' start a list item like '*', and L3/L4 measure them
 #
 # usage: tests/test_help_lint.sh
 
@@ -41,7 +42,8 @@ lint() {
 
 CLEAN="$SCRIPT_DIR/help_lint_clean.txt"
 BAD="$SCRIPT_DIR/help_lint_bad.txt"
-[[ -f "$CLEAN" && -f "$BAD" ]] || { echo "  ✗ the fixtures are missing"; exit 1; }
+MARKERS="$SCRIPT_DIR/help_lint_markers.txt"
+[[ -f "$CLEAN" && -f "$BAD" && -f "$MARKERS" ]] || { echo "  ✗ the fixtures are missing"; exit 1; }
 
 # AC1 -----------------------------------------------------------------------------------------
 out="$(lint "$CLEAN")"
@@ -56,7 +58,7 @@ rc=0
 "$BAR" --bare help_lint "$BAD" >/dev/null 2>&1 || rc=$?
 check "$rc" "1" "AC2 a document with violations exits 1"
 missing=""
-for id in B1 C2 H1 H2 H4 H5 I1 K1 K2 L1 L3 L4 T1 W2 W3; do
+for id in B1 C2 H1 H2 H4 H5 I1 K1 K2 L3 L4 T1 W2 W3; do
     if ! grep -q ":$id\$" <<<"$out"; then
         missing="$missing $id"
     fi
@@ -167,6 +169,13 @@ ctxout="$(lint -C 2 --width 40 "$BAD" | grep '^[0-9]*:' | sort)"
 check "$ctxout" "$flat" "AC14 -C reports the same violations as the flat form"
 out="$(lint -C 2 --width 40 "$BAD" | grep '^[0-9]*:')"
 check "$out" "$(sort -s -n -t: -k1,1 <<<"$out")" "AC14 -C reports in line order"
+
+# AC15 ----------------------------------------------------------------------------------------
+# a '-' or a '+' is a list marker like '*', so the alignment rules measure it and no marker form
+# is refused
+out="$(lint "$MARKERS")"
+check "$out" $'12:L3\n13:L4\n14:L3' "AC15 the alignment rules measure '-' and '+' items"
+absent "$out" ":L1" "AC15 no marker form is refused"
 
 if (( failures > 0 )); then
     echo "$failures assertion(s) failed"

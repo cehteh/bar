@@ -21,6 +21,10 @@ RULE SEMANTICS
   * a third item
     * a nested item
       whose text is even too
+  - a dash item
+    whose text continues here too
+  + a plus item
+  1.  a dotted number
 
     A term list
 
