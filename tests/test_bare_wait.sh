@@ -77,9 +77,19 @@ echo "AC3 a second run of the same project exits 0"
 FIRST_RC="$RC"
 runin "$P"
 check "$RC" "0" "the warm run exits 0 (${FIRST_RC} was the fresh one)"
-if [[ "$RC" != "0" && "$RC" != "124" ]]; then
-    echo "  note: the warm run's status is the stop's own last command"
-fi
+echo
+
+echo "AC4 a body which fails after its wait still fails the run"
+Q="$WORK/p2"
+mkdir -p "$Q/Bar.d"
+cp -Lr "$REPO_ROOT/Bar.d/." "$Q/Bar.d/"
+cat >"$Q/Barf" <<'EOS'
+fails: -- 'echo x & wait; exit 3'
+MAIN: fails
+EOS
+runin "$Q"
+check "$RC" "3" "the body's own status reaches the caller (not 127 from the stop, not 0)"
+contains "$OUT" "x" "and its background job ran before it"
 echo
 
 if ((failures)); then
