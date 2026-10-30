@@ -35,15 +35,24 @@ function help
 {
   local -a args=("$@")
   local section_only=0
+  local annotate=0
 
-  if (( ${#args[@]} > 0 )); then
+  # leading flags come before the query; anything else is the query itself
+  while (( ${#args[@]} > 0 )); do
     case "${args[0]}" in
       -s|--short)
         section_only=1
         args=("${args[@]:1}")
         ;;
+      --debug)
+        annotate=1
+        args=("${args[@]:1}")
+        ;;
+      *)
+        break
+        ;;
     esac
-  fi
+  done
 
   local query="${args[*]}"
   if [[ -z "$query" ]]; then
@@ -235,6 +244,13 @@ function help
     fi
   fi
 
+  # The annotation is a property of the printing, never of the index: 'help_indexer' counts lines
+  # to turn a topic into a span, and a marker line would move every number below it.
+  local -a render_cmd=(help_render)
+  if (( annotate == 1 )); then
+    render_cmd=(help_render_annotated)
+  fi
+
   local render_span=""
   if (( section_only == 1 )); then
     if [[ -n "$found_line" && "$found_proto" != "text" ]]; then
@@ -248,14 +264,14 @@ function help
 
   if [[ $use_pager -eq 0 ]]; then
     if [[ -n "$render_span" ]]; then
-      help_render "$render_span"
+      "${render_cmd[@]}" "$render_span"
       return
     fi
     if (( stdout_is_tty == 0 )); then
-      local -a help_lines=()
-      mapfile -t help_lines < <(help_render)
-
-      local total=${#help_lines[@]}
+      # The cache is built in this shell, so the slice can be printed annotated: a marker line
+      # would move every number a second render counted.
+      help_render >/dev/null
+      local total=${#help_render_cache[@]}
       if (( total == 0 )); then
         return
       fi
@@ -272,17 +288,14 @@ function help
         start_idx=0
       fi
 
-      local i
-      for ((i=start_idx; i<total; i++)); do
-        printf '%s\n' "${help_lines[i]}" || return 0
-      done
+      HELP_ANNOTATE=$annotate help_render_print $(( start_idx + 1 )) "$total"
       return
     fi
 
     if [[ -n "$render_span" ]]; then
-      help_render "$render_span"
+      "${render_cmd[@]}" "$render_span"
     else
-      help_render
+      "${render_cmd[@]}"
     fi
     return
   fi
@@ -304,9 +317,9 @@ function help
 
   if (( ${#pager_cmd[@]} == 0 )); then
     if [[ -n "$render_span" ]]; then
-      help_render "$render_span"
+      "${render_cmd[@]}" "$render_span"
     else
-      help_render
+      "${render_cmd[@]}"
     fi
     return
   fi
@@ -314,9 +327,9 @@ function help
   # shellcheck disable=2034
   BAR_VERBOSITY_LEVEL=0
   if [[ -n "$render_span" ]]; then
-    "${pager_cmd[@]}" < <(help_render "$render_span")
+    "${pager_cmd[@]}" < <("${render_cmd[@]}" "$render_span")
   else
-    "${pager_cmd[@]}" < <(help_render)
+    "${pager_cmd[@]}" < <("${render_cmd[@]}")
   fi
 }
 
@@ -393,7 +406,13 @@ function help_render
   fi
   if ! declare -p help_render_cache >/dev/null 2>&1; then
     declare -ga help_render_cache=()
-  mapfile -t help_render_cache <<EOF
+    declare -ga help_render_origin=()
+    local -a help_render_raw=()
+    # the first line of the narrative, downstream of the marker line: computed, never written
+    # down, so an edit above the heredoc cannot make the annotation lie
+    local help_narrative_line=$((LINENO + 3))
+  mapfile -t help_render_raw <<EOF
+#@self
 
   bar -- BAshRulez the bash rule evaluator
 
@@ -1278,24 +1297,81 @@ LICENSE
     You should have received a copy of the GNU Affero General Public License
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 EOF
+    # The text is assembled from a heredoc and from the per-module emitters, which annotate what
+    # they print with a '#<file>:<line>' line naming the source of the text which follows it.  The
+    # markers are split off here, so the render stays byte-identical to what it always was while
+    # 'help --debug' can name the origin of every block.
+    local _line _origin=""
+    for _line in "${help_render_raw[@]}"; do
+      if [[ "$_line" == "#"* ]]; then
+        if [[ "$_line" =~ ^#[^[:space:]]*:[0-9]+$ ]]; then
+          _origin="${_line:1}"
+          continue
+        elif [[ "$_line" == "#@self" ]]; then
+          _origin="Bar.d/help:$help_narrative_line"
+          continue
+        fi
+      fi
+      help_render_cache+=( "$_line" )
+      if [[ "$_line" == *[![:space:]]* ]]; then
+        help_render_origin+=( "$_origin" )
+        _origin=""
+      else
+        help_render_origin+=( "" )
+      fi
+    done
   fi
 
+  local total=${#help_render_cache[@]}
+
   if [[ -z "$span" ]]; then
-    printf '%s\n' "${help_render_cache[@]}"
+    help_render_print 1 "$total"
     return
   fi
 
   if [[ "$span" =~ ^([0-9]+)-([0-9]+)$ ]]; then
-    local start="${BASH_REMATCH[1]}"
-    local end="${BASH_REMATCH[2]}"
-    local i
-    for ((i=start; i<=end; i++)); do
-      printf '%s\n' "${help_render_cache[i-1]}"
-    done
+    help_render_print "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
     return
   fi
 
-  printf '%s\n' "${help_render_cache[@]}"
+  help_render_print 1 "$total"
+}
+
+## <span> - print the render with the source of every block named above it
+function help_render_annotated
+{
+  ## The form 'help --debug' prints: each block is preceded by '#<file>:<line>', the line the text
+  ## comes from.  It is a wrapper so the annotation is a property of the print, never of the index.
+  HELP_ANNOTATE=1 help_render "$@"
+}
+
+## <first> <last> - print the rendered lines <first>..<last>, annotated when 'HELP_ANNOTATE' is set
+function help_render_print
+{
+  ## A line which carries an origin is preceded by '#<file>:<line>', the form 'help --debug'
+  ## prints and 'help_lint --debug' reads.
+  if [[ "${HELP_ANNOTATE:-0}" != 1 ]]; then
+    printf '%s\n' "${help_render_cache[@]:$(( $1 - 1 )):$(( $2 - $1 + 1 ))}"
+    return
+  fi
+
+  # A block is annotated once, at its first line.  A span which starts inside one still says where
+  # the text comes from: the origin in force is the last one before it.
+  local i
+  for ((i=$1; i>=1; i--)); do
+    if [[ -n "${help_render_origin[i-1]:-}" ]]; then
+      if (( i < $1 )); then
+        printf '#%s\n' "${help_render_origin[i-1]}"
+      fi
+      break
+    fi
+  done
+  for ((i=$1; i<=$2; i++)); do
+    if [[ -n "${help_render_origin[i-1]:-}" ]]; then
+      printf '#%s\n' "${help_render_origin[i-1]}"
+    fi
+    printf '%s\n' "${help_render_cache[i-1]}"
+  done
 }
 
 
@@ -1505,26 +1581,52 @@ function help_describe_files
 function help_describe_file
 {
     awk '
-        function printout(text) {
-            out = out text "\n"
+        # The module as the reader names it: Bar.d/<name>, or the basename for bar itself.
+        function where(name,    i) {
+            i = index(name, "/Bar.d/")
+            if (i > 0) {
+                return "Bar.d/" substr(name, i + 7)
+            }
+            sub(/^.*\//, "", name)
+            return name
         }
 
+        function here() {
+            return "#" where(FILENAME) ":" FNR
+        }
+
+        # Every line carries the source line it came from; the first is the module abstract and
+        # becomes the title line, the rest are the description indented below it.
         /^###/ {
             line = $0
             sub(/^###[ ]?/, "", line)
-            printout(indent line)
-            indent = "    "
+            count++
+            mark[count] = here()
+            if (count == 1) {
+                text[count] = line
+            } else if (line != "") {
+                text[count] = "    " line
+            } else {
+                text[count] = ""
+            }
             next
         }
 
         END {
             name = FILENAME
             gsub(/^.*\//, "", name)
-            if (out != "") {
-                print "  " name " - " out
-            } else {
+            if (count == 0) {
                 exit 1
             }
+            print mark[1]
+            printf "  %s - %s\n", name, text[1]
+            for (i = 2; i <= count; i++) {
+                if (text[i] != "") {
+                    print mark[i]
+                }
+                print text[i]
+            }
+            print ""
         }
     ' "$1"
 }
@@ -1534,6 +1636,20 @@ function help_describe_functions
     awk '
         function printout(text) {
             out = out text "\n"
+        }
+
+        # The module as the reader names it: Bar.d/<name>, or the basename for bar itself.
+        function where(name,    i) {
+            i = index(name, "/Bar.d/")
+            if (i > 0) {
+                return "Bar.d/" substr(name, i + 7)
+            }
+            sub(/^.*\//, "", name)
+            return name
+        }
+
+        function here() {
+            return "#" where(FILENAME) ":" FNR
         }
 
         function emit(name, infopart,    proto, desc, proto_desc) {
@@ -1551,6 +1667,7 @@ function help_describe_functions
                 proto = ""
             }
             printout()
+            printout(doc_at)
             if (proto != "") {
                 printout("      " name " " proto)
             } else {
@@ -1563,12 +1680,16 @@ function help_describe_functions
 
     # A ## block at column 0 belongs to the function which follows it, the form a rule uses.
         /^## / {
+            if (lead == "") {
+                doc_at = here()
+            }
             lead = lead (lead == "" ? "" : " ") substr($0, 4)
             next
         }
 
     /^function[ \t]+[A-Za-z_][A-Za-z0-9_]*[ \t]*##/ {
             lead = ""
+            doc_at = here()
             split($0, parts, "##")
             if (length(parts) < 2) {
                 next
@@ -1594,6 +1715,7 @@ function help_describe_functions
             }
 
             printout()
+            printout(doc_at)
             if (proto != "") {
                 printout("      " namepart " " proto)
             } else {
@@ -1617,6 +1739,7 @@ function help_describe_functions
         /^([ \t][ \t])+##[^#].*/ {
             line = $0
             sub(/^.*##[ ]?/, "", line)
+            printout(here())
             printout("        " line)
             next
         }
@@ -1637,6 +1760,20 @@ function help_describe_rules
     awk '
         function printout(text) {
             out = out text "\n"
+        }
+
+        # The module as the reader names it: Bar.d/<name>, or the basename for bar itself.
+        function where(name,    i) {
+            i = index(name, "/Bar.d/")
+            if (i > 0) {
+                return "Bar.d/" substr(name, i + 7)
+            }
+            sub(/^.*\//, "", name)
+            return name
+        }
+
+        function here() {
+            return "#" where(FILENAME) ":" FNR
         }
 
     function trim(text) {
@@ -1679,6 +1816,7 @@ function help_describe_rules
         }
 
         printout("")
+        printout(doc_at)
         if (proto_line != "") {
           printout("      " rule_name " " proto_line)
         } else {
@@ -1705,6 +1843,9 @@ function help_describe_rules
     /^##[^.]/ {
       line = $0
       sub(/^##[ \t]*/, "", line)
+      if (doc_count == 0) {
+        doc_at = here()
+      }
       doc_count++
       doc_lines[doc_count] = line
       next
@@ -1737,6 +1878,21 @@ function help_describe_variables
         function printout(text) {
             out = out text "\n"
         }
+
+        # The module as the reader names it: Bar.d/<name>, or the basename for bar itself.
+        function where(name,    i) {
+            i = index(name, "/Bar.d/")
+            if (i > 0) {
+                return "Bar.d/" substr(name, i + 7)
+            }
+            sub(/^.*\//, "", name)
+            return name
+        }
+
+        function here() {
+            return "#" where(FILENAME) ":" FNR
+        }
+
 
     /declare[ \t]+.*##/ {
       before = $0
@@ -1778,6 +1934,7 @@ function help_describe_variables
       }
 
       printout("")
+      printout(here())
       printout(line)
       printout("        " desc)
       if (value != "") {
@@ -1807,3 +1964,541 @@ rule --bare help:
 # Provide indexer via bare rule for external consumers like completion
 rule --bare help_indexer:
 
+## [-C <n>] [--rule <id>,..] [--debug] [--width <n>] [-v|--verbose] [file] - report formatting violations in the help output
+##   Checks rendered documentation -- the text 'bar help' prints, or <file> -- against the rules
+##   below, one violation per line as '<line>:<id>'.  Nothing is hooked into 'lints'; a caller
+##   runs it.  '--rule' keeps the named ids, '--debug' names the source ('<file>:<line>', from the
+##   annotations 'help --debug' prints) instead of the rendered line, '-C <n>' prints n lines of
+##   context around each violation, and '--width <n>' also reports lines rendered wider than <n>.
+##   '--verbose' is the human form: it appends the rule's own sentence, as the list below spells
+##   it, and uses '-C 1' unless a '-C' is given.  Exit 0 when nothing is reported, 1 when something
+##   is.
+##   A list item is a line whose text starts with '*', a run of them, a single '-' or '+', or a
+##   dotted number ('1.'); its text column is what L3 and L4 measure.
+##   The rules:
+##     A1  the abstract, up to the first column-0 title, is freeform and not checked
+##     H1  a section title (column 0) is ALL CAPS
+##     H2  a section title does not end in '.' or ';' (an indented line which does is prose)
+##     H4  a title is followed by one empty line
+##     H5  a section title is preceded by two empty lines
+##     B1  blocks are separated by one empty line (two only before a section title)
+##     W1  with '--width': the rendered line is not wider
+##     W2  an empty line carries no spaces
+##     W3  a line carries no trailing spaces
+##     T1  no tab, the render is indentation
+##     I1  a line indented by an odd number of spaces starts a code block after an empty line
+##     C2  a code block is followed by an empty line
+##     L3  the text of a list item starts at an even column
+##     L4  a continuation line of a list item is indented to that column
+##     K1  a column of a term list starts at an even column
+##     K2  the columns of one term list align
+##   Not checked: markup ('*bold*', '/italic/', '_underline_', quoted code) is allowed and passes,
+##   and the abstract.
+rule help_lint:
+
+function help_lint
+{
+    local ctx=0 ctx_given=0 want="" width=0 debug=0 verbose=0
+    local -a files=()
+    while (( $# > 0 )); do
+        case "$1" in
+            -C|--context) ctx="${2:-}"; ctx_given=1; shift 2 ;;
+            -v|--verbose) verbose=1; shift ;;
+            --rule) want="${2:-}"; shift 2 ;;
+            --debug) debug=1; shift ;;
+            --width) width="${2:-}"; shift 2 ;;
+            -h|--help) help --short help_lint; return 0 ;;
+            --) shift; break ;;
+            -*) usage_error help_lint "unknown option $1"; return 2 ;;
+            *) files+=( "$1" ); shift ;;
+        esac
+    done
+    files+=( "$@" )
+
+    # the human form reads a violation in place: one line of context either side
+    if (( verbose && !ctx_given )); then
+        ctx=1
+    fi
+
+    if (( ${#files[@]} > 0 )); then
+        if [[ ! -r "${files[0]}" || -d "${files[0]}" ]]; then
+            help_usage_error help_lint "not a file: ${files[0]}"
+            return 2
+        fi
+        help_lint_awk "$ctx" "$want" "$width" "$debug" "$verbose" "${files[0]}"
+        return
+    fi
+
+    # Read the render, not the README: the README is generated, and a stale one would make the
+    # report lie in the one direction that matters.
+    HELP_ANNOTATE=1 help_render | help_lint_awk "$ctx" "$want" "$width" "$debug" "$verbose"
+}
+
+# The checker itself, reading the annotated render on stdin or the file it is given.  It is not
+# documented with '##': 'bar usage help_lint' must answer the rule, and a name starting the same
+# way would outrank it.
+function help_lint_awk
+{
+    # One pass over the text: classify, then report per line, so the output is in line order.
+    # The rule sentences '--verbose' appends are read off this rule's own documentation, so the
+    # human form cannot say anything the rule list does not.
+    awk -v ctx="$1" -v want="$2" -v width="$3" -v debug="$4" -v verbose="$5" \
+        -v doc="${BAR_DIR:-}/help" '
+BEGIN {
+    while (doc != "" && (getline dline < doc) > 0) {
+        if (dline !~ /^##[ \t]+[A-Z][0-9][ \t]/) {
+            continue
+        }
+        sub(/^##[ \t]+/, "", dline)
+        did = substr(dline, 1, 2)
+        dtext = substr(dline, 3)
+        sub(/^[ \t]+/, "", dtext)
+        sub(/[ \t]+$/, "", dtext)
+        desc[did] = dtext
+    }
+    if (doc != "") {
+        close(doc)
+    }
+}
+function trim(s) {
+    sub(/^[ \t]+/, "", s)
+    sub(/[ \t]+$/, "", s)
+    return s
+}
+
+function indof(s,    n) {
+    n = match(s, /^ */)
+    return n ? RLENGTH : 0
+}
+
+# The list marker of a line ('*', a run of them, a single '-' or '+', or a dotted number): sets
+# g_mark, g_ind, g_text (0-based text column), returns 1 when the line starts a list item.
+function probe_list(s,    t, rest, k) {
+    t = s
+    sub(/^ */, "", t)
+    g_ind = length(s) - length(t)
+    if (match(t, /^(\*+|[-+]|[0-9]+(\.[0-9]+)*\.)/) == 0) {
+        return 0
+    }
+    g_mark = substr(t, 1, RLENGTH)
+    rest = substr(t, RLENGTH + 1)
+    if (match(rest, /^ +/) != 1) {
+        return 0
+    }
+    sp = RLENGTH
+    if (trim(substr(rest, sp + 1)) == "") {
+        return 0
+    }
+    g_text = g_ind + length(g_mark) + sp
+    return 1
+}
+
+# The tabstops of a line: a run of four or more spaces inside it starts a column at the position
+# which follows it.  Sets g_ncol and g_col[1..g_ncol] (1-based positions), returns 1 when the line
+# carries one.
+function probe_cols(s,    i, lead, run) {
+    g_ncol = 0
+    lead = 0
+    while (substr(s, lead + 1, 1) == " ") {
+        lead++
+    }
+    run = 0
+    for (i = lead + 1; i <= length(s); i++) {
+        if (substr(s, i, 1) == " ") {
+            run++
+            continue
+        }
+        if (run >= 4) {
+            g_ncol++
+            g_col[g_ncol] = i
+        }
+        run = 0
+    }
+    return (g_ncol > 0)
+}
+
+function report(i, id) {
+    if (verbose && (id in desc)) {
+        id = id " " desc[id]
+    }
+    if (debug && O[i] != "") {
+        printf "#%s %d:%s\n", O[i], i, id
+    } else {
+        printf "%d:%s\n", i, id
+    }
+}
+
+function violation(i, id) {
+    if (want != "" && ("," want ",") !~ ("," id ",")) {
+        return
+    }
+    count++
+    hits[i] = hits[i] (hits[i] == "" ? "" : " ") id
+}
+
+function print_context(i, id,    a, b, c) {
+    a = i - ctx
+    if (a < 1) {
+        a = 1
+    }
+    b = i + ctx
+    if (b > n) {
+        b = n
+    }
+    report(i, id)
+    for (c = a; c <= b; c++) {
+        printf "%6d%s %s\n", c, (c == i) ? ">" : "|", L[c]
+    }
+}
+
+{
+    if ($0 ~ /^#[^ \t]+:[0-9]+$/) {
+        origin = substr($0, 2)
+        next
+    }
+    n++
+    L[n] = $0
+    O[n] = origin
+}
+
+END {
+    # --- classification -------------------------------------------------------------------
+    # blank/indent, and the code blocks: a segment indented by an odd number of spaces is code,
+    # it ends at the first non-blank line indented less.
+    code_indent = 0
+    # the tabstops of the block the previous line belonged to: a term list declares its columns
+    # once and the following lines align to them, whether their own gap is four spaces or three
+    split("", tabs)
+    ntabs = 0
+    blk_indent = -1
+    open_text = 0
+    for (i = 1; i <= n; i++) {
+        blank[i] = (trim(L[i]) == "")
+        ind[i] = indof(L[i])
+        if (blank[i]) {
+            code[i] = 0
+            split("", tabs)
+            ntabs = 0
+            blk_indent = -1
+            open_text = 0
+            continue
+        }
+        if (code_indent > 0 && ind[i] < code_indent) {
+            code_indent = 0
+        }
+        if (code_indent == 0 && (ind[i] % 2) == 1) {
+            # an odd indent is a code segment, except where it continues a column of the block
+            # above: that is a misaligned column, reported as such, not a code block
+            if (ntabs > 0 && (ind[i] + 1) in tabs) {
+                code[i] = 0
+            } else if (probe_list(L[i])) {
+                code[i] = 0
+            } else if (open_text > 0 && ind[i] == open_text) {
+                code[i] = 0
+            } else {
+                code_indent = ind[i]
+                code[i] = 1
+            }
+        } else {
+            code[i] = (code_indent > 0)
+        }
+        if (code[i]) {
+            continue
+        }
+        if (probe_list(L[i])) {
+            open_text = g_text
+        }
+        if (blk_indent < 0 || ind[i] < blk_indent) {
+            split("", tabs)
+            ntabs = 0
+            blk_indent = ind[i]
+        }
+        if (probe_cols(L[i])) {
+            for (k = 1; k <= g_ncol; k++) {
+                if (!((g_col[k]) in tabs)) {
+                    tabs[g_col[k]] = 1
+                    ntabs++
+                }
+            }
+        }
+    }
+
+    # the abstract: everything before the first column-0 title is freeform and not checked
+    abstract = n + 1
+    for (i = 1; i <= n; i++) {
+        if (!blank[i] && ind[i] == 0) {
+            abstract = i
+            break
+        }
+    }
+
+    # a header: one line between blanks, at an even indent, whose next content is deeper (or a
+    # column-0 title, whose content is deeper by definition)
+    for (i = 1; i <= n; i++) {
+        header[i] = 0
+        if (blank[i] || code[i] || (ind[i] % 2) == 1) {
+            continue
+        }
+        if (i > 1 && !blank[i - 1]) {
+            continue
+        }
+        if (probe_list(L[i])) {
+            continue
+        }
+        # the module title the renderer emits (  <file> - <abstract> ) is one line of prose
+        if (L[i] ~ /^  [A-Za-z0-9_.-]+ - /) {
+            continue
+        }
+        if (i + 1 > n || !blank[i + 1]) {
+            continue
+        }
+        j = i + 1
+        while (j <= n && blank[j]) {
+            j++
+        }
+        # a column-0 line is a title by its position; an indented line is a header only when it
+        # cannot be prose, which its terminal punctuation decides
+        if (ind[i] == 0) {
+            header[i] = 1
+        } else if (j <= n && !code[j] && ind[j] > ind[i] && trim(L[i]) !~ /[.;]$/) {
+            header[i] = 1
+        }
+    }
+
+    # list items and their continuations: the text of an item starts at an even column and every
+    # continuation line is indented to that column
+    item_text = 0
+    for (i = 1; i <= n; i++) {
+        cont[i] = 0
+        if (blank[i] || code[i]) {
+            item_text = 0
+            continue
+        }
+        if (probe_list(L[i])) {
+            item_text = g_text
+            item_ind = g_ind
+            continue
+        }
+        if (item_text > 0 && ind[i] < item_text) {
+            item_text = 0
+        }
+        if (item_text > 0 && !header[i]) {
+            cont[i] = item_text
+        }
+    }
+
+    # column blocks: consecutive lines which carry a tabstop, or which continue one
+    block = 0
+    for (i = 1; i <= n; i++) {
+        inblock[i] = 0
+        if (blank[i] || code[i]) {
+            block = 0
+            continue
+        }
+        if (probe_cols(L[i])) {
+            if (block == 0) {
+                block = 1
+                block_last = g_col[g_ncol]
+            }
+            inblock[i] = 1
+            ncol[i] = g_ncol
+            for (k = 1; k <= g_ncol; k++) {
+                col[i, k] = g_col[k]
+            }
+        } else if (block == 1 && ind[i] == block_last - 1) {
+            inblock[i] = 1
+            ncol[i] = 0
+        } else {
+            block = 0
+        }
+    }
+
+    # --- checks ---------------------------------------------------------------------------
+    # blank runs: one empty line between blocks, two only before a column-0 title
+    i = 1
+    while (i <= n) {
+        if (!blank[i]) {
+            i++
+            continue
+        }
+        j = i
+        while (j <= n && blank[j]) {
+            j++
+        }
+        k = j - i
+        allowed = (k == 2 && j <= n && ind[j] == 0 && !code[j]) ? 2 : 1
+        if (i < abstract) {
+            allowed = k
+        }
+        if (k > allowed) {
+            violation(i + allowed, "B1")
+        }
+        i = j
+    }
+
+    for (i = 1; i <= n; i++) {
+        if (i < abstract) {
+            continue
+        }
+        if (L[i] ~ /\t/) {
+            violation(i, "T1")
+        }
+        if (!blank[i] && L[i] ~ /[ \t]+$/) {
+            violation(i, "W3")
+        }
+        if (blank[i] && L[i] != "") {
+            violation(i, "W2")
+        }
+
+        # titles and headers
+        if (header[i]) {
+            t = trim(L[i])
+            if (t ~ /[.;]$/) {
+                violation(i, "H2")
+            }
+            if (ind[i] == 0) {
+                if (t != toupper(t)) {
+                    violation(i, "H1")
+                }
+                if (i > 4 && !(blank[i - 1] && blank[i - 2])) {
+                    violation(i, "H5")
+                }
+            }
+        }
+
+        # a header (and a section title) is followed by exactly one empty line
+        if (header[i] && i < n) {
+            if (!blank[i + 1]) {
+                violation(i + 1, "H4")
+            } else if (i + 2 <= n && blank[i + 2]) {
+                violation(i + 2, "H4")
+            }
+        }
+
+        # lists
+        if (!code[i] && probe_list(L[i])) {
+            if ((g_text % 2) != 0) {
+                violation(i, "L3")
+            }
+        } else if (cont[i] > 0) {
+            if (ind[i] != cont[i]) {
+                violation(i, "L4")
+            }
+        }
+
+        # column layout
+        if (inblock[i]) {
+            for (k = 1; k <= ncol[i]; k++) {
+                if ((col[i, k] % 2) != 0) {
+                    violation(i, "K1")
+                    break
+                }
+            }
+        }
+    }
+
+    # column blocks: the lines of one block align their last column; the column most of them use
+    # is the block column, and a line landing elsewhere breaks the table
+    for (i = 1; i <= n; i++) {
+        if (!inblock[i] || (i > 1 && inblock[i - 1])) {
+            continue
+        }
+        s = i
+        e = i
+        while (e + 1 <= n && inblock[e + 1]) {
+            e++
+        }
+        split("", tally)
+        best = 0
+        bestcount = 0
+        for (j = s; j <= e; j++) {
+            if (ncol[j] == 0) {
+                continue
+            }
+            p = col[j, ncol[j]]
+            tally[p]++
+            if (tally[p] > bestcount || (tally[p] == bestcount && p < best)) {
+                best = p
+                bestcount = tally[p]
+            }
+        }
+        if (bestcount < 2) {
+            continue
+        }
+        for (j = s; j <= e; j++) {
+            if (ncol[j] > 0 && col[j, ncol[j]] != best) {
+                violation(j, "K2")
+            }
+        }
+    }
+
+    # code blocks: they are set off by an empty line on both sides and the text after them
+    # returns to a lesser indent
+    for (i = 1; i <= n; i++) {
+        if (!code[i] || (i > 1 && code[i - 1])) {
+            continue
+        }
+        s = i
+        e = i
+        j = i + 1
+        while (j <= n) {
+            if (blank[j]) {
+                k = j
+                while (k <= n && blank[k]) {
+                    k++
+                }
+                if (k <= n && code[k]) {
+                    j = k
+                    continue
+                }
+                break
+            }
+            if (!code[j]) {
+                break
+            }
+            e = j
+            j++
+        }
+        if (i < abstract) {
+            continue
+        }
+        if (s > 1 && !blank[s - 1]) {
+            # an odd indent which does not start after an empty line is a misaligned
+            # continuation, not a code block
+            violation(s, "I1")
+            continue
+        }
+        # a code block is opened by a dedent, so the only thing to check on the far side is the
+        # empty line which separates it from whatever follows
+        if (e < n && !blank[e + 1]) {
+            violation(e + 1, "C2")
+        }
+    }
+
+    if (width > 0) {
+        for (i = 1; i <= n; i++) {
+            if (i >= abstract && length(L[i]) > width) {
+                violation(i, "W1")
+            }
+        }
+    }
+
+    # the report is in line order, whatever order the checks ran in
+    for (i = 1; i <= n; i++) {
+        if (hits[i] == "") {
+            continue
+        }
+        idc = split(hits[i], ids, " ")
+        for (k = 1; k <= idc; k++) {
+            if (ctx > 0) {
+                print_context(i, ids[k])
+            } else {
+                report(i, ids[k])
+            }
+        }
+    }
+
+    exit (count > 0)
+}
+  ' "${@:6}"
+}

@@ -684,20 +684,20 @@ STANDARD RULES
 MODULE API/RULES
 
   agent_rules - The agent output contract -- a run reduced 'up to the point'
-    
+
     bar is written for humans: a run prints everything every tool produced.  In a terminal that is
     right, in an agent's context window it is fatal -- a full 'bar tests' here is ~400 lines /
     16 kB of which the actionable part is a handful of lines.
-    
+
     This module turns a *run* into a small, decision shaped *answer*.  Three levels of progressive
     disclosure, the caller picks the level:
-    
+
       bar verdict <target>..         one line per target                      (polling, gating)
       bar check   <target>..         verdict + chain + totals + bounded, line numbered evidence + log path
       bar log     <target> [range]   the untruncated raw log, on demand
-    
+
     The contract ('never lie') is:
-    
+
       * the verdict line is printed always, for every target, at every verbosity -- never filtered,
         never truncated;
       * on failure the exact totals (lines and bytes) of the log are always printed, even when
@@ -716,15 +716,15 @@ MODULE API/RULES
         NOTE from verbosity 3 on) instead of being reported as the phantom result 'OK --quiet'.  A
         target whose *name* begins with a dash stays reachable behind a bare '--': 'bar check --
         --weird' runs the target '--weird'.
-    
+
     Measured on bar itself: 'bar tests' 16 kB / 409 lines -> 'bar check tests' 9 B / 1 line
     (success), and a 401 line failure of 14,6 kB -> ~1 kB carrying the verdict, the failing chain,
     the totals and the line that holds the signal.
-    
+
     Exit codes: 0 when every target passed, 2 on a usage error, otherwise the rc of the first
     failing target propagated verbatim (3, 128+signal, ...).  'bar log' answers 3 when no log is on
     record for the target.
-    
+
     The log is a *raw* capture: when the invoking stderr was a terminal, bar's own record lines in
     it carry that terminal's escape sequences.  The printed evidence never does (it is normalized)
     and the totals always describe the file exactly as it is on disk.
@@ -987,7 +987,7 @@ MODULE API/RULES
         Run cargo semver-checks to test if a semver for a release is sufficient
 
   cargo_rules - General support rules for Rust/Cargo projects
-    
+
     Checks whenever we are in a cargo project.
     Hooks cargo support into the 'std_rules'
 
@@ -1335,23 +1335,23 @@ MODULE API/RULES
         Fails when a hook is not pointing to bar.
 
   help - Provides help, extracts documentation from modules
-    
+
     Inline documentation uses two or three hash characters. Three '###' is used for file level
     documentation to describe a file entirely. Two '##' are used in different contexts:
-    
+
     Variable definitions that use the 'declare' keyword can use '##' at the end of the same
     line to document the variable.
-    
+
     Functions use formal parameter syntax: 'function name ## [--opt] <required> [optional] - description'
     Parameters use: <mandatory>, [optional], param.., [param..], --flags, foo|bar alternatives.
     Multi-line documentation continues on following lines starting with optional whitespace
     followed by '##' and parameter explanations.
-    
+
     Rules are documented by '##' lines before the rule definition, using the same formal
     parameter syntax when the rule accepts parameters.
-    
+
     Only variables, functions and rules that have doc comments are included in the output.
-    
+
     Documentation says what a thing does and how to use it.  The reasoning behind it, why it is
     written that way, what was measured, belongs in single '#' source comments, which are not
     published.
@@ -1372,6 +1372,16 @@ MODULE API/RULES
       help_usage_error <name> [reason]
         a usage error on stderr: what was wrong, and the command which answers the help for name
 
+      help_render_annotated <span>
+        print the render with the source of every block named above it
+        The form 'help --debug' prints: each block is preceded by '#<file>:<line>', the line the text
+        comes from.  It is a wrapper so the annotation is a property of the print, never of the index.
+
+      help_render_print <first> <last>
+        print the rendered lines <first>..<last>, annotated when 'HELP_ANNOTATE' is set
+        A line which carries an origin is preceded by '#<file>:<line>', the form 'help --debug'
+        prints and 'help_lint --debug' reads.
+
     Rules:
 
       help [[-s|--short] topic|rule|function|variable|text]
@@ -1382,8 +1392,40 @@ MODULE API/RULES
         A name also arrives at the topic which documents it, the plural included: 'bar help
         helpers' starts at HELPER REPERTOIRE, not at the block of the function of that name.
 
+      help_lint [-C <n>] [--rule <id>,..] [--debug] [--width <n>] [-v|--verbose] [file]
+        report formatting violations in the help output
+        Checks rendered documentation -- the text 'bar help' prints, or <file> -- against the rules
+        below, one violation per line as '<line>:<id>'.  Nothing is hooked into 'lints'; a caller
+        runs it.  '--rule' keeps the named ids, '--debug' names the source ('<file>:<line>', from the
+        annotations 'help --debug' prints) instead of the rendered line, '-C <n>' prints n lines of
+        context around each violation, and '--width <n>' also reports lines rendered wider than <n>.
+        '--verbose' is the human form: it appends the rule's own sentence, as the list below spells
+        it, and uses '-C 1' unless a '-C' is given.  Exit 0 when nothing is reported, 1 when something
+        is.
+        A list item is a line whose text starts with '*', a run of them, a single '-' or '+', or a
+        dotted number ('1.'); its text column is what L3 and L4 measure.
+        The rules:
+        A1  the abstract, up to the first column-0 title, is freeform and not checked
+        H1  a section title (column 0) is ALL CAPS
+        H2  a section title does not end in '.' or ';' (an indented line which does is prose)
+        H4  a title is followed by one empty line
+        H5  a section title is preceded by two empty lines
+        B1  blocks are separated by one empty line (two only before a section title)
+        W1  with '--width': the rendered line is not wider
+        W2  an empty line carries no spaces
+        W3  a line carries no trailing spaces
+        T1  no tab, the render is indentation
+        I1  a line indented by an odd number of spaces starts a code block after an empty line
+        C2  a code block is followed by an empty line
+        L3  the text of a list item starts at an even column
+        L4  a continuation line of a list item is indented to that column
+        K1  a column of a term list starts at an even column
+        K2  the columns of one term list align
+        Not checked: markup ('*bold*', '/italic/', '_underline_', quoted code) is allowed and passes,
+        and the abstract.
+
   helpers_rules - The helper repertoire: deterministic answers to recurring retrieval questions.
-    
+
     A *helper* is a bar rule which answers one recurring, semi deterministic question -- a filter,
     a retrieval, a listing, a count, a state snapshot -- in a single invocation, with a bounded
     and stable output.  Its consumer is an agent: with a helper the question costs one command and
@@ -1391,23 +1433,23 @@ MODULE API/RULES
     and quote, they never summarise and never judge.  Where a question is naturally a *check*
     (pass or fail), it is written as a check target and reported by 'bar check'
     (Bar.d/agent_rules) instead of being squeezed into a helper.
-    
+
       bar helpers              the repertoire: one line per helper, then the total count
       bar helpers --json       the same repertoire as one JSON object (same count)
       bar helpers --check      verify that every helper module is registered (see below)
       please helpers           as 'bar', plus the repertoire of the current directory
-    
+
     The repertoire is read out of the module sources: nothing is loaded and no helper is executed
     to list it, and 'please helpers' works from any directory.  Which helpers are listed depends
     on the *personality* bar was called by -- 'bar' or 'please' (see REGISTRATION below).
-    
+
     HELPER MODULES AND RULE NAMES
-    
+
     The helpers of one domain live together in one *helper module*, 'Bar.d/<word>', which names
     itself in its file header:
-    
+
       # helper-module: <word>
-    
+
     Every rule of a helper module is named '<word>' or '<word>_<rest>', because bar derives the
     module to autoload from the word before the first underscore of a rule name ('always_',
     'is_', 'has_' and 'try_' are stripped first, see 'rule_autoload' in Bar.d/std_lib).  A helper
@@ -1415,24 +1457,24 @@ MODULE API/RULES
     module, and listing the repertoire loads none at all.  '<word>' must be a word no other module
     claims -- bar ships 'git', 'rad', 'cargo', 'net', 'ssh', 'testdir', ... -- because a
     rule named 'rad_state' would autoload 'Bar.d/rad' and then fail to exist.  Pick a free word.
-    
+
     Everything in a helper module that is not an entry point is a *function*: functions are not
     rules, the autoloader never looks for them and the repertoire never lists them.
-    
+
     REGISTRATION
-    
+
     A helper registers itself with one declaration line at column 0, directly above its rule
     definition (only comments and blank lines in between, in the same file):
-    
+
       # helper:        <name> | <purpose> | <invocation> | <output shape>
       # helper-bar:    <name> | <purpose> | <invocation> | <output shape>
       # helper-please: <name> | <purpose> | <invocation> | <output shape>
-    
+
       <name>        the rule name: '<word>' or '<word>_<rest>' of that module
       <purpose>     one line, the question it answers -- this is how an agent picks a helper
       <invocation>  how to call it, its options included ('hermeskanban [--json] <selector>')
       <output>      one line, the shape of the answer
-    
+
     The three forms share the four fields and the adjacency rule and differ only in *which
     personality* lists the helper.  A plain '# helper:' is generic and is listed by both; a
     '# helper-bar:' is listed only when bar was called as 'bar', a '# helper-please:' only when
@@ -1441,7 +1483,7 @@ MODULE API/RULES
     prints the same 'please hermeskanban [--json]', and each JSON object carries that name in a
     'command' field.  The kind never weakens the guard: an adjacency, naming, unusable-field or
     duplicate violation is reported for every declaration no matter which personality it addresses.
-    
+
     'please helpers' also runs 'bar helpers' in the current working directory and appends those
     rows, each labelled with the 'bar' personality -- the vendored or project repertoire of the
     place it is run in.  There is no dedup: a generic '# helper:' is then listed twice, once as
@@ -1450,7 +1492,7 @@ MODULE API/RULES
     not resolved through '$PATH', and can not recurse (a child is called as 'bar'); when it lists
     nothing -- no 'Bar.d' here and none installed -- the union is simply empty.  '--check' is not
     affected: it validates the personality's own module directory (the site directory for 'please').
-    
+
     Neither field may contain a '|' and a declaration is one line.  There is no index file: the
     repertoire is *generated* by scanning the modules, so a new helper is one rule plus one
     declaration and nothing else has to be kept in sync.  'bar helpers --check' (hooked into
@@ -1460,14 +1502,14 @@ MODULE API/RULES
     declaration sits in a file that is no helper module, when a declaration is separated from its
     rule by other code or when it uses an unknown kind ('# helper-foo:' where one of the three
     forms above was expected).
-    
+
     The index lists exactly the declarations the guard accepts and rejects nothing the index
     shows: both are views of the same single validation pass, so a helper which is not listed is
     always a reported violation and a listed helper always resolves.  A rejected declaration is
     counted on stderr and named by 'bar helpers --check'.
-    
+
     OUTPUT CONVENTIONS (requirements, not style)
-    
+
       * print what the consumer needs for the next step: output << input;
       * the shape is the helper's choice (lines, table, JSON) but stable and documented, counts
         are an explicit line of their own and never implied;
@@ -1481,7 +1523,7 @@ MODULE API/RULES
       * read the data directly (file, CLI, sqlite, git) instead of going through an interface
         which refuses to run outside its own context;
       * '--json' stays opt-in: text for reading, one object for a wrapper.
-    
+
     A helper module needs no edit anywhere else: it becomes reachable for 'please' with
     'bar init_install <prefix>' (which links every module that is not linked yet into
     '~/.config/please', see Bar.d/init) and for a project with 'bar init --update' (which copies
@@ -1593,41 +1635,41 @@ MODULE API/RULES
         totals, log path) and 'rule lints: helpers_check' can hook it into the lint target.
 
   hermes - Retrieval over the Hermes log corpus -- what the logs of this host say about <X>, in one call
-    
+
     Hermes writes a corpus of text on this host: the agent and gateway logs, one worker transcript
     per kanban task, one output document per cron run, and the session store.  The corpus is large
     (megabytes, millions of lines) and reading it with ad hoc pipelines -- 'grep' here, 'sed' there,
     a 'sqlite3' query next -- costs several turns and floods an agent's context with raw
     transcripts.  'hermes_logs' is the one deterministic answer instead: it streams the corpus once,
     prints a bounded digest of the matching lines and keeps the complete match list on disk.
-    
+
       please hermes_logs --grep <ere> --since 1d      # a bounded digest and the exact total
       please hermes_logs --grep <ere> --count         # only the number
       please hermes_logs --grep <ere> --json | jq .   # one object for a wrapper
-    
+
     THE CORPUS (explicit, never guessed)
-    
+
     One *corpus root* is a Hermes home directory; the default is '$HERMES_HOME' and falls back to
     '~/.hermes'.  A root contributes the sources below, and only these -- nothing is searched
     implicitly, no directory is discovered by walking:
-    
+
       logs       <root>/logs/*.log, *.log.gz             the agent/gateway/gui logs
       workers    <root>/kanban/logs/*.log, *.log.gz      one worker transcript per kanban task
       cron       any file below <root>/cron/output/      'cron/output/<job>/<stamp>.md' and the
                                                           flat legacy 'cron/output/<job>_*.txt'
       sessions   <root>/sessions/*.jsonl, *.jsonl.gz     diverted (transcript) session records
       store      <root>/state.db                         the SQLite session store, read only
-    
+
     The root is overridable with '--root <dir>' (repeatable) or with the environment variable
     BAR_HERMES_LOGS_ROOT (':' separated); '--root' wins.  Other Hermes profiles are addressed with
     '--root ~/.hermes/profiles/<name>', never by guessing: a path that differs between the gateway,
     the TUI and a worker is exactly what an agent must not hardcode.  With more than one root every
     locator carries the index of its root ('#2/logs/agent.log:88') and one 'corpus:' line names each.
-    
+
     THE ANSWER (one record per matching line)
-    
+
       <locator> <TAB> <timestamp> <TAB> <snippet>
-    
+
       locator       '<source path>:<line>' relative to its root ('logs/agent.log:1234'), so
                     'sed -n 1234p <root>/logs/agent.log' retrieves the line byte for byte.  A store
                     record has no file line and reads 'state.db:<session>/<message>/<line>', which
@@ -1640,13 +1682,13 @@ MODULE API/RULES
       snippet       the line with its control characters removed, clipped at
                     BAR_HERMES_LOGS_SNIPPET characters (default 160) with the number of characters
                     left out appended as '<+N>'.  Tabs separate the fields; a snippet never holds one.
-    
+
     Then the totals, as lines of their own and never implied:
-    
+
       corpus: <root> [<sources scanned>]   matches: <n>   shown: <s> of <n> (limit <l> lines, <c> chars)
       clipped: <k> snippet(s) at <c> chars   unreadable: <u> source(s) not scanned: <name>..
       max: <path>
-    
+
     'matches' is the exact number of matching lines, a hard assertion: it is the count the scan
     produced over exactly the sources the 'corpus:' lines name, and it is qualified by 'unreadable'
     when a source could not be read.  The digest prints at most '--limit' match lines (default 20,
@@ -1657,9 +1699,9 @@ MODULE API/RULES
     BAR_HERMES_LOGS_MAX records (default 20000) -- beyond that the file is capped and 'max:' says so.
     It is written below BAR_HERMES_LOGS_DIR (default $TMPDIR) and named after the query, so the same
     question reuses one file and the answer stays retrievable.
-    
+
     FILTERS
-    
+
       --grep <ere>     an extended regular expression, matched against every line of every scanned
                        source with 'grep -E' semantics.  Without it every line matches (the digest is
                        still bounded, the count still exact).  It is the only thing that decides what
@@ -1676,24 +1718,24 @@ MODULE API/RULES
                        source by their text (the agent logs carry '[<session-id>]').
       --count          the number alone -- it wins over '--json', because one number is already the
                        machine form.  Nothing is elided here, so no 'max:' line is printed.
-    
+
     EXIT CODES: 0 answered, matches found.  3 answered, no match ('grep' semantics: an answer, not a
     failure -- the count is printed).  2 usage error.  1 could not answer: a root is not a directory,
     or a source could not be read -- the digest is still printed, marked with 'unreadable:' and with
     the reason on stderr, and the count then covers only what was readable.
-    
+
     NON GOALS: no summarisation, no judgement, no LLM, no ranking -- it is a filter.  It does not
     replace the 'session_search' tool for fuzzy recall, and it does not read what Hermes stores
     outside the paths above (the kanban board as a database, cron job definitions, the vault).  It
     never pages, never colours, and prints no progress on stdout.
-    
+
     HANDOFF BRIEFS ('hermes_handoff')
-    
+
     A child session ('delegate_task') starts with no memory of the conversation that spawned it, so
     the caller hands it a brief.  'hermes_handoff' composes that brief, resolves its anchor phrases
     against the session store and checks that a child could retrieve the session -- one rule, three
     modes:
-    
+
       hermes_handoff --goal <line> [--context <text> | --context-file <path>]
                      [--anchor <phrase>].. [--gate <line>].. [--report-chars <n>]
                      [--session <id>] [--db <path>] [--json]
@@ -1705,9 +1747,9 @@ MODULE API/RULES
       hermes_handoff --verify [--session <id>] [--db <path>] [--json]
           whether a child could retrieve this session: 'session <id> msgs=<n> chars=<n>
           retrieval=ok|missing', then the two retrieval recipes and the live delegation caps.
-    
+
     THE SESSION STORE
-    
+
     The store is a read only SQLite database, '${HERMES_HOME:-$HOME/.hermes}/state.db', overridden by
     '--db <path>' or '$HANDOFF_DB'.  The session id comes from '--session <id>' or
     '$HERMES_SESSION_ID'; the profile -- the first segment of an '@session:<profile>/<id>' link --
@@ -1716,14 +1758,14 @@ MODULE API/RULES
     'content' contains it, case insensitively; a phrase that resolves to nothing is reported as
     'UNRESOLVED: <phrase>' and never guessed.  Nothing host local is hardcoded: the caps are read
     live with 'hermes config get delegation.<key>' and '$HERMES_MAX_ITERATIONS'.
-    
+
     EXIT CODES
-    
+
       0 answered; 1 --anchors matched nothing; 2 usage error; 3 the session or the store is unknown
       or unreadable; 4 the brief has an unresolved anchor (the whole brief is still printed).
-    
+
     The text and the '--json' forms carry the same numbers; '--json' is one object.
-    
+
 
     Variables:
 
@@ -1906,35 +1948,35 @@ MODULE API/RULES
         or the store is unknown/unreadable, 4 the brief has an unresolved anchor.  See the module header.
 
   hermeskanban - The Hermes Kanban board state digest -- the board questions in one call
-    
+
     Hermes Kanban board state: what the local board holds right now, bounded.
-    
+
     'hermeskanban' answers the board questions that otherwise cost several turns of hand written
     sqlite -- and that 'hermes kanban' refuses to answer at all inside a worker context -- by
     reading the board database directly: the counts by status together with how stale the oldest
     ready card is and how many runs are live (the summary, which lists no card); the cards matching
     a filter, one per line, with their dependencies and their live run; why a blocked card is
     blocked; and what a card's runs did.
-    
+
       hermeskanban                              the bounded summary digest, no card listed
       hermeskanban --status blocked             the blocked cards, one line each, with the reason
       hermeskanban --assignee default           the cards of one agent, highest priority first
       hermeskanban --parent t_deadbeef          the children of one card
       hermeskanban --runs t_deadbeef            the runs of one card, newest first
       hermeskanban --json                       the same numbers as one JSON object
-    
+
     A listing is bounded by '--limit' (default 50) and prints the exact elision counts plus the path
     of a file holding every matching card whenever it elides anything; the summary always fits in
     six lines.  Nothing but the answer goes to stdout.
-    
+
     EXIT CODES: 0 answered (a filter matching no card is an answer, not a failure), 2 usage error,
     3 the board could not be read (no database, not a Kanban database, 'sqlite3' missing), 4 the
     card asked for ('--id', '--parent', '--runs') does not exist.
-    
+
     An option is nothing without its value: '--status' with nothing after it is a usage error like
     any other, and so is an empty value ('--id ""'), which would otherwise name no card and quietly
     answer as though the option had not been given at all.
-    
+
     The board is resolved the way the kernel resolves it: '--db', then '--board', else
     '$HERMES_KANBAN_DB', '$HERMES_KANBAN_BOARD' or '<root>/kanban/current', finally the default
     board.  '<root>' is '$HERMES_KANBAN_HOME' or '~/.hermes'; a named board lives in
@@ -2117,12 +2159,12 @@ MODULE API/RULES
         be updated as well.  Barf will be left untouched.
 
   json_lib - The JSON literals of bar's machine readable output: one escaping rule for every '--json' form.
-    
+
     The JSON forms of the helpers -- 'hermeskanban --json', 'rad_state --json', 'sourcetree_state
     --json', 'hermes_logs --json', 'helpers --json', the report of 'bar check' -- are assembled from
     string, number, boolean and array literals.  Writing one of them is one small piece of policy
     and it belongs in one place:
-    
+
       json_string <text>             the JSON string literal of <text>
       json_set_string <var> <text>   the same, left in <var> instead of printed
       json_number <value>            <value> as a JSON number, 'null' when it is no number
@@ -2130,31 +2172,31 @@ MODULE API/RULES
       json_bool <text>               'true' for 'yes', 'false' for 'no', 'null' otherwise
       json_list <text> [<sep>]       <text> cut at <sep> (default ','), as a JSON array of strings
       json_array <literal..>         the literals as one JSON array
-    
+
     THE ESCAPING RULE
-    
+
     Backslash and double quote are escaped, a tab becomes the escape '\t' and every other control
     character is dropped; nothing else about <text> changes.  A literal therefore never carries a
     raw control character, so one record is one line: an object can be held in a shell variable,
     compared byte for byte and cut by line without a parser.  Dropping is deliberate -- a newline
     inside a title would otherwise end the record.
-    
+
     'EMPTY IS NULL'
-    
+
     A field bar could not answer is 'null', not an empty string and not a zero: 'json_number'
     answers 'null' for anything which is no number (an empty value included), and 'json_bool'
     answers 'null' for a value which is neither 'yes' nor 'no', so an unset flag stays
     distinguishable from a flag which is off.  An empty array is a different answer and stays '[]':
     'no labels' is a fact.
-    
+
     WHY THE SETTERS EXIST
-    
+
     A command substitution forks a subshell, and a listing quotes a dozen fields per record:
     'hermeskanban' measured 800 ms for 90 cards when every field forked and 90 ms when none did.
     A caller which quotes many fields asks for the literal in a variable with the setters and never
     forks; a caller with one or two fields asks for the printed form.  Both forms are one
     implementation -- 'json_string' calls 'json_set_string' -- so the rule above cannot drift.
-    
+
     This module is a library: no rules, no helpers and therefore no helper module header of its own
     (a lib is not a repertoire module, see Bar.d/helpers_rules).  A module whose '--json' form needs
     literal says 'require json_lib'; where a field is not a JSON literal but module policy -- the
@@ -2225,14 +2267,14 @@ MODULE API/RULES
         last 'lock_remove' will release the lockfile.
 
   memodb - A persistent database which memoizes command results
-    
+
     It records the stdout, stderr and state/exitcode commands and functions.  Commands and
     functions that are used with the memodb must be pure as their result must only depend on
     the arguments passed and the directory they are called in. The content of the directory is
     hashed for the database. This requires properly set up '.gitignore' rules to ignore any
     build artifacts. Otherwise subsequent instances will not use the same memodb and re-run
     commands.
-    
+
     This is used for
      1. Persist/cache command results throughout multiple invocations
      2. Implement background processing where one invocation can schedule commands to be
@@ -2267,12 +2309,12 @@ MODULE API/RULES
         Will error when the command was not previously scheduled and backgrounding is enabled.
 
   modules - Module to prune the unmodified copies out of a vendored 'Bar.d'
-    
+
     'bar init' and 'require' vendor the modules a project uses from the installation bar was run
     from, so a project's 'Bar.d' grows with it and a module stays behind when the rules which named
     it are dropped from the 'Barf'.  'modules_prune' removes those copies and completes the tree
     again with 'init_deps'.
-    
+
     The name is what the module autoloader resolves the command to (a rule loads the module named by
     the word before its first '_'), so this lives here and not in the 'init' module which vendors
     and completes the tree.
@@ -2332,11 +2374,11 @@ MODULE API/RULES
   rad - The radicle domain of bar: what this checkout is, what it carries, whether the author of an
     incoming item may be trusted, how a topic starts -- and how a repository gets onto radicle in
     the first place.
-    
+
     The helpers, all served by the backing library Bar.d/radicle_lib (running 'rad', reading its
     padded tables back, the age of a last event, the node storage, the '.worktrees/' exclusion and
     the JSON literals):
-    
+
       bar rad_state [--json] [--max <n>]                     the whole state, one screen
       bar rad_patches [--state <s>] [--author <a>] [--json] [--max <n>]
                                                              only the patches, filtered
@@ -2366,16 +2408,16 @@ MODULE API/RULES
       bar rad_branch_sync [--branch <branch>] [--dry-run] [--json]
                                                              fast-forward a branch to its remote tip,
                                                              or write nothing
-    
+
     Every helper answers '-h' or '--help' with the builtin help of its rule on stdout and exit 0
     ('bar usage <name>'), and a refused argument with what was wrong on stderr and exit 2.
-    
+
     'rad_state' answers the questions an agent asks before it touches a radicle repository: which
     repository is this (RID, name, path), which identity does 'rad' use here, how the patches stand
     (how many, by state, ours against others), how the issues stand (state, labels, when something
     happened last) and which local branches still carry commits no patch exposes.  'rad_patches' is
     the patch section of that report, filtered by state and by author.
-    
+
     Nothing there goes to the network: 'rad patch/issue list' answer from the local node storage and
     the divergence is measured against 'rad/main' as the last 'git fetch rad' left it, which the
     'head' line names.  Syncing is the caller's business ('rad sync', 'git fetch rad'): this helper
@@ -2390,9 +2432,9 @@ MODULE API/RULES
     acts on is read off the patch's own chain, never off 'rad patch list': a Reviews column cannot
     say which revision a verdict names, and an acceptance of an older revision is exactly what
     must not be acted on.
-    
+
     SOURCES
-    
+
       rad inspect --rid         the repository identity, 'git rev-parse' the toplevel
       rad self                  alias and DID of the identity 'rad' uses here
       rad patch list --all      patch id, title, author and head (the state is not in the list)
@@ -2407,9 +2449,9 @@ MODULE API/RULES
       git for-each-ref/rev-list the current branch, the local branches and their distance from
                                 'refs/remotes/rad/main' or 'refs/remotes/rad/master'
       git ls-remote/log/branch  'rad_topic': the trunk on both sides and the commits in between
-    
+
     OUTPUT
-    
+
       Text: one header line per section -- '<section>  <counts>' -- then one line per item, the
       free text last so that nothing has to be padded.  Ages are short ('6m', '2h', '1y') and are
       those of the last event.  '--json': one object marked with 'bar_rad': 1, the complete data,
@@ -2417,45 +2459,45 @@ MODULE API/RULES
       At most '--max' items per section (default 10, '--max 0' lists all).  A section which is
       cut states exactly how much ('n of N elided'), and when anything was cut the complete text
       is written to a file whose path the last line prints, so the elision loses nothing.
-    
+
       'ours' is what 'rad' itself calls ours, everything else is 'other' (whose author is then
       named behind the title); a patch which rad lists in more than one state is named by the
       first of 'draft', 'merged', 'archived'.
-    
+
     EXIT CODES
-    
+
       0  answered (an empty repository -- no patch, no issue -- is an answer, not a failure)
       2  usage error
       3  no data: not a git repository, or no radicle repository here
       1  could not answer: 'rad' is missing or failed, or its output was not understood
-    
+
     'rad_trust' answers whether the author of an incoming issue or patch counts as a *trusted
     source* for the triage policy (`incoming-issue-triage` §3) -- and, above that, **which grounds of
     trust** that author has, so the caller decides per action instead of paying for one fixed rule.
     The grounds are a disjoint list (any one of them suffices, an implied OR, no expressions):
-    
+
       delegate      the author is a delegate of this repository
       owner         the author is the identity which established the repository
       opened        the author opened the item under discussion
       assigned      the author is an assignee of that item
       contributed   the commits the identity authored as itself reach the threshold
-    
+
     'owner' and the two item grounds are facts about the repository's own copy and its item, so they
     need '--issue <id>' or '--patch <id>'; without an item they are 'false', never an error.
-    
+
       bar rad_trust --repo rad:z3WhBdHt… --author cehteh
       trusted author=cehteh delegate=yes authored=396 threshold=10 ground=delegate reason=delegate of this repository repo=rad:z3WhBdHt1VVNyeQ61zpY66pNzuSrP
-    
+
       bar rad_trust --repo rad:z3WhBdHt… --author cehteh --grounds delegate,assigned --issue d896735
       bar rad_trust --repo rad:z3WhBdHt… --author cehteh --dump --issue d896735    every ground, no verdict
       bar rad_trust --repo rad:z3WhBdHt… --author cehteh --grounds contributed --threshold 10%
-    
+
     '--grounds' names the grounds which suffice (default 'delegate,contributed', the one rule this
     helper answered before), and the 'ground' it reports is the first of them which holds, in the order
     they were listed.  '--dump' answers every ground and evaluates *nothing*: no verdict, no threshold,
     exit 0.  That is the call a caller makes once per scope and then caches -- the grounds are values,
     the decision is the caller's -- so a second call in the same scope is wasted work.
-    
+
     '--second-party' answers the one question an approval asks: is this actor somebody *other* than
     the identity which asked for the decision -- the second party a consent needs.  '--requester'
     names that identity -- the loop, the agent, whoever opened the gate -- as a unique id, a bare NID
@@ -2465,7 +2507,7 @@ MODULE API/RULES
     the requester **is the actor**, so the answer is 'false': the identity which asked is never a
     second party to its own question, and the item's opener is not consulted.  The output is the dump
     above plus one field, 'second_party'.
-    
+
     '--threshold' decides 'contributed' alone: a bare number counts commits (default 10), a percent
     ('10%', '0.5%') is the share of the commits every identity authored in this repository, which is
     what lets one setting mean the same in a big and in a small one.  The numbers come from the fact
@@ -2475,26 +2517,26 @@ MODULE API/RULES
     share is measured against -- are read from the node storage, and only when a ground asks for them.
     The '--json' form is the whole object the tool answered plus 'grounds', and in verdict mode
     'verdict', 'ground' and 'reason' as well.
-    
+
       exit 0 trusted -- 1 untrusted -- 2 could not answer (unknown author, no data, usage)
-    
+
     'rad_comment_metadata' is the second half of the same policy, for the writes nobody but a
     delegate may make.  Radicle authorizes an issue's `Label`, `Assign` and `Lifecycle` actions to
     the repository delegates (and to the issue's author for editing and closing it) -- verified in
     the implementation (`heartwood`, 'crates/radicle/src/cob/issue.rs', 'Issue::authorization'), so
     an incoming contributor *cannot* label or assign anything: the store refuses it.  Instead the
     proposal travels as a **structured comment**: the first lines of a comment may be
-    
+
       *label:improvement
       *assign:cehteh
       *unassign:ct_vibes
-    
+
     one per line, starting at the comment (the issue description counts -- rad calls it the root
     comment of the thread).  This helper reads those blocks back from the node storage and returns
     only the entries a trusted source wrote:
-    
+
       bar rad_comment_metadata <item> [--query <key>].. [--repo <rid|path>] [--trust <spec>].. [--last] [--json]
-    
+
     The form is '*<key>:<value>' and the vocabulary is open: a key is a word of letters, digits, '_'
     and '-' which starts with a letter, and *any* key is read back -- what a key means is the
     caller's business, and only the keys with a registered effect ('label', 'rmlabel', 'assign',
@@ -2505,12 +2547,12 @@ MODULE API/RULES
     without whitespace -- radicle writes a space as '-', and so does 'rad_label_name').  '--query'
     names the keys to answer for and repeats; with no '--query' at all the answer carries every key a
     comment proposes, and every line names its own key.
-    
+
     '<item>' is the issue or patch the question is about, short or full -- one item only, not the
     whole repository: the ref listing is a single call, the chains (the ops and their payloads) are
     opened for that COB alone.  An id the node does not hold is 'no data' (3), an id an issue and a
     patch both match is a usage error (2).
-    
+
     '--trust' takes 'did:<did|nid>' (that identity, named) and 'contributor(<n>)' (an identity with
     at least <n> authored commits); with no '--trust' only the **delegates** are trusted, which is
     the narrow default.  '--last' keeps the newest block *per key* -- the last record of the chain
@@ -2521,24 +2563,24 @@ MODULE API/RULES
     The trust facts come from the same tool 'rad_trust' uses ('tools/radicle_triage/triage-facts').
     A delegate's maintenance command reads the trusted proposals back and applies them -- the labels
     and assignments themselves still need that delegate's own key.
-    
+
     The write layer of the same policy.  One function per effect, each of them exactly one 'rad'
     invocation, and none of them asks about trust: that is the reader's decision, which is why the
     reader is the only way in.  These are not rules -- they are the API a rule (or the daemon the
     project builds elsewhere) composes, which is why they are named like the plumbing they are:
-    
+
       bar rad_set_label <item> [<add>] [<delete>]..    one 'rad issue|patch label' write
       bar rad_assign <item> <did|alias>                one 'rad issue|patch assign' add
       bar rad_unassign <item> <did|alias>              one 'rad issue|patch assign' delete
       bar rad_apply_from_comments <item>.. [--query <key>].. [--repo <rid|path>] [--trust <spec>]..
                                  [--dry-run]           the trusted proposals of an item, applied
-    
+
     '<item>' is the form the reader answers with ('issue:<id>', 'patch:<id>'); a bare id is an issue.
     The identity of an assignment is resolved before it is written -- a comment cannot be trusted to
     spell a DID right -- by the same fact command the trust gate asks, and a value which resolves to
     nothing is refused rather than written as it stands.  Every applier reports what it applied
     ('applied label item=issue:4444444 add=idea delete=wip') and no applier writes into the thread.
-    
+
     'rad_apply_from_comments' reads the newest trusted block per key (that is what applies; a block a
     later one superseded is history) and dispatches every entry to the applier of its key: 'label',
     'rmlabel', 'assign' and 'unassign'.  Any other key is reported and never guessed at.  An entry
@@ -2547,7 +2589,7 @@ MODULE API/RULES
     labels already say it'), and '--dry-run' prints what would be applied without writing anything.
     Nothing is remembered between calls: what the item carries is read fresh, from 'rad issue|patch
     list', every time.
-    
+
     The labels are *one* state, and the colon decides which of them the applier maintains by itself.
     A label carrying a ':' is namespaced -- the 'pr:<id>'/'issue:<id>' link labels and every other
     '<namespace>:<rest>' -- and it is therefore **protected**: a chain transition never deletes it,
@@ -2558,13 +2600,13 @@ MODULE API/RULES
     which is what ate the link labels.)  A stored label no proposal names is reported and left alone
     -- deleting on the strength of an absent proposal would reverse a delegate's write, and a
     delegate may label by hand with no comment at all.
-    
+
     '*rmlabel:<glob>' is the explicit removal, and it runs *before* the labels of the same block: the
     glob is matched against the whole stored label, anchored at both ends ('pr:*' takes 'pr:<id>' and
     never 'xpr:<id>', '*' takes everything), a glob which matches nothing writes nothing and says so
     (exit 0 -- nothing to remove is an answer), and the removal has to come first so that a block
     carrying both a '*rmlabel:' and a '*label:' in the same namespace ends with the new label in.
-    
+
     'rad_reaction' is the same idea for the reaction markers, and those are a different animal: a
     reaction is *private per identity* and can never be delegated, so there is no trust question here
     -- what the caller compares and swaps is its *own* state, and that state is read from 'rad cob
@@ -2573,7 +2615,7 @@ MODULE API/RULES
     beside the one it takes back (one op, two actions), which is the shape the reduction is read
     against; a reader reducing the op chain itself cannot tell a marker from one its author took back
     in the very op next to it, and reports a superseded marker as live for ever (bar issue 9a815de).
-    
+
     The state of one target is a *set*: rad keeps one entry per emoji, so the same marker cannot be
     live twice, while two *different* markers of ours can be.  One call is still one marker's business:
     '<from>' names exactly one, the comparison asks only whether that one *is* live (never that it is
@@ -2583,24 +2625,24 @@ MODULE API/RULES
     the *current* state only -- 'rad cob show'
     takes no '--from'/'--until' -- which is what a caller needs before it writes; the state at some
     point in time is 'rad cob log --from/--until' instead.
-    
+
       bar rad_reaction [--from <emoji>] [--repo <rid|path>] <to> <target>..
       bar rad_reaction <from> <to> <target>.. [--repo <rid|path>]
       bar rad_reaction --state [--json] [--repo <rid|path>] <target>..
-    
+
     '--state' reports instead of writing: one line per target, the live markers of ours there and the
     op that set the newest of them.  It takes no '<to>' and no '--from', and 'markers=-' (no marker
     of ours is live) is an answer, not an error.  '--json' the same as one object per target, keys
     'item', 'level', 'target', 'markers' ('emoji', 'op', 'date' each), 'since', 'op'.  A target is
     named exactly as the writing forms name it, and several targets are read in one call.
-    
+
     '<to>' is the marker to set: one emoji of the store's allow list, checked before any call, so the
     '❤️' an emoji picker hands out (heart plus a variation selector) is refused here instead of by the
     store.  A target is '<issue-id>' (the issue itself), '<issue-id> <comment-id>',
     '<patch-or-revision-id>' (a patch id is its root revision) or '<patch-or-revision-id> <id>' -- the
     second id being any reaction-able part of the patch: a comment of the revision, a review, or a
     comment of a review.
-    
+
     '<from>' is the one marker the caller expects to be live there: omitted is no expectation at all,
     the empty string is 'no live marker of mine', anything else must be live -- and an expectation which
     does not hold fails without writing anything.  Exactly one marker, because the step changes exactly
@@ -2615,15 +2657,15 @@ MODULE API/RULES
     in rad 1.10.3) and the patch commands would be a second code path for the same effect.  An empty
     '<to>' takes the named markers back and sets nothing, and it needs '--from', because the
     expectation is what names the markers.
-    
+
     'rad_topic' opens the topic tree of that work in one action: it mints the name from the
     branch *class* and the description, resolves the clone and the freshest base, keeps '.worktrees/'
     out of the main checkout's status and runs 'git worktree add' -- the sequence an agent otherwise
     reassembles by hand every time it starts a topic:
-    
+
       bar rad_topic fix "crash on empty config"
       <clone>/.worktrees/fix-crash-on-empty-config  fix-crash-on-empty-config  base=rad/main  head=55d5924
-    
+
     The name is '<class>-<description>'.  The class vocabulary is read from the branch matchers of
     the 'git' module ('is_git_*_branch'), so bar's own classes and the gates it hangs off them stay
     the one source of truth, and a topic's name says what kind of change it is from anywhere -- the
@@ -2631,7 +2673,7 @@ MODULE API/RULES
     <description> is slugified to '[a-z0-9._-]' and the whole name stays within 40 characters, the
     limit the Hermes worktree machinery sanitises to; a description which cannot fit is refused, never
     silently cut.
-    
+
     The clone is the *main checkout* of the repository '--root' names, or the one the current
     directory is in -- a linked worktree resolves to its clone, so the call works from inside any
     topic.  The base is the clone's *trunk*: on this host the trunk is upstream plus the local work
@@ -2640,32 +2682,32 @@ MODULE API/RULES
     is behind upstream is refused, because updating the trunk is its own step with its own gate and
     never a side effect of opening a topic.  '--base <ref>' overrides the base, '--no-fetch' skips
     the fetch.
-    
+
     Neither of the two rules above writes to the main checkout: the tree is created below
     '<clone>/.worktrees/', kept out of 'git status' by a line in '.git/info/exclude' (never by the
     tracked '.gitignore'), and 'git worktree add' does not touch the trunk's HEAD.
-    
+
     'rad_identity' answers what no string comparison can: the identities this repository delegates
     to, the git authors each one uses, and whether a commit can be tied to one of them -- a name
     which merely looks like a delegate answers 'verified=no' with the reason.
-    
+
     'rad_import' is the way in, not a question: on the toplevel of a git repository which is not on
     radicle yet it runs 'rad init' (public, signing set up) and pushes every branch to the new
     remote.  Once a 'rad' remote exists it does nothing but say so.
-    
+
     Running 'rad', reading its tables back, the age of a last event and the COB store are shared with
     every other module of bar which talks to radicle and live in Bar.d/radicle_lib, which this module
     requires: 'RAD_BIN' (the command to run instead of 'rad'), the record separators and every 'rad_*'
     function come from there.  The JSON literals of the '--json' forms below come from
     Bar.d/json_lib, the one place where bar writes them.
-    
+
     'RAD_STATE_MAX' is the default of '--max'.  'RAD_TRIAGE_FACTS' names the fact tool 'rad_trust'
     reads from: the path of the triage fact tool of the caller's own installation, and the only
     setting for it -- bar cannot know the layout of another machine, so there is no default, and an
     unset or unexecutable setting is named and answered with 'could not answer' (exit 2) instead of
     a silently wrong verdict.  Reading rad's tables back needs a character aware shell; bar exports a
     UTF-8 'LC_ALL' whenever the system has one.
-    
+
     The rules below are about 'rad', the radicle frontend and the repository it is used in.  Building
     a radicle installation itself is not one of them (radicle is packaged; the tools below
     'tools/radicle_*' are their own thing).
@@ -3620,29 +3662,29 @@ MODULE API/RULES
 
   rad_rules - The rules of the 'rad' module which everything else may depend on before a rulefile is read:
     the cheap guards of a radicle checkout and the hook into 'activate'.
-    
+
     'bar' requires every '*_rules' file on every invocation, so what lives here is a predicate or a
     hook and nothing else: the heavy bodies, the tables and the rendering are in 'Bar.d/rad' and
     'Bar.d/radicle_lib', which are loaded when a 'rad_*' rule actually runs.  A '_rules' file which
     carries neither a clause nor a guard is dead weight parsed on every run.
-    
+
       is_rad_available   the command bar runs ('RAD_BIN', else 'rad') is here at all
       is_rad_repository  that command answers for this checkout ('rad inspect --rid')
       is_rad_toplevel    we are at the toplevel of such a repository
       rad_activate       keep '.worktrees/' out of 'git status' (hooked into 'activate')
-    
+
     The predicates answer about the same command the helpers run -- 'RAD_BIN' when it is set, 'rad'
     otherwise -- without pulling the library in for it.  A predicate answers *itself*: it is 0 or 1
     and a missing command is a 1, not a skip.  A rule which only wants the gate writes it with a
     question mark ('is_rad_repository? something') and is skipped when it does not hold.
-    
+
     The predicates are deliberately *not* registered as repertoire helpers: a helper answers a
     retrieval question with an output, a predicate prints nothing and is only ever the dependency of
     another rule ('Bar.d/helpers_rules' documents that split).
-    
+
     CONSIDERED AND NOT WIRED -- nothing consumes them yet; each becomes a clause here when something
     does:
-    
+
       'rad sync --announce' in a publish hook -- measured on this host: every 'git push rad' and
         every 'rad patch edit' syncs with the seeds by itself ('Synced with 3 seed(s)') and a push
         announces the repository ('rad ls' flips 'local' to 'public'), so such a hook would only
@@ -3672,12 +3714,12 @@ MODULE API/RULES
         written there leaves the checkout's own status untouched.
 
   radicle_lib - Shared radicle plumbing: run 'rad', read what it prints, and emit the JSON literals.
-    
+
     The radicle domains of bar -- the state of a checkout, the flow around an incoming item, the way
     a repository gets onto radicle (all of them 'rad_*' rules of Bar.d/rad) -- ask the same small
     questions about the tool and its data.  The answers live here once, named after the command they
     belong to:
-    
+
       rad_run                run '$RAD_BIN' and carry its answer and its exit code
       rad_path               where the node keeps its storage ('rad path')
       rad_cobs_time          when and how the last event of a patch or issue happened, read from
@@ -3690,18 +3732,18 @@ MODULE API/RULES
                              columns
       rad_main_checkout      the main checkout of the clone a (linked worktree) path is in
       rad_exclude_worktrees  keep '<clone>/.worktrees/' out of 'git status'
-    
+
     The JSON literals of the '--json' forms are not rad's business: every module of bar which emits
     one asks Bar.d/json_lib, which this library requires ('json_string', 'json_number', 'json_bool',
     'json_list').
-    
+
     This module defines no rules.  It is the backing library of the 'rad' word, required by the
     module which carries those rules ('Bar.d/rad') -- a rule name like 'rad_state' makes
     'rule_autoload' look for a module 'rad_lib', which this file is not: the library of the radicle
     domain is named after the protocol, not after the word.  Nothing here goes to the network and
     nothing guesses: a function which cannot answer returns non-zero ('rad_run' tells 'no radicle
     repository here' (3) from 'rad failed' (1), see there), and the callers own their diagnostics.
-    
+
     'RAD_BIN' names the command to run instead of 'rad' (the tests point it at a fake).
     'RAD_US' is the field separator of the records these functions return and take
     ('rad_table' hands its cells over that way, US for the same reason Bar.d/helpers_rules uses it:
@@ -3803,7 +3845,7 @@ MODULE API/RULES
         has to stay byte-identical, and a tree which exists is not a fact about the project.
 
   release - Rules for software releases
-    
+
     The 'release' module implements a (opinionated) release workflow. Making releases starts
     on a git toplevel in a development or main branch, a devel branch does not need to be
     clean.  For each release a new branch/worktree based on the last commit is created. All
@@ -3811,18 +3853,18 @@ MODULE API/RULES
     release_tests fails one can correct things and commit them until the tests pass. The
     actual release procedure then evaluates 'release_prepare', 'release_commit', 'release_tag'
     and 'release_publish'.  Finally 'release_postprocess' and 'release_cleanup' are evaluated.
-    
+
     Any non published release can be aborted/deleted.
-    
+
     This only defines the bare workflow the actual implementation hooks into the
     'release_rules'.
-    
+
     We still make a few fixed assumptions:
      - Versioning is based on semver
      - Releases are called 'release'
      - The main branch can be named 'main' or 'master'
      - Development branches matching 'devel' 'devel-*' or 'devel/*'
-    
+
     The worktree tracks its state in a local git config bar.release.state:
      - start:
        The worktree is created but not tested yet.
@@ -3836,18 +3878,18 @@ MODULE API/RULES
        uploads succeeded.
      - done:
        The release finished.
-    
+
     Further following git config variables are set:
      - bar.release.startbranch:
        Branch this release initiated from (usually main or devel).
      - bar.release.version:
        The (semver) version of this release.
-    
+
     Release Configuration and Workflow
-    
+
     Every release starts in its own git worktree. All testing, and fixes necessary for the
     release are made in that worktree.
-    
+
     Configuration of release workflows is done by extending the rules from 'release_rules'.
     Many other '*_rules' modules already hook into these rules and do the 'right thing'.
     The parts that can configured in Barf are:
@@ -4066,7 +4108,7 @@ MODULE API/RULES
         Searches 'PLANNED:'.
 
   semver_lib - Parsing and manipulating (simplified) semantic versioning strings
-    
+
     For the sake of sanity not all possible semver syntax variants are
     handled. Esp. manipulation is only implemented for the common cases. Patches welcome.
 
@@ -4116,15 +4158,15 @@ MODULE API/RULES
         succeeds if a == b
 
   shellcheck - Support for the shellcheck shell linter
-    
+
     A bar module or a rule file is not plain bash: it may be written in the make/just-like
     syntax 'preprocess' expands.  Those files are checked through 'bar_lint', which lets shellcheck
     read the expanded text, so the sugar is no longer reported as a syntax error.  Everything else
     is checked as it is written.
-    
+
     Shellcheck is surprisingly slow.  In projects using bar one can prevent the bar files
     themselves being checked by setting in 'Barf':
-    
+
      SHELLCHECK_LS_FILES=":!bar :!Bar.d :!Barf"
 
     Variables:
@@ -4176,24 +4218,24 @@ MODULE API/RULES
 
   sourcetree - The source trees below a source-work root: the clones, their worktrees, their state and what
     is not merged yet.
-    
+
     A source-work root holds one clone per project and every topic lives in a *worktree* below
     '<clone>/.worktrees/<topic>'.  The main checkout of a clone is the local trunk and the single
     place where topics meet -- a topic branch is branched off it and merged back into it, and the
     main checkout is the only coordination point.  A topic branch that exists nowhere else is never
     reclaimed, so 'what is not merged yet' is the question that has to be answered before anything
     is cleaned up.
-    
+
     Answering it the obvious way costs a 'git worktree list', a 'git status' per tree, a merge base
     question per tree and a shell loop to line the results up -- a dozen commands and a page of
     output for a handful of facts.  This helper answers it in one line per tree.
-    
+
       bar sourcetree_state                 # the digest of '$BAR_SOURCE_ROOT'
       bar sourcetree_state <root>          # the digest of the source-work root named here
       bar sourcetree_state --json <root>   # the same digest as one JSON object, for a wrapper
-    
+
     THE ROOT
-    
+
     <root> is the source-work root: the argument, or '$BAR_SOURCE_ROOT' when the argument is not
     given.  There is no default root -- with neither, the helper cannot know which layout is meant
     and answers a usage error.  A root which is itself a repository (a '.git' at its top, or a bare
@@ -4201,21 +4243,21 @@ MODULE API/RULES
     source-work root -- otherwise every direct sub-directory holding a repository is one.  The walk
     is one level deep and never descends into a clone or into object, build or vendor directories:
     a clone belonging to a clone is not part of the layout this helper describes.
-    
+
     A root which is not a source-work root -- a flat index of every checkout ever made, variants of
     one project side by side, no worktrees and no current state -- is named on stderr: a clone in
     such a root is history, not the working tree a topic is built on.  The answer is still printed,
     because auditing exactly that may be the intent.
-    
+
     THE TREES
-    
+
     One line per tree -- the main checkout of a clone first, then the clone's own worktrees and
     last the trees it registered elsewhere, each group by path -- followed by the total counts:
     the order only depends on the layout, so two digests of the same layout are comparable line
     for line and a new tree does not reshuffle the rest.
-    
+
       <path>  <kind>  <branch>@<head>  <state>  <relation>  [<flags>]
-    
+
       <path>      the tree, relative to <root> -- '.' for the root itself -- or absolute when the
                   tree lives outside of the root
       <kind>      'main'  the clone's trunk, the merge base of the clone
@@ -4240,33 +4282,33 @@ MODULE API/RULES
                   halves of the merge base) and '<m>' commits of the main checkout are not in that
                   tree; 'unmerged 0 behind 0' means 'in step with the trunk'
       <flags>     'locked' (a stale worktree lock, with its reason), 'prunable'
-    
+
     The last line is the total: '(N clones, M worktrees, U unmerged, D dirty)'.
-    
+
     '--json' prints one object with those counts, the resolved 'root' and 'trees', one object per
     tree: 'path' (as printed), 'abs', 'clone', 'clone_abs', 'kind', 'branch', 'commit', 'head',
     'detached', 'state', 'changed', 'untracked', 'unmerged', 'behind', 'merge_base', 'locked',
     'lock_reason', 'prunable', 'bare' and 'exclude' (the sources of the '.worktrees/' exclusion).
     A number git could not answer is 'null'.  Text for reading, the object for a wrapper; both are
     the same single pass over the same data.
-    
+
     EXIT CODES
-    
+
       0  answered -- a root without any clone answers '(0 clones, 0 worktrees, 0 unmerged, 0 dirty)'
       2  usage error, the usage line goes to stderr and stdout stays empty
       3  <root> is not a directory: the question could not be asked
-    
+
     COST (measured on this host, 2026-10-10)
-    
+
     A root with four clones and thirteen worktrees -- 18 lines, 2.2 kB of text or 8.3 kB of JSON --
     takes 0.3 s (best of five; a bare 'bar rule_exists' call takes 0.09 s), the digest of a
     throw-away root with one clone and three trees 0.15 s.  Two git calls per tree are the
     cost ('status' and the left-right count, plus 'merge-base' when a tree is both ahead and
     behind); the layout is read through them once, nothing is paged and no interface is entered
     which refuses to run outside its own context.
-    
+
     WHAT IT DOES NOT DO
-    
+
     It reports, it never repairs: no fetch, no prune, no removal of a worktree, no edit of a
     '.gitignore' and no judgement about whether a topic should live on.  Diffing two digests is
     how a change (a merge, a new topic, a dirtied trunk) is seen.
@@ -4444,11 +4486,11 @@ MODULE API/RULES
         must be a declared variable When no values are given then target is cleared.
 
   std_rules - Standard rule targets where other modules can hook in
-    
+
     Here we define targets which can be universally used. Other modules will hook their more
     specific rules into these. Usually projects support only a subset of these standard targets.
     This is fine. Any not hooked rule will only print a debug message and being a no-op otherwise.
-    
+
     Undesired std_rules can be renamed or deleted in the rulefile, this is preferred to
     editing the std_rules file because it allows for easier updates of the std_rules file. All
     these std rules just structure the targets and give debug output on the leafs. Actual
@@ -4595,13 +4637,13 @@ MODULE API/RULES
         Evaluate a rule with supressed output.
 
   testdir - Creating an isolated directory for testing
-    
+
     Unlike other frameworks which do 'pre-commit' processing bar will not modify, block or
     stash the users workdir. Instead it creates and manages directories which become populated
     with the projects files. These testdirs also act as caches for build artifacts an can be
     seeded from previous runs to increase build/test speed. Testdirs are automatically garbage
     collected, only a few most recent used ones are kept for inspection and seeding new build.
-    
+
     Testdirs are created from git 'treeish' objects. Thus git is mandatory.
     Testdirs are created in the git toplevel and have the name constructed from
     '$TESTDIR_PREFIX-<timestamp>-<treehash>/'
@@ -4648,16 +4690,16 @@ MODULE API/RULES
         that as source for populating already build artifacts.
 
   tty_lib - Module for terminal control codes
-    
+
     The codes are two associative arrays with the same names: 'TTYCTL' maps a style name to the
     escape sequence that produces it, 'TTYNIL' maps every one of those names to the empty string.
     'TTYOUT' and 'TTYERR' are names for one of the two, decided once when the module loads:
     'TTYCTL' when the stream is a terminal and colour was not refused, 'TTYNIL' otherwise.  A
     caller writes '${TTYERR[fail]}text${TTYERR[reset]}' and never tests a terminal itself.
-    
+
     The names are styles, not colours: what 'fail' looks like is this module's decision, and a
     project which wants a different look replaces the table instead of rewriting every message.
-    
+
       reset      ends a styled run
       label      the tag of a line, 'RUN:', 'CHECK:'
       ok         a check passed, 'OK:', 'CHECK:'
@@ -4672,36 +4714,36 @@ MODULE API/RULES
       clear_eol  clears from the cursor to the end of the line
       clear_line column one, then clears the line
       cr         column one of the same line
-    
+
     There is no fallback for a name the table does not have: the call sites write
     '${TTYERR[fail]}' without a ':-' and bar runs under 'set -u', so a misspelt style is an error
     naming it, not a message which quietly lost its colour.
-    
+
     ADDING A STYLE
-    
+
     'TTYCTL' and 'TTYNIL' are writable, and 'tty_style' sets a name in both at once:
-    
+
       tty_style mine $'\e[38;5;33m'     # the escape sequence itself, not a description of it
       echo "${TTYOUT[mine]}mine${TTYOUT[reset]}"
-    
+
     The value is the sequence, the empty string goes to 'TTYNIL', so a style a project adds prints
     nothing when the stream is not a terminal -- the same rule the built in ones follow.
-    
+
     THE CODES
-    
+
     A style is the CSI sequence '\e[' <parameter> 'm'.  The parameters are the SGR (Select Graphic
     Rendition) numbers below, separated by ';' when there is more than one of them:
-    
+
       0  reset                 1  bold              2  dim                3  italic
       4  underline             5  blink             7  reverse            9  strike-through
       22 neither bold nor dim  23 italic off        24 underline off
       27 reverse off           29 strike-through off
-    
+
       30-37 foreground            40-47 background
       90-97 bright foreground    100-107 bright background
       38;5;<n> 256 colours foreground     48;5;<n> 256 colours background
       39 default foreground        49 default background
-    
+
     The eight colours of 30-37 and 40-47 are black, red, green, yellow, blue, magenta, cyan and
     white, 90-97 and 100-107 are those eight in their bright form.  'warn' is '\e[35;1m', magenta
     and bold, and the 'std_lib' module is the example of how the names are used.
@@ -4735,7 +4777,7 @@ MODULE API/RULES
 MAIN API
 
   bar - The main BAsh Rulez script
-    
+
     Provides only basic functionality for module loading and debugging and starting rule
     evaluation. Loads the 'std_lib' and 'rule_lib' to make them omnipresent.
 

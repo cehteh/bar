@@ -1,0 +1,57 @@
+  bar -- a rendered document
+
+about
+
+  A paragraph, then two empty lines.
+
+
+  and this one follows them.
+
+  A header which is followed by two empty lines
+
+
+    Text below it.
+
+  Text with a trailing space 
+
+    
+  * a print item
+
+  - a dash item
+
+  * an item whose text is even
+  ** a nested item whose text column is odd
+      continuation indented to another column
+
+      alpha     the first column at an odd position
+      betaa     the second one
+      gamma       the third one
+
+     code without an empty line after it
+  text right after the code block
+
+   odd line here
+
+   and an odd line right after a prose line
+
+  text, then a tab here:	end
+
+  Text above two empty lines.
+
+  a prose line
+   an odd line right after it
+
+
+TITLE OF THE LAST SECTION
+
+  Body.
+
+A TITLE WHICH ENDS IN A PERIOD.
+
+  Body.
+
+     a code block
+
+        A header which is indentend at least as far as the code block
+
+          and its body
