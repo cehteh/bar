@@ -11,18 +11,22 @@ ABOUT
 
   The notable differences to other similar tools are:
 
+  * Batteries included! bar comes with ready to use modules, they vendor themself on first use.
+  * Rule targets and dependencies are commands; not artifacts like files/timestamps.
   * Rules in bar can have multiple clauses.
-  * Normally rules are conjunctive, when a clause of a rule fails then the rule fails and not
-    further evaluated.
+  * By default rules are conjunctive, when a clause of a rule fails then the rule fails and
+    not further evaluated.
   * Rules can be made disjunctive, then a rule succeeds on the first succeeding clause.
   * Clauses can be conditionally skipped.
-  * The results of rules are cached. Normally rules are evaluated only once, although there is
+  * The results of rules are cached. They are evaluated only once, although there is
     a form to define rules that always evaluate.
   * We have a module that can memorize commands persistently and schedule evaluation to the
     background. A later instance can pick up the results from this background evaluation.
   * Deliberately implemented in bash, bar is meant to be vendored into any project using it,
     it has very modest dependencies and should run anywhere you have a unix like userland with
     bash and a few common tools available.
+  * Hackable, being veondored into your project means you can modify and edit everything to
+    your needs.
 
   When you read this because you have seen 'bar' or '.bar' used in a repository then you may
   look at INITIAL INSTALLATION below.
