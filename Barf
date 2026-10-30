@@ -49,6 +49,7 @@ pre-commit: (check agent)
 ## Run all tests in tests/ directory
 tests: test_cache
 tests: test_agent_rules
+tests: test_bare_wait
 tests: test_cargo_completers
 tests: test_cargo_variable_expansion
 tests: test_clause_local
@@ -96,6 +97,7 @@ tests: test_verbosity
 # Individual test rules
 test_cache: -- tests/test_cache.sh
 test_agent_rules: -- tests/test_agent_rules.sh
+test_bare_wait: -- tests/test_bare_wait.sh
 test_cargo_completers: -- tests/test_cargo_completers.sh
 test_cargo_variable_expansion: -- tests/test_cargo_variable_expansion.sh
 test_clause_local: -- tests/test_clause_local.sh
