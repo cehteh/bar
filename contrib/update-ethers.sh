@@ -12,7 +12,7 @@
 #  - Dynamically adjusts ARP/neighbor cache timeout based on the largest
 #    last-seen timestamp (+5min margin, rounded up to 15min, capped at 24h)
 #
-#  This script is part of bar/please. Its purpose is to maintain a persistent ethers database
+#  This script is part of bar/makeitso. Its purpose is to maintain a persistent ethers database
 #  so that for example 'wakeonlan' can be used with hostnames.
 #
 #  This should be placed into /etc/cron.hourly/ or otherwise arranged to be run at regular

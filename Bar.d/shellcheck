@@ -31,7 +31,7 @@ function shellcheck_is_barfile ## <file> - Check if <file> is a bar module or a 
     */Bar.d/*) return 0 ;;
     esac
     case "${1##*/}" in
-    Barf | barf | .Barf | .barf | Barf.default | Pleasef | pleasef | .Pleasef | .pleasef | Pleasef.default)
+    Barf | barf | .Barf | .barf | Barf.default | Makeitsof | makeitsof | .Makeitsof | .makeitsof | Makeitsof.default)
         return 0
         ;;
     esac

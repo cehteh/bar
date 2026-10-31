@@ -11,8 +11,8 @@
 #     right after 'success ...'.  Reduced verbosity must only suppress output -- never change the exit
 #     code of the rule.
 #
-# F2: the shipped Pleasef.default called 'net_wakonlan' (typo), a function that does not exist, so the
-#     documented 'please wake <host>' could never work.  It must call 'net_wakeonlan' (Bar.d/net).
+# F2: the shipped Makeitsof.default called 'net_wakonlan' (typo), a function that does not exist, so the
+#     documented 'makeitso wake <host>' could never work.  It must call 'net_wakeonlan' (Bar.d/net).
 
 set -euo pipefail
 
@@ -24,7 +24,7 @@ failures=0
 pass() { echo "  ✓ $*"; }
 fail() { echo "  ✗ $*"; failures=$((failures + 1)); }
 
-echo "=== Testing reduced verbosity (F1) and the Pleasef wake typo (F2) ==="
+echo "=== Testing reduced verbosity (F1) and the Makeitsof wake typo (F2) ==="
 echo
 
 # ---------------------------------------------------------------------------------------------------
@@ -91,12 +91,12 @@ else
 fi
 
 # ---------------------------------------------------------------------------------------------------
-# F2: Pleasef.default must call the function that actually exists.
+# F2: Makeitsof.default must call the function that actually exists.
 # ---------------------------------------------------------------------------------------------------
-if grep -q 'net_wakonlan' "$REPO_ROOT/Pleasef.default"; then
-    fail "Pleasef.default still calls the non-existent 'net_wakonlan' (F2 regression)"
+if grep -q 'net_wakonlan' "$REPO_ROOT/Makeitsof.default"; then
+    fail "Makeitsof.default still calls the non-existent 'net_wakonlan' (F2 regression)"
 else
-    pass "Pleasef.default no longer references the non-existent 'net_wakonlan'"
+    pass "Makeitsof.default no longer references the non-existent 'net_wakonlan'"
 fi
 
 # The callee must be defined and resolvable by bar (no 'no rule, command or function' panic).
@@ -107,9 +107,9 @@ else
 fi
 wakeout="$(cd "$REPO_ROOT" && "$BAR" --bare net_wakeonlan 2>&1 || true)"
 if [[ "$wakeout" == *"no rule, command or function"* ]]; then
-    fail "Pleasef wake target is not resolvable: $wakeout"
+    fail "Makeitsof wake target is not resolvable: $wakeout"
 else
-    pass "Pleasef wake target 'net_wakeonlan' is resolvable"
+    pass "Makeitsof wake target 'net_wakeonlan' is resolvable"
 fi
 
 echo

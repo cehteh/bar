@@ -38,7 +38,7 @@ function bar_main ## [rulefile] [--bare] [rule [arguments..]] - Loads a rulefile
 {
     ## [rulefile]           - File to load the user rules from.
     ##                        Default: Barf|barf|.Barf|.barf when called as bar or symlink.
-    ##                                 Pleasef|pleasef|.Pleasef|.pleasef|\$HOME/.Pleasef when called as please.
+    ##                                 Makeitsof|makeitsof|.Makeitsof|.makeitsof|\$HOME/.Makeitsof when called as makeitso.
     ## [--bare]             - Don't eval SETUP, PREPROCESS, POSTPROCESS and CLEANUP.
     ## [rule [arguments..]] - Target rule with arguments.
     ##                        Default: MAIN
@@ -101,15 +101,15 @@ function bar_main ## [rulefile] [--bare] [rule [arguments..]] - Loads a rulefile
 
     local maybe_barf=
     local initial_rule=
-    if [[ "$BAR_CALLED_AS" =~ \.?bar|please ]]; then
+    if [[ "$BAR_CALLED_AS" =~ \.?bar|makeitso ]]; then
         maybe_barf="${1:-}"
     else
         initial_rule="$BAR_CALLED_AS"
     fi
 
     local barfs=("$BAR_TOPLEVEL/Barf" "$BAR_TOPLEVEL/barf" "$BAR_TOPLEVEL/.Barf" "$BAR_TOPLEVEL/.barf")
-    if [[ "$BAR_CALLED_AS" = please ]]; then
-        barfs=("Pleasef" "pleasef" ".Pleasef" ".pleasef" "$HOME/.Pleasef")
+    if [[ "$BAR_CALLED_AS" = makeitso ]]; then
+        barfs=("Makeitsof" "makeitsof" ".Makeitsof" ".makeitsof" "$HOME/.Makeitsof")
     fi
 
     for BARF_FILE in "$maybe_barf" "${barfs[@]}"; do
@@ -193,15 +193,15 @@ function bar_main ## [rulefile] [--bare] [rule [arguments..]] - Loads a rulefile
 
         return $rc
     else
-        die "No Barf/Pleasef file found in current directory and no rule defined.
+        die "No Barf/Makeitsof file found in current directory and no rule defined.
 
 USAGE
 
   bar [Rulefile] [Rule [Arguments]]
-  please [Rulefile] [Rule [Arguments]]
+  makeitso [Rulefile] [Rule [Arguments]]
 or
   bar help
-  please help
+  makeitso help
 "
     fi
 }
@@ -215,8 +215,8 @@ function find_toplevel
     # from or in the closest ancestor that has one.  The walk upwards stops at the filesystem
     # boundary unless BAR_CROSS_FS is set.  On success BAR_TOPLEVEL is the directory that contains
     # the rule directory and is made readonly; everything that is project relative is resolved
-    # below it.  'please' is the exception: its modules live in a single, absolute directory
-    # (~/.config/please), no ancestor is searched.
+    # below it.  'makeitso' is the exception: its modules live in a single, absolute directory
+    # (~/.config/makeitso), no ancestor is searched.
     # shellcheck disable=2155
     local origin="$(command -v bar)"
     declare -gxr BAR_PREFIX="${origin%/bin/*}"
@@ -226,8 +226,8 @@ function find_toplevel
 
     local -a barfd=("Bar.d" "bar.d" ".Bar.d" ".bar.d")
     local -i walk=1
-    if [[ "$BAR_CALLED_AS" = please ]]; then
-        barfd=("$HOME/.config/please")
+    if [[ "$BAR_CALLED_AS" = makeitso ]]; then
+        barfd=("$HOME/.config/makeitso")
         walk=0
     fi
 
@@ -266,10 +266,10 @@ function bar_origin_dir ## - the 'Bar.d' of the installation bar was run from, w
 {
     ## A project may carry its own (vendored) 'Bar.d', then the installation bar was run from is
     ## where modules missing from the project are taken from.  When bar runs from its
-    ## installation there is no origin.  'please' has no vendored copy either: its modules live
+    ## installation there is no origin.  'makeitso' has no vendored copy either: its modules live
     ## in a single, absolute directory.
     [[ -n "$BAR_PREFIX" && -d "$BAR_PREFIX/share/bar/Bar.d" ]] || return 1
-    [[ "$BAR_CALLED_AS" != please ]] || return 1
+    [[ "$BAR_CALLED_AS" != makeitso ]] || return 1
     [[ "$(realpath "$BAR_DIR")" != "$(realpath "$BAR_PREFIX/share/bar/Bar.d")" ]] || return 1
     printf '%s\n' "$BAR_PREFIX/share/bar/Bar.d"
 }
@@ -1016,7 +1016,7 @@ function require ## [--opt] [modules..] - Loads modules.
 #
 # The dump sits beside the rulefile and is named after it ('.bar.<rulefile>.dump'): the state of a
 # run includes the rulefile, two rulefiles never share a dump, and a directory may carry one per
-# rulefile -- 'Pleasef' and 'SomeOtherRules' are no different from 'Barf' in this.  'BAR_STATE_DUMP'
+# rulefile -- 'Makeitsof' and 'SomeOtherRules' are no different from 'Barf' in this.  'BAR_STATE_DUMP'
 # names another file, 'off' disables the mechanism (a rulefile may set that too), empty is the
 # default path.  A run without a rulefile has nothing to name a dump after and keeps none.
 
@@ -1045,7 +1045,7 @@ function bar_state_path ## - Sets 'BAR_STATE_PATH' to the dump file of this invo
 {
     ## 'BAR_STATE_DUMP' when the environment set it, else '.bar.<rulefile name>.dump' beside the
     ## rulefile.  The name carries the rulefile, so two rulefiles in one directory never share a
-    ## dump and nothing needs to know whether the run is 'bar' or 'please', in a project or next to
+    ## dump and nothing needs to know whether the run is 'bar' or 'makeitso', in a project or next to
     ## an installation: the rulefile is what the state of a run depends on, and where it is, is
     ## where the dump goes.  Empty when there is no rulefile to name it after.  The setting is the
     ## one the environment had: the loader has to know where the dump is before it can read a

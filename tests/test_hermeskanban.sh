@@ -7,7 +7,7 @@
 # Everything runs against throw-away board databases and a throw-away installation: the live board
 # (~/.hermes/kanban.db) is never read, so the assertions do not move under the test.  Covered:
 #
-#   AC1  the summary is six lines, no card, exit 0 -- also through an installed 'please' from an
+#   AC1  the summary is six lines, no card, exit 0 -- also through an installed 'makeitso' from an
 #        arbitrary directory
 #   AC2  the summary is bounded (the count line, the waiting line, the oldest ready age)
 #   AC3  '--json' is one valid object carrying the same numbers as the text form
@@ -187,7 +187,7 @@ mkproject "$PROJ"
 
 # The helper is invoked from a project of its own, the way a rule of an installed helper is: the
 # board it reads is chosen by the environment and by its options, never by the cwd.  It is also
-# what makes 'please hermeskanban' work from a directory without any Bar.d at all (AC14).
+# what makes 'makeitso hermeskanban' work from a directory without any Bar.d at all (AC14).
 kanban() { # <args..> - the helper against the fixture root
     OUT=""
     RC=0
@@ -609,34 +609,34 @@ kanban
 check "$(printf '%s' "$OUT" | settle)" "$first" "AC13: and so do two runs of the text summary"
 
 # --------------------------------------------------------------------------------------------
-# AC14 'please' from an arbitrary directory: the acceptance criterion of the card
+# AC14 'makeitso' from an arbitrary directory: the acceptance criterion of the card
 # --------------------------------------------------------------------------------------------
-echo "--- AC14 an installed 'please' ---"
+echo "--- AC14 an installed 'makeitso' ---"
 FAKE_HOME="$WORK/home"
 SITE="$WORK/site"
 mkdir -p "$FAKE_HOME/.local" "$SITE/Bar.d" "$SITE/contrib"
 cp "$BAR" "$SITE/bar"
-cp "$REPO_ROOT/Barf.default" "$REPO_ROOT/Pleasef.default" "$SITE/"
+cp "$REPO_ROOT/Barf.default" "$REPO_ROOT/Makeitsof.default" "$SITE/"
 cp "$REPO_ROOT/contrib/bar_complete" "$SITE/contrib/"
 for module in "$REPO_ROOT/Bar.d/"*; do
     ln -s "$module" "$SITE/Bar.d/${module##*/}"
 done
 (cd "$SITE" && HOME="$FAKE_HOME" ./bar init_install "$FAKE_HOME/.local" >/dev/null 2>&1) || true
-if [[ -x "$FAKE_HOME/.local/bin/please" ]]; then
-    pass "AC14: the installation provides 'please'"
+if [[ -x "$FAKE_HOME/.local/bin/makeitso" ]]; then
+    pass "AC14: the installation provides 'makeitso'"
 else
-    fail "AC14: no 'please' at $FAKE_HOME/.local/bin/please"
+    fail "AC14: no 'makeitso' at $FAKE_HOME/.local/bin/makeitso"
 fi
 run_in "$WORK" env -u HERMES_KANBAN_DB -u HERMES_KANBAN_BOARD HOME="$FAKE_HOME" \
-    HERMES_KANBAN_HOME="$ROOT" "$FAKE_HOME/.local/bin/please" hermeskanban
-check "$RC" "0" "AC14: 'please hermeskanban' from an arbitrary directory exits 0"
+    HERMES_KANBAN_HOME="$ROOT" "$FAKE_HOME/.local/bin/makeitso" hermeskanban
+check "$RC" "0" "AC14: 'makeitso hermeskanban' from an arbitrary directory exits 0"
 check "$(printf '%s\n' "$OUT" | wc -l)" "6" "AC14: and prints the six line summary"
 check "$(grep -m1 '^tasks: ' <<<"$OUT")" "tasks: 16 ($status_counts)" "AC14: of the board it resolved"
 run_in "$WORK" env -u HERMES_KANBAN_DB -u HERMES_KANBAN_BOARD HOME="$FAKE_HOME" \
-    HERMES_KANBAN_HOME="$ROOT" "$FAKE_HOME/.local/bin/please" hermeskanban --status blocked
+    HERMES_KANBAN_HOME="$ROOT" "$FAKE_HOME/.local/bin/makeitso" hermeskanban --status blocked
 check "$(printf '%s\n' "$OUT" | tail -2 | head -1)" "(3 cards)" "AC14: and a filter too"
 run_in "$WORK" env -u HERMES_KANBAN_DB -u HERMES_KANBAN_BOARD HOME="$FAKE_HOME" \
-    "$FAKE_HOME/.local/bin/please" hermeskanban
+    "$FAKE_HOME/.local/bin/makeitso" hermeskanban
 check "$RC" "3" "AC14: with no board at all it fails fast, exit 3"
 check "$OUT" "" "AC14: and says nothing on stdout"
 

@@ -21,7 +21,7 @@
 #   AC4  a rule directory in an ancestor: found from a subdirectory, BAR_TOPLEVEL is the ancestor
 #        that holds it (this is where the rulefile lookup happens too)
 #   AC5  the alternative names 'bar.d', '.Bar.d', '.bar.d' are honoured and 'Bar.d' wins
-#   AC6  'please' keeps its single, absolute module directory and searches no ancestor
+#   AC6  'makeitso' keeps its single, absolute module directory and searches no ancestor
 #   AC7  the reproducing command: rc and stdout block are the same in and outside a tree, and
 #        every log path is below the invocation directory, never below '/'  (needs agent_rules)
 #   AC8  the fallback run actually runs: a target that passes is reported 'OK' and its log is
@@ -83,11 +83,11 @@ run() {
     (cd "$dir" && PATH="$WORK/inst/bin:$PATH" "$BAR" "$@" 2>/dev/null)
 }
 
-# the same for the 'please' personality (the invocation name decides it): <dir> <home> <target..>
-run_please() {
+# the same for the 'makeitso' personality (the invocation name decides it): <dir> <home> <target..>
+run_makeitso() {
     local dir="$1" home="$2"
     shift 2
-    (cd "$dir" && PATH="$WORK/inst/bin:$PATH" HOME="$home" "$dir/please" "$@" 2>/dev/null)
+    (cd "$dir" && PATH="$WORK/inst/bin:$PATH" HOME="$home" "$dir/makeitso" "$@" 2>/dev/null)
 }
 
 # ---- AC1, AC2: no rule directory anywhere -------------------------------------------------
@@ -152,22 +152,22 @@ check "$(run "$both" toplevel)" \
 DIR=$both/Bar.d" \
     "AC5: 'Bar.d' wins over 'bar.d'"
 
-# ---- AC6: the 'please' personality ---------------------------------------------------------
+# ---- AC6: the 'makeitso' personality ---------------------------------------------------------
 pledir="$WORK/pledir"
 mkdir -p "$pledir" "$WORK/home_empty"
-ln -s "$BAR" "$pledir/please"
-write_barf "$pledir/Pleasef"
-link_modules "$WORK/home/.config/please"
+ln -s "$BAR" "$pledir/makeitso"
+write_barf "$pledir/Makeitsof"
+link_modules "$WORK/home/.config/makeitso"
 
-check "$(run_please "$pledir" "$WORK/home" toplevel)" \
+check "$(run_makeitso "$pledir" "$WORK/home" toplevel)" \
     "TOP=$pledir
-DIR=$WORK/home/.config/please" \
-    "AC6: 'please' loads its modules from ~/.config/please, no ancestor is searched"
+DIR=$WORK/home/.config/makeitso" \
+    "AC6: 'makeitso' loads its modules from ~/.config/makeitso, no ancestor is searched"
 
-check "$(run_please "$pledir" "$WORK/home_empty" toplevel)" \
+check "$(run_makeitso "$pledir" "$WORK/home_empty" toplevel)" \
     "TOP=$pledir
 DIR=$WORK/inst/share/bar/Bar.d" \
-    "AC6: without ~/.config/please the installed modules are used, BAR_TOPLEVEL is the invocation directory"
+    "AC6: without ~/.config/makeitso the installed modules are used, BAR_TOPLEVEL is the invocation directory"
 
 # ---- AC7, AC8: where a measured run writes its logs ---------------------------------------
 #

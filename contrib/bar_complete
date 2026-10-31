@@ -1,5 +1,5 @@
 #!/bin/bash
-# Bash completion script for bar, please and ./bar
+# Bash completion script for bar, makeitso and ./bar
 #
 # This script parses documented rules and functions (those with ## doc comments)
 # and provides intelligent completion.
@@ -11,7 +11,7 @@
 # Usage:
 #   After installation, bash completion will work for:
 #   - bar <TAB>       - completes rulefiles, rules, and functions
-#   - please <TAB>    - completes rulefiles, rules, and functions
+#   - makeitso <TAB>    - completes rulefiles, rules, and functions
 #   - ./bar <TAB>     - completes rulefiles, rules, and functions
 #
 # API Surface:
@@ -104,7 +104,7 @@ declare -gA __bar_extcomplete_cache=()
 # Currently populated but unused - reserved for future completer introspection
 # declare -ga __bar_module_completers=()
 
-# Command used to invoke completion (bar, please, ./bar, etc.)
+# Command used to invoke completion (bar, makeitso, ./bar, etc.)
 declare -g __bar_invocation=""
 
 # State for dynamic external command completion passthrough
@@ -412,13 +412,13 @@ __bar_comp_ext()
         return 0
     fi
 
-    # Determine which bar executable to use (bar, please, ./bar, etc.)
+    # Determine which bar executable to use (bar, makeitso, ./bar, etc.)
     local bar_cmd="${__bar_invocation:-}"
     if [[ -z "$bar_cmd" ]]; then
         if command -v bar >/dev/null 2>&1; then
             bar_cmd="bar"
-        elif command -v please >/dev/null 2>&1; then
-            bar_cmd="please"
+        elif command -v makeitso >/dev/null 2>&1; then
+            bar_cmd="makeitso"
         elif [[ -x ./bar ]]; then
             bar_cmd="./bar"
         fi
@@ -1500,8 +1500,8 @@ __bar_scan_files()
 
     # Determine which files to look for
     local default_barfs=()
-    if [[ "$cmd" == *please* ]]; then
-        default_barfs=("Pleasef" "pleasef" ".Pleasef" ".pleasef" "$HOME/.Pleasef")
+    if [[ "$cmd" == *makeitso* ]]; then
+        default_barfs=("Makeitsof" "makeitsof" ".Makeitsof" ".makeitsof" "$HOME/.Makeitsof")
     else
         default_barfs=("Barf" "barf" ".Barf" ".barf")
     fi
@@ -1519,8 +1519,8 @@ __bar_scan_files()
     # Add Bar.d modules if directory exists
     # First try local directories, then fall back to installed location or repo location
     local bar_d_dirs=()
-    if [[ "$cmd" == *please* ]]; then
-        bar_d_dirs=("$HOME/.config/please")
+    if [[ "$cmd" == *makeitso* ]]; then
+        bar_d_dirs=("$HOME/.config/makeitso")
     else
         # Try to find Bar.d in multiple locations:
         # 1. Local directory (current working directory)
@@ -1621,7 +1621,7 @@ _bar_complete()
     __bar_extcomp_command=""
     __bar_extcomp_command_index=-1
 
-    # Determine the command (bar, please, or a path like ./bar)
+    # Determine the command (bar, makeitso, or a path like ./bar)
     local cmd="${COMP_WORDS[0]}"
     __bar_invocation="$cmd"
 
@@ -2065,9 +2065,9 @@ _bar_complete()
     return 0
 }
 
-# Register completion for bar and please
+# Register completion for bar and makeitso
 complete -o nosort -F _bar_complete bar
-complete -o nosort -F _bar_complete please
+complete -o nosort -F _bar_complete makeitso
 
 # Also register for ./bar pattern (when bar is in current directory)
 # This won't work perfectly for all cases, but handles the common ./bar case

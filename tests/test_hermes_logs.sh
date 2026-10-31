@@ -24,7 +24,7 @@
 #   AC13 the answer stays bounded (well under 2 KB) for a query matching every line
 #   AC14 a snippet carries no control character and says what it left out
 #   AC15 registration: the index lists the helper, the guard passes, 'bar help' has the module prose
-#   AC16 reachability: the helper runs through 'please' from an arbitrary directory
+#   AC16 reachability: the helper runs through 'makeitso' from an arbitrary directory
 #
 # The suite needs 'gzip' and 'sqlite3'; the tests of the source they serve are skipped without them.
 
@@ -512,28 +512,28 @@ contains "$OUT" "THE CORPUS (explicit, never guessed)" "AC15: including the corp
 contains "$OUT" "NON GOALS" "AC15: and what it does not do"
 
 # --------------------------------------------------------------------------------------------
-# AC16 reachability through 'please', in a fresh installation
+# AC16 reachability through 'makeitso', in a fresh installation
 # --------------------------------------------------------------------------------------------
 FAKE_HOME="$WORK/home"
 SITE="$WORK/site"
 mkdir -p "$FAKE_HOME/.local" "$SITE/Bar.d" "$SITE/contrib"
 cp "$BAR" "$SITE/bar"
-cp "$REPO_ROOT/Barf.default" "$REPO_ROOT/Pleasef.default" "$SITE/"
+cp "$REPO_ROOT/Barf.default" "$REPO_ROOT/Makeitsof.default" "$SITE/"
 cp "$REPO_ROOT/contrib/bar_complete" "$SITE/contrib/" 2>/dev/null || true
 module=""
 for module in "$REPO_ROOT/Bar.d/"*; do
     ln -s "$module" "$SITE/Bar.d/${module##*/}"
 done
 (cd "$SITE" && HOME="$FAKE_HOME" ./bar init_install "$FAKE_HOME/.local" >/dev/null 2>&1) || true
-if [[ -L "$FAKE_HOME/.config/please/hermes" ]]; then
-    pass "AC16: 'init_install' linked the new module for 'please'"
+if [[ -L "$FAKE_HOME/.config/makeitso/hermes" ]]; then
+    pass "AC16: 'init_install' linked the new module for 'makeitso'"
 else
-    fail "AC16: no link for 'hermes' in ~/.config/please"
+    fail "AC16: no link for 'hermes' in ~/.config/makeitso"
 fi
 OUT="$(cd "$WORK" && HOME="$FAKE_HOME" BAR_HERMES_LOGS_DIR="$WORK/max" \
-    "$FAKE_HOME/.local/bin/please" hermes_logs --root "$CORPUS" --grep 'fresh record' --limit 1 \
+    "$FAKE_HOME/.local/bin/makeitso" hermes_logs --root "$CORPUS" --grep 'fresh record' --limit 1 \
     2>/dev/null)" || RC=$?
-contains "$OUT" "logs/agent.log:2" "AC16: 'please hermes_logs' answers from an arbitrary directory"
+contains "$OUT" "logs/agent.log:2" "AC16: 'makeitso hermes_logs' answers from an arbitrary directory"
 contains "$OUT" "matches: 1" "AC16: with the exact count"
 
 echo

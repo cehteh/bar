@@ -27,7 +27,7 @@ test_files=(
     "Bar.d/git_lib"
     "Barf"
     "Barf.default"
-    "Pleasef.default"
+    "Makeitsof.default"
     "bar"
 )
 

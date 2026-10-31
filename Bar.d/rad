@@ -2122,7 +2122,7 @@ function rad_metadata_authored ## <rid> <nid> - the commits that identity author
         return 0
     fi
     ## 'RAD_TRUST_CMD' is provided by the deployment (a command and its arguments, e.g.
-    ## 'please rad_trust'): where the facts about an identity come from is not this module's
+    ## 'makeitso rad_trust'): where the facts about an identity come from is not this module's
     ## business, and a home directory path does not belong into a vendored source file.
     local -a cmd=()
     local facts="" authored="-"

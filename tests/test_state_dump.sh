@@ -17,7 +17,7 @@
 #        follows 'COLOR', and a rule defined after the dump was written still loads
 #   AC9  a run with a current dump is measurably faster than one which loads the files
 #   AC10 the dump sits beside the rulefile, named after it, so two rulefiles never share one (and
-#        'please' is no exception); a run without a rulefile keeps no dump
+#        'makeitso' is no exception); a run without a rulefile keeps no dump
 #   AC11 a rulefile may turn the dump off
 #   AC12 a module a rule body loads is loaded once, as it is without a dump
 #   AC13 the dump carries the modules' state, never the state of the run which wrote it
@@ -267,20 +267,20 @@ contains "$OUT" "state: sourced" "and the next run sources it"
 # [[ -f "$Q/.bar.Otherf.dump" ]] && pass "and the third rulefile of that directory keeps its own" ||
 #     fail "a dump went missing when a sibling rulefile was used"
 
-# 'please': no project, the same modules and the same '~/.Pleasef' from any directory
+# 'makeitso': no project, the same modules and the same '~/.Makeitsof' from any directory
 PH="$WORK/ac10-home"
-mkdir -p "$PH/.config/please" "$WORK/ac10-pbin" "$WORK/ac10-pleasedir"
-cp -Lr "$REPO_ROOT/Bar.d/." "$PH/.config/please/"
-ln -sf "$BAR" "$WORK/ac10-pbin/please"
-printf 'pleased: -- '\''echo pleased'\''\n' >"$WORK/ac10-pleasedir/Pleasef"
+mkdir -p "$PH/.config/makeitso" "$WORK/ac10-pbin" "$WORK/ac10-makeitsodir"
+cp -Lr "$REPO_ROOT/Bar.d/." "$PH/.config/makeitso/"
+ln -sf "$BAR" "$WORK/ac10-pbin/makeitso"
+printf 'makeitsod: -- '\''echo makeitsod'\''\n' >"$WORK/ac10-makeitsodir/Makeitsof"
 RC=0
-OUT="$( cd "$WORK/ac10-pleasedir" && HOME="$PH" BAR_VERBOSITY_LEVEL=5 "$WORK/ac10-pbin/please" pleased 2>&1 )" || RC=$?
-check "$RC" "0" "'please' answers"
+OUT="$( cd "$WORK/ac10-makeitsodir" && HOME="$PH" BAR_VERBOSITY_LEVEL=5 "$WORK/ac10-pbin/makeitso" makeitsod 2>&1 )" || RC=$?
+check "$RC" "0" "'makeitso' answers"
 contains "$OUT" "state: wrote" "and writes a dump"
-[[ -f "$WORK/ac10-pleasedir/.bar.Pleasef.dump" ]] && pass "beside its rulefile ('Pleasef')" ||
-    fail "no dump at $WORK/ac10-pleasedir/.bar.Pleasef.dump"
-[[ ! -f "$PH/.please.dump" ]] && pass "and not at a path of its own in the home directory" ||
-    fail "a dump appeared at $PH/.please.dump"
+[[ -f "$WORK/ac10-makeitsodir/.bar.Makeitsof.dump" ]] && pass "beside its rulefile ('Makeitsof')" ||
+    fail "no dump at $WORK/ac10-makeitsodir/.bar.Makeitsof.dump"
+[[ ! -f "$PH/.makeitso.dump" ]] && pass "and not at a path of its own in the home directory" ||
+    fail "a dump appeared at $PH/.makeitso.dump"
 
 # no rulefile at all: the run depends on the modules alone, and dumps next to them
 PFX="$WORK/ac10-prefix"

@@ -12,9 +12,9 @@
 ### transcripts.  'hermes_logs' is the one deterministic answer instead: it streams the corpus once,
 ### prints a bounded digest of the matching lines and keeps the complete match list on disk.
 ###
-###   please hermes_logs --grep <ere> --since 1d      # a bounded digest and the exact total
-###   please hermes_logs --grep <ere> --count         # only the number
-###   please hermes_logs --grep <ere> --json | jq .   # one object for a wrapper
+###   makeitso hermes_logs --grep <ere> --since 1d      # a bounded digest and the exact total
+###   makeitso hermes_logs --grep <ere> --count         # only the number
+###   makeitso hermes_logs --grep <ere> --json | jq .   # one object for a wrapper
 ###
 ### THE CORPUS (explicit, never guessed)
 ###

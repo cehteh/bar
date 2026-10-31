@@ -203,7 +203,7 @@ function init_install ## [prefix] - install links in [prefix] or '~/.local'.
     ## version available for use this 'init_install' will create symlinks at the given
     ## [prefix] directory or in '~/.local' by default.
     ##
-    ## For 'please' every module of 'Bar.d/' is symlinked into '~/.config/please'.  Running
+    ## For 'makeitso' every module of 'Bar.d/' is symlinked into '~/.config/makeitso'.  Running
     ## 'init_install' again adds the symlinks of modules which are not linked yet and leaves the
     ## existing ones untouched, so a module which was added to 'Bar.d/' later becomes reachable
     ## without a manual symlink.
@@ -219,8 +219,8 @@ function init_install ## [prefix] - install links in [prefix] or '~/.local'.
         mkdir -p "$prefix/bin"
         ln -s "$origin" "$prefix/bin/bar" || error "linking $origin to $prefix/bin/bar"
         info "linked $origin to $prefix/bin/bar"
-        ln -s "$origin" "$prefix/bin/please" || error "linking $origin to $prefix/bin/please"
-        info "linked $origin to $prefix/bin/please"
+        ln -s "$origin" "$prefix/bin/makeitso" || error "linking $origin to $prefix/bin/makeitso"
+        info "linked $origin to $prefix/bin/makeitso"
     fi
     # link Bar.d
     if [[ ! -d "$prefix/share/bar" ]]; then
@@ -229,33 +229,33 @@ function init_install ## [prefix] - install links in [prefix] or '~/.local'.
         info "linked ${origin%/*}/Bar.d to $prefix/share/bar/Bar.d"
         ln -s "${origin%/*}/Barf.default" "$prefix/share/bar/Barf"
         info "linked ${origin%/*}/Barf.default to $prefix/share/bar/Barf"
-        ln -s "${origin%/*}/Pleasef.default" "$prefix/share/bar/Pleasef"
-        info "linked ${origin%/*}/Pleasef.default to $prefix/share/bar/Pleasef"
+        ln -s "${origin%/*}/Makeitsof.default" "$prefix/share/bar/Makeitsof"
+        info "linked ${origin%/*}/Makeitsof.default to $prefix/share/bar/Makeitsof"
     else
         warn "can't link to $prefix/share/bar/"
     fi
 
-    # link .config/please
-    if [[ -L "$HOME/.config/please/std_lib" || ! -d "$HOME/.config/please" ]]; then
-        mkdir -p "$HOME/.config/please"
+    # link .config/makeitso
+    if [[ -L "$HOME/.config/makeitso/std_lib" || ! -d "$HOME/.config/makeitso" ]]; then
+        mkdir -p "$HOME/.config/makeitso"
         # Link every module which is not linked yet.  A module added to 'Bar.d/' after the initial
-        # installation becomes reachable for 'please' with a re-run of 'init_install', without a
+        # installation becomes reachable for 'makeitso' with a re-run of 'init_install', without a
         # manual symlink.  Existing links are left alone (a module may be developed in a worktree
         # and must not be repointed at it), so a re-run only ever adds links.
         local module link
         for module in "${origin%/*}/Bar.d/"*; do
-            link="$HOME/.config/please/${module##*/}"
+            link="$HOME/.config/makeitso/${module##*/}"
             if [[ ! -e "$link" && ! -L "$link" ]]; then
                 ln -s "$module" "$link" && info "linked $module to $link"
             fi
         done
     else
-        warn "can't create to $HOME/.config/please"
+        warn "can't create to $HOME/.config/makeitso"
     fi
 
-    if [[ ! -f "$HOME/.Pleasef" ]]; then
-        cp -L "$prefix/share/bar/Pleasef" "$HOME/.Pleasef"
-        info "installed default $HOME/.Pleasef"
+    if [[ ! -f "$HOME/.Makeitsof" ]]; then
+        cp -L "$prefix/share/bar/Makeitsof" "$HOME/.Makeitsof"
+        info "installed default $HOME/.Makeitsof"
     fi
 
     # link bash completion

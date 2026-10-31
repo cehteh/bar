@@ -471,10 +471,10 @@ QUICKSTART
 
    bar init_update  # for updating the version stored in the project
 
-  The second personality of bar is 'please' eg.:
+  The second personality of bar is 'makeitso' eg.:
 
-   please wake <hostname>     # sends a wake-on-lan packet to a host
-   please suspend <hostname>  # remotely sends a host to suspend-to-ram
+   makeitso wake <hostname>     # sends a wake-on-lan packet to a host
+   makeitso suspend <hostname>  # remotely sends a host to suspend-to-ram
 
   Buildin help system:
 
@@ -488,20 +488,20 @@ QUICKSTART
 INVOCATION AND SEMANTICS
 
    bar [rulefile] [--bare] [rule [arguments..]]
-   please [rulefile] [--bare] [rule [arguments..]]
+   makeitso [rulefile] [--bare] [rule [arguments..]]
    ./bar [rulefile] [--bare] [rule [arguments..]]
    <symlink> [arguments..]
 
   Starts by loading all initial modules (those which have underscores in their name) and the
-  rulefile, which is either "Barf", "barf", ".Barf", ".barf" when called as 'bar' or "Pleasef"
-  "pleasef" ".Pleasef" ".pleasef" "\$HOME/.Pleasef" when called as 'please' and when the first
+  rulefile, which is either "Barf", "barf", ".Barf", ".barf" when called as 'bar' or "Makeitsof"
+  "makeitsof" ".Makeitsof" ".makeitsof" "\$HOME/.Makeitsof" when called as 'makeitso' and when the first
   argument is not a file.
 
-  The duality of having 'bar' installed as 'please' is not only for making it more
-  polite. This allows for a user to have private '.Pleasef' defining rules that are for common
+  The duality of having 'bar' installed as 'makeitso' is not only for making it more
+  polite. This allows for a user to have private '.Makeitsof' defining rules that are for common
   administration tasks distinct from versioned per-project 'Barf' and 'Bar.d' rules.
 
-  Note that the rules for looking up the Barf/Pleasef and the modules are somewhat distinct.
+  Note that the rules for looking up the Barf/Makeitsof and the modules are somewhat distinct.
   Nevertheless modules are in either way only loaded from a single directory and are not
   located in different paths. This is a opinionated choice to make the module system
   self-contained and not depend on secondary locations.
@@ -548,8 +548,8 @@ INITIAL INSTALLATION
        cd bar
        ./bar init_install ~/.local/
 
-      This creates symlinks to 'bar', 'please', 'Bar.d', 'Barf.default', 'Please.default' in ~/.local
-      and symlinks 'Bar.d/*' to '~/.config/please/'.  Existing symlinks are left untouched and only
+      This creates symlinks to 'bar', 'makeitso', 'Bar.d', 'Barf.default', 'Makeitso.default' in ~/.local
+      and symlinks 'Bar.d/*' to '~/.config/makeitso/'.  Existing symlinks are left untouched and only
       the ones for modules which are not linked yet are added, so a module which was added to
       'Bar.d/' later becomes reachable by running 'init_install' again (no manual symlink needed).
 
@@ -1003,7 +1003,7 @@ RULE ENVIRONMENT
 MODULES
 
   Modules are shell snippets normally located in '\$BAR_DIR' ('Bar.d/', 'bar.d/', '.Bar.d/' or
-  '.bar.d/') when called as 'bar' or symlink or '~/.config/please' when called as 'please'.
+  '.bar.d/') when called as 'bar' or symlink or '~/.config/makeitso' when called as 'makeitso'.
   The 'std_lib' and 'rules_lib' are always loaded at startup. Modules matching '*_rules' are
   also autoloaded at startup. Any other '*_lib' must be manuallly loaded with 'require'.
   Modules with simple alphabetic names without underscores are lazy loaded on demand.
@@ -1048,7 +1048,7 @@ AUTOMATIC MODULE LOADING
   When a rule is not found then a module name is derived from the rule name by removing the
   'try_', 'is_', 'has_' prefixes and cutting off anything behind the first
   underscore. Eg. 'try_module_check' results in 'module'. This is then searched as
-  'Bar.d/module', 'bar.d/module', '.Bar.d/module' or '.bar.d/module' (or respective please
+  'Bar.d/module', 'bar.d/module', '.Bar.d/module' or '.bar.d/module' (or respective makeitso
   variants) and loaded if present. Thus modules that are automatically loaded must be named by
   single word without underscores.
 
@@ -1057,7 +1057,7 @@ STATE DUMP
 
   Loading the modules and the rulefile is most of bar's startup cost and only static
   preprocessing.  To optimize this bar writes a dummp of that state to '.bar.<rulefile>.dump'
-  beside the rulefile: 'Barf' gives '.bar.Barf.dump', 'please SomeOtherRules' gives
+  beside the rulefile: 'Barf' gives '.bar.Barf.dump', 'makeitso SomeOtherRules' gives
   '.bar.SomeOtherRules.dump'.  Running bar again uses this state file when no rules have
   changed instead of preprocessing all files again.  'bar init' puts the file into
   '.gitignore'. 'BAR_STATE_DUMP' names another file, 'off' in the environment or as a line of
@@ -1070,8 +1070,8 @@ HELPER REPERTOIRE
   one deterministic answer which would otherwise be re-derived with several commands and a lot of
   context.  Such an answer is a 'helper': a rule of a 'helper module' which names itself with a
   '# helper-module:' header in its first lines and registers each of its rules with a
-  '# helper:', '# helper-bar:' or '# helper-please:' declaration above it, the three forms
-  share their four fields and differ only in which personality ('bar' or 'please') lists the
+  '# helper:', '# helper-bar:' or '# helper-makeitso:' declaration above it, the three forms
+  share their four fields and differ only in which personality ('bar' or 'makeitso') lists the
   helper, and every listed row is prefixed with that personality.
 
    bar helpers          # the repertoire of this installation, one line per helper plus its count
@@ -1079,7 +1079,7 @@ HELPER REPERTOIRE
    bar helpers --check  # verify that every helper module is registered (also run by 'lints')
 
   The repertoire is generated by reading the module sources: listing it loads no module and runs
-  no helper, and 'please helpers' works from any directory. It even appends the 'bar'
+  no helper, and 'makeitso helpers' works from any directory. It even appends the 'bar'
   repertoire of the directory it is run in (a 'bar helpers' there), again without dedup.  See
   'Bar.d/helpers_rules' for the naming rules (a helper rule loads its module by its own first
   word), the registration format, the output conventions and the elision and exit code
@@ -1244,13 +1244,13 @@ BASH COMPLETION
   Completion works for:
 
   - bar <TAB>       - completes rulefiles, rules, and functions in current directory
-  - please <TAB>    - completes rulefiles, rules, and functions
+  - makeitso <TAB>    - completes rulefiles, rules, and functions
   - ./bar <TAB>     - completes rulefiles, rules, and functions from local bar
 
   The completion logic will:
 
   1.  Find any user rule files in current directory (files containing 'function' or 'rule',
-      or with shebang pointing to bar/please)
+      or with shebang pointing to bar/makeitso)
   2.  Complete available bash functions and rules from default rule file and Bar.d/ modules
   3.  Provide context-aware argument completion based on parameter types
 
