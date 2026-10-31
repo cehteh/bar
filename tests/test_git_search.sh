@@ -18,6 +18,7 @@
 #   AC6  '--check' prints nothing and answers only whether a commit is left
 #   AC7  a bad argument is a usage error (exit 2); a blob which is not in the object store at all
 #        is an error (exit 1), not an empty list
+#   AC10 the fixture's commits carry the fixture's own identity, also when the caller exported one
 #
 # usage: tests/test_git_search.sh
 
@@ -59,26 +60,37 @@ mkproject() {
     printf 'fixture: -- true\n' >"$dir/Barf"
 }
 
-# --- fixture: a file which is added, kept, removed, re-added at another path, then changed
+# <dir> - the cycle fixture: a file which is added, kept, removed, re-added at another path,
+# then changed.  Its identity is its own: a pre-commit hook exports the committing identity into
+# the environment ('git -c user.name=…' reaches the hook as GIT_AUTHOR_NAME and
+# GIT_CONFIG_PARAMETERS), and both outrank 'git config user.name', so the ambient identity is
+# dropped before the repository exists.
+mkcycle() {
+    local dir=$1
+    mkdir -p "$dir"
+    mkproject "$dir"
+    (
+        cd "$dir"
+        unset GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL \
+            GIT_CONFIG_PARAMETERS
+        git init -q
+        git config user.name Test; git config user.email test@example.com
+        export GIT_AUTHOR_DATE='2026-01-01T00:00:00+0000' GIT_COMMITTER_DATE='2026-01-01T00:00:00+0000'
+        mkdir -p a
+        printf 'SAME\n' > a/x.txt
+        git add -A; git commit -qm 'c1 add a/x.txt'
+        printf 'other\n' > o.txt
+        git add -A; git commit -qm 'c2 touch only o.txt'
+        git rm -q a/x.txt; git commit -qm 'c3 remove a/x.txt'
+        mkdir -p b; printf 'SAME\n' > b/y.txt
+        git add -A; git commit -qm 'c4 re-add as b/y.txt'
+        printf 'changed\n' > b/y.txt
+        git add -A; git commit -qm 'c5 touch again' -m 'the b/y blob is gone now'
+    )
+}
+
 FIX="$WORKDIR/cycle"
-mkdir -p "$FIX"
-mkproject "$FIX"
-(
-    cd "$FIX"
-    git init -q
-    git config user.name Test; git config user.email test@example.com
-    export GIT_AUTHOR_DATE='2026-01-01T00:00:00+0000' GIT_COMMITTER_DATE='2026-01-01T00:00:00+0000'
-    mkdir -p a
-    printf 'SAME\n' > a/x.txt
-    git add -A; git commit -qm 'c1 add a/x.txt'
-    printf 'other\n' > o.txt
-    git add -A; git commit -qm 'c2 touch only o.txt'
-    git rm -q a/x.txt; git commit -qm 'c3 remove a/x.txt'
-    mkdir -p b; printf 'SAME\n' > b/y.txt
-    git add -A; git commit -qm 'c4 re-add as b/y.txt'
-    printf 'changed\n' > b/y.txt
-    git add -A; git commit -qm 'c5 touch again' -m 'the b/y blob is gone now'
-)
+mkcycle "$FIX"
 c1=$(git -C "$FIX" rev-parse HEAD~4)
 c2=$(git -C "$FIX" rev-parse HEAD~3)
 c3=$(git -C "$FIX" rev-parse HEAD~2)
@@ -219,6 +231,21 @@ check "$OUT" "" "'--format' with nothing to say prints nothing"
 run "$FIX" "$NEEDLE" --filter 'no such commit'
 check "$RC" 0 "the default with nothing to say succeeds"
 check "$OUT" "" "and prints nothing"
+echo
+
+echo "AC10 the fixture's own identity, not the caller's"
+# what a pre-commit hook carries when the commit was made with 'git -c user.name=…': the name and
+# the -c pair both outrank 'git config user.name', so the fixture must not inherit either
+POLLUTED="$WORKDIR/polluted"
+(
+    export GIT_AUTHOR_NAME=Ambient GIT_AUTHOR_EMAIL=ambient@example.invalid
+    export GIT_COMMITTER_NAME=Ambient GIT_COMMITTER_EMAIL=ambient@example.invalid
+    export GIT_CONFIG_PARAMETERS="'user.name'='Ambient' 'user.email'='ambient@example.invalid'"
+    mkcycle "$POLLUTED"
+)
+check "$(git -C "$POLLUTED" log -1 --format='%an <%ae>')" "Test <test@example.com>" "the author is the fixture's"
+check "$(git -C "$POLLUTED" log -1 --format='%cn <%ce>')" "Test <test@example.com>" "and so is the committer"
+check "$(git -C "$POLLUTED" log --format='%cn' | sort -u)" "Test" "for every commit of the cycle"
 echo
 
 echo "=== $( (( failures == 0 )) && echo "all git_search checks passed" || echo "$failures check(s) failed") ==="
